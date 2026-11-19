@@ -152,6 +152,8 @@ export interface DrawOptions {
   focus?: string | null;
   /** Escape routes of retreating or fleeing foes, drawn as dotted lines to the edge. */
   escapePaths?: Pos[][];
+  /** What the chosen ability would move or set off: where pushed units and crates end up, and barrel blasts. */
+  effects?: { moves: { from: Pos; to: Pos; bump: number }[]; blasts: Pos[] };
 }
 
 const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
@@ -270,6 +272,37 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     }
     // A unit between two tiles goes after the whole diagonal it is entering, so nothing on that row covers it.
     for (const pl of places) if (pl.moving && depth(pl.slot) === k) drawPlace(pl);
+  }
+  // Effect preview: a blast's 3x3 in orange; each push as an arrow to a ghost tile, with the bump damage if it hits something.
+  for (const b of opt.effects?.blasts ?? []) {
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const q = { x: b.x + dx, y: b.y + dy };
+      if (!tileAt(m, q)) continue;
+      const c = tileCenter(m, q, view.rot);
+      diamond(ctx, c.x, c.y, "rgba(255, 140, 40, 0.3)", "rgba(255, 190, 90, 0.8)");
+    }
+  }
+  for (const mv of opt.effects?.moves ?? []) {
+    const a = tileCenter(m, mv.from, view.rot), b = tileCenter(m, mv.to, view.rot);
+    const pulse = 0.6 + 0.4 * Math.sin(opt.time / 160);
+    ctx.save();
+    if (mv.from.x !== mv.to.x || mv.from.y !== mv.to.y) {
+      diamond(ctx, b.x, b.y, `rgba(120, 220, 255, ${0.35 * pulse})`, "rgba(170, 235, 255, 0.95)", 2);
+      ctx.strokeStyle = "rgba(170, 235, 255, 0.95)"; ctx.lineWidth = 2.5; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y - 8); ctx.lineTo(b.x, b.y - 8); ctx.stroke();
+      ctx.setLineDash([]);
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      ctx.fillStyle = "rgba(170, 235, 255, 0.95)";
+      ctx.beginPath(); ctx.moveTo(b.x, b.y - 8);
+      ctx.lineTo(b.x - 9 * Math.cos(ang - 0.5), b.y - 8 - 9 * Math.sin(ang - 0.5));
+      ctx.lineTo(b.x - 9 * Math.cos(ang + 0.5), b.y - 8 - 9 * Math.sin(ang + 0.5)); ctx.fill();
+    }
+    if (mv.bump) {
+      ctx.font = "bold 12px system-ui, sans-serif"; ctx.textAlign = "center";
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#ffb347";
+      ctx.strokeText(`💥 -${mv.bump}`, b.x, b.y + 16); ctx.fillText(`💥 -${mv.bump}`, b.x, b.y + 16);
+    }
+    ctx.restore();
   }
   for (const path of opt.escapePaths ?? []) {
     // Dotted line from the foe to the edge it is heading for, ending in an arrow.

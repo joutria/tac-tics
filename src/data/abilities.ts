@@ -58,4 +58,16 @@ export const ABILITIES: Record<string, Ability> = {
   // Ajolín: water skirmisher that shoves.
   splash: { id: "splash", element: "water", ap: 3, range: [1, 3], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 5, max: 7, stat: "str" } },
   undertow: { id: "undertow", element: "water", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 3, max: 5, stat: "str" }, push: 2 },
+
+  // Broken Reservoir. Relampín: bolt skirmisher whose sparks run along the water.
+  spark: { id: "spark", element: "bolt", ap: 3, range: [2, 5], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 5, max: 8, stat: "mag" } },
+  jolt: { id: "jolt", element: "bolt", ap: 4, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 3, perTurn: 1, damage: { min: 3, max: 5, stat: "str" }, status: { id: "stun", turns: 1, power: 0 } },
+  // Carámbano: ice bruiser that freezes the water into paths and slows.
+  chill: { id: "chill", element: "ice", ap: 3, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 4, max: 6, stat: "str" }, status: { id: "slow", turns: 2, power: 1 } },
+  freeze: { id: "freeze", element: "ice", ap: 4, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 3, max: 5, stat: "mag" } },
+  // Frost-touched foes of the reservoir learn a cold bite.
+  frostbite: { id: "frostbite", element: "ice", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 4, max: 6, stat: "str" }, status: { id: "slow", turns: 1, power: 1 } },
+  // Broken Mira, the boss: a guardian of the lake, frozen by the Sap.
+  shatter: { id: "shatter", element: "ice", ap: 4, range: [2, 5], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 6, max: 9, stat: "mag" }, status: { id: "slow", turns: 1, power: 1 } },
+  glare: { id: "glare", element: "water", ap: 3, range: [1, 6], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 6, max: 8, stat: "mag" } },
 };

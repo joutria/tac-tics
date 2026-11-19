@@ -3,11 +3,12 @@
 import { planTurn } from "../src/engine/ai";
 import { applyCommand, createBattle } from "../src/engine/state";
 import type { Difficulty } from "../src/data/region";
+import { MAP_LAYERS } from "../src/run/map";
 import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceOf, shopHeal, type RunState } from "../src/run/run";
 
 const runs = Number(process.argv[2] ?? 100);
 const difficulty = (process.argv[3] ?? "normal") as Difficulty;
-let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0;
+let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0, cleared1 = 0;
 const deaths = new Map<number, number>();
 const started = Date.now();
 for (let i = 1; i <= runs; i++) {
@@ -29,18 +30,20 @@ for (let i = 1; i <= runs; i++) {
       }
     }
     if (!s.winner) { run.over = "lost"; break; }
-    const layer = run.map.nodes[run.battle.node]!.layer;
+    const layer = run.map.nodes[run.battle.node]!.layer + 10 * run.region;
     run = finishBattle(run, s);
     if (run.over === "lost") deaths.set(layer, (deaths.get(layer) ?? 0) + 1);
   }
   if (run.over === "won") won++;
+  if (run.region > 0 || run.over === "won") cleared1++;
   levels += run.hero.level;
-  nodes += run.path.length;
+  nodes += run.path.length + MAP_LAYERS * run.region;
   rivalsMade += run.rivals.length;
 }
 console.log(`${runs} ${difficulty} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 console.log(`runs won ${won} (${((100 * won) / runs).toFixed(0)}%), average nodes cleared ${(nodes / runs).toFixed(1)}`);
-console.log(`runs lost by layer: ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
+console.log(`first region cleared ${cleared1} (${((100 * cleared1) / runs).toFixed(0)}%)`);
+console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
 

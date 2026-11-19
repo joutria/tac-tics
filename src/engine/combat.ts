@@ -215,3 +215,24 @@ function push(s: BattleState, u: Unit, from: Pos, tiles: number, hit: Hit) {
   }
 }
 
+/** Where things end up if `caster` uses `ab` on `target` now: units pushed and crates slid, with the damage a
+    push into something adds, and barrels that would go off. Runs the cast on a copy; push results never depend
+    on the roll, so this is exact for movement. */
+export interface MovePreview { moves: { from: Pos; to: Pos; unit?: string; bump: number }[]; blasts: Pos[] }
+export function previewEffects(s: BattleState, caster: Unit, ab: Ability, target: Pos): MovePreview {
+  const copy = structuredClone(s);
+  const me = copy.units.find((u) => u.id === caster.id)!;
+  const before = new Map(copy.units.map((u) => [u.id, { ...u.pos }]));
+  const fx: TerrainFx[] = [];
+  const hits = resolveCast(copy, me, ab, target, fx);
+  const out: MovePreview = { moves: [], blasts: fx.filter((f) => f.fx === "explode").map((f) => f.at) };
+  if (ab.push) for (const h of hits) {
+    const from = before.get(h.unit)!, to = h.pushedTo ?? from;
+    if (h.unit === caster.id) continue;
+    // A push stopped early by a wall, a unit or a step hurts PUSH_HIT per tile it could not travel.
+    const tiles = Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
+    out.moves.push({ from, to, unit: h.unit, bump: PUSH_HIT * Math.max(0, ab.push - tiles) });
+  }
+  for (const f of fx) if (f.fx === "slide") out.moves.push({ from: f.at, to: f.to, bump: 0 });
+  return out;
+}

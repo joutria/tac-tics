@@ -79,8 +79,11 @@ export function newRun(seed: string, difficulty: Difficulty = "normal"): RunStat
 const regionSeed = (seed: string, region: number) => (region ? `${seed}:region:${region}` : seed);
 export const regionOf = (run: RunState): Region => REGIONS[run.region ?? 0]!;
 export const isLastRegion = (run: RunState) => (run.region ?? 0) >= REGIONS.length - 1;
-/** How deep a node is for scaling foes and rewards: later regions continue where the earlier ones ended. */
-export const depthOf = (run: RunState, node: RunNode) => node.layer + (run.region ?? 0) * MAP_LAYERS;
+/** Depth added per region already crossed. Less than a whole map: each region starts a little above where the
+    last one's middle was, since the party has grown too. */
+export const REGION_DEPTH = 2;
+/** How deep a node is for scaling foes and rewards: later regions continue from the earlier ones. */
+export const depthOf = (run: RunState, node: RunNode) => node.layer + (run.region ?? 0) * REGION_DEPTH;
 
 /** A save from before regions existed: it was in the first one. */
 export function upgradeRun(saved: RunState): RunState {
@@ -138,7 +141,7 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
     const rival = i === 0 && node.rival ? run.rivals.find((r) => r.id === node.rival && !r.settled) : undefined;
     if (rival) { units.push({ ...rivalSpec(rival, lang, pos) }); continue; }
     if (node.kind === "boss" && i === 0) {
-      const boss = region.boss, sp = species[boss.species]!;
+      const boss = region.boss, sp = boss.unit ?? species[boss.species]!;
       const f = foeSpec(run, sp, id, pos, depth);
       units.push({ ...f, name: boss.name[lang].replace("{name}", sp.name), hp: Math.round(f.hp * boss.hp), str: f.str + boss.stat, mag: f.mag + boss.stat, mp: f.mp + boss.mp });
       continue;

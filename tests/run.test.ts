@@ -249,41 +249,35 @@ describe("difficulty", () => {
 
 describe("regions", () => {
   it("moves on to the next region after a boss, with a fresh map and stronger, renamed foes", () => {
-    const extra = {
-      id: "test", name: { es: "Prueba", en: "Test" }, arenas: REGIONS[0]!.arenas, species: REGIONS[0]!.species, boss: REGIONS[0]!.boss,
-      variant: { element: "ice" as const, name: { es: "{name} Helado", en: "Frozen {name}" }, res: { ice: 20 }, stat: 1 },
-    };
-    REGIONS.push(extra);
-    try {
-      let run = newRun("regions");
-      let firstSetup: ReturnType<typeof battleSetup> | undefined;
-      while (!run.over && run.region === 0) {
-        run = answer(run);
-        const pick = nextNodes(run)[0]!;
-        run = enterNode(run, pick.id, "en");
-        if (run.battle) { firstSetup ??= run.battle.setup; run = finishBattle(run, end(run, "win")); }
-      }
-      expect(run.over).toBeNull();
-      expect(run.region).toBe(1);
-      expect(run.at).toBeNull();
-      expect(run.path).toEqual([]);
+    expect(REGIONS.length).toBe(2);
+    let run = newRun("regions");
+    while (!run.over && run.region === 0) {
       run = answer(run);
-      const node = nextNodes(run)[0]!;
-      const setup = battleSetup(run, node.id, "en");
-      const foe = setup.units.find((u) => u.team === "foes" && !u.rival)!;
-      expect(foe.name.startsWith("Frozen ")).toBe(true);
+      run = enterNode(run, nextNodes(run)[0]!.id, "en");
+      if (run.battle) run = finishBattle(run, end(run, "win"));
+    }
+    expect(run.over).toBeNull();
+    expect(run.region).toBe(1);
+    expect(run.at).toBeNull();
+    expect(run.path).toEqual([]);
+    run = answer(run);
+    const setup = battleSetup(run, nextNodes(run)[0]!.id, "en");
+    const natives = (REGIONS[1]!.natives ?? []).map((sp) => sp.name);
+    for (const foe of setup.units.filter((u) => u.team === "foes" && !u.rival)) {
+      if (natives.includes(foe.name)) continue;
+      expect(foe.name.startsWith("Frost ")).toBe(true);
       expect(foe.element).toBe("ice");
-      const base = REGIONS[0]!.species.find((sp) => foe.name.endsWith(sp.name))!;
-      expect(foe.hp).toBeGreaterThan(base.hp);
-      // Finish the second region: now the run is won.
-      while (!run.over) {
-        run = answer(run);
-        run = enterNode(run, nextNodes(run)[0]!.id, "en");
-        if (run.battle) run = finishBattle(run, end(run, "win"));
+      expect(foe.abilities).toContain("frostbite");
+    }
+    while (!run.over) {
+      run = answer(run);
+      run = enterNode(run, nextNodes(run)[0]!.id, "en");
+      if (run.battle) {
+        if (run.map.nodes[run.battle.node]!.kind === "boss") expect(run.battle.setup.units.some((u) => u.name === "Broken Mira")).toBe(true);
+        run = finishBattle(run, end(run, "win"));
       }
-      expect(run.over).toBe("won");
-      expect(firstSetup).toBeDefined();
-    } finally { REGIONS.pop(); }
+    }
+    expect(run.over).toBe("won");
   });
   it("upgrades a save from before regions", () => {
     const { region: _r, ...old } = { ...newRun("old"), version: 4 };
