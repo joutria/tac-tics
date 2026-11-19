@@ -13,11 +13,12 @@ import {
   activeUnit, applyCommand, BattleEvent, BattleSetup, BattleState, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t } from "./i18n/text";
-import { drawBattle, Floater, Images, loadImages, mapPixelSize, Mark, pickTile, tileCenter, View } from "./render/iso";
+import { drawBattle, Floater, Images, loadImages, mapPixelSize, Mark, pickAt, tileCenter, TW, View } from "./render/iso";
 
 const SAVE_KEY = "tac-tics.save.v2";
 const LANG_KEY = "tac-tics.lang";
 const FOE_STEP_MS = 380;
+const MIN_TILE_PX = 58; // a tile narrower than this is hard to hit with a finger
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>("game");
@@ -28,9 +29,11 @@ let save: BattleSave;
 let state: BattleState;
 let images: Images;
 let view: View = { ox: 0, oy: 0, scale: 1, rot: 0 };
-let zoom = 1, panX = 0, panY = 0;
+let zoom = 0, panX = 0, panY = 0; // zoom 0 = pick a comfortable size on the first layout
 let hover: Pos | null = null;
 let selected: string | null = null;
+/** On touch the first tap only chooses a tile; a second tap on it, or the Confirm button, carries the action out. */
+let pending: Pos | null = null;
 let busy = false;
 let turnStart = 0;
 const floaters: Floater[] = [];
@@ -44,8 +47,8 @@ function newBattle() {
   const setup: BattleSetup = { seed: Date.now(), map: MEADOW, units: TEST_UNITS };
   save = { version: SAVE_VERSION, setup, commands: [] };
   state = replay(setup, []);
-  turnStart = 0; selected = null;
-  persist(); refresh(); maybeFoeTurn();
+  turnStart = 0; selected = null; pending = null;
+  persist(); refresh(); followHero(); maybeFoeTurn();
 }
 
 function loadOrNew() {
@@ -103,7 +106,7 @@ async function maybeFoeTurn() {
       refresh();
     }
   }
-  busy = false; selected = null; refresh();
+  busy = false; selected = null; pending = null; refresh(); followHero();
 }
 
 function canUndo() {
@@ -126,6 +129,7 @@ function marks(): Map<string, Mark> {
   const u = activeUnit(state);
   if (!selected) {
     for (const k of reachable(state.map, u.pos, moveRules(state, u)).keys()) out.set(k, "move");
+    if (pending) out.set(`${pending.x},${pending.y}`, "chosen");
     return out;
   }
   const ab = ABILITIES[selected]!;
@@ -134,7 +138,9 @@ function marks(): Map<string, Mark> {
     if (d < ab.range[0] || d > maxRange(state, ab, u.pos, p)) continue;
     out.set(`${x},${y}`, castProblem(state, u, selected, p) ? "range" : "target");
   }
-  if (hover && out.get(`${hover.x},${hover.y}`) === "target") for (const p of areaTiles(ab, hover)) out.set(`${p.x},${p.y}`, "area");
+  const focus = pending ?? hover;
+  if (focus && out.get(`${focus.x},${focus.y}`) === "target") for (const p of areaTiles(ab, focus)) out.set(`${p.x},${p.y}`, "area");
+  if (pending) out.set(`${pending.x},${pending.y}`, "chosen");
   return out;
 }
 
@@ -167,7 +173,7 @@ function refresh() {
     const dmg = ab.damage ? `${ab.damage.min}–${ab.damage.max}` : ab.heal ? `+${ab.heal.min}–${ab.heal.max}` : "";
     b.innerHTML = `<span>${abilityName(lang, id)}</span><small>${ab.ap} ${t(lang, "ap")} · ${ab.range[0]}–${ab.range[1]}${dmg ? " · " + dmg : ""}${cd ? " · ⏳" + t(lang, "cooldown", { n: cd }) : ""}</small>`;
     b.title = abilityDesc(lang, id);
-    b.onclick = () => { selected = selected === id ? null : id; refresh(); };
+    b.onclick = () => { selected = selected === id ? null : id; pending = null; refresh(); };
     bar.append(b);
   }
   $<HTMLButtonElement>("end").disabled = !mine;
@@ -180,7 +186,13 @@ function refresh() {
   $("new").textContent = t(lang, "newBattle");
   $("rotate").textContent = `⟳ ${t(lang, "rotate")}`;
   $("lang").textContent = lang === "es" ? "English" : "Español";
-  $("hint").textContent = !mine ? t(lang, "hintFoe") : selected ? t(lang, "hintTarget") : t(lang, "hintMove");
+  const confirm = $<HTMLButtonElement>("confirm");
+  confirm.style.display = mine && pending ? "" : "none";
+  confirm.textContent = selected ? `✔ ${abilityName(lang, selected)}` : `✔ ${t(lang, "moveHere")}`;
+  $("cancel").style.display = mine && (pending || selected) ? "" : "none";
+  $("cancel").textContent = t(lang, "cancel");
+  $("act").style.bottom = `${$("bottom").getBoundingClientRect().height + 10}px`;
+  $("hint").textContent = !mine ? t(lang, "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : t(lang, "hintMove");
   $("again").textContent = t(lang, "playAgain");
   const over = $("overlay");
   over.style.display = state.winner ? "flex" : "none";
@@ -189,11 +201,14 @@ function refresh() {
   layout();
 }
 
-function tooltip(ev: PointerEvent) {
+/** Shows what is on a tile, with the damage the selected ability would deal there. Near the pointer for a mouse;
+    above the tile for a finger, so the finger does not cover it. */
+function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   const tip = $("tip");
   const u = heroTurn() ? activeUnit(state) : null;
-  const target = hover && unitAt(state, hover);
-  if (!hover || !target) { tip.style.display = "none"; return; }
+  const target = at && unitAt(state, at);
+  if (!at || !target) { tip.style.display = "none"; return; }
+  const hover = at;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
@@ -208,8 +223,12 @@ function tooltip(ev: PointerEvent) {
   }
   tip.innerHTML = lines.join("<br>");
   tip.style.display = "block";
-  tip.style.left = `${Math.min(ev.clientX + 14, innerWidth - 250)}px`;
-  tip.style.top = `${ev.clientY + 14}px`;
+  const spot = ev ?? screenOf(at);
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  const x = ev ? spot.clientX + 14 : spot.clientX - w / 2;
+  const y = ev ? spot.clientY + 14 : spot.clientY - h - 70 * view.scale / (window.devicePixelRatio || 1);
+  tip.style.left = `${Math.max(8, Math.min(x, innerWidth - w - 8))}px`;
+  tip.style.top = `${Math.max(8, y)}px`;
 }
 
 let toastTimer = 0;
@@ -222,35 +241,96 @@ function toast(msg: string) {
 
 function layout() {
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+  // Size the drawing buffer to the box the canvas really fills. Mobile browsers can make 100vh taller than the
+  // visible window (the address bar), which used to stretch the picture and put taps one tile too low.
+  const box = canvas.getBoundingClientRect();
+  canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
   const top = $("top").getBoundingClientRect().height, bottom = $("bottom").getBoundingClientRect().height;
   const size = mapPixelSize(state.map);
   const availW = innerWidth - 16, availH = innerHeight - top - bottom - 8;
   const fit = Math.min(availW / size.w, availH / size.h);
   const base = fit >= 1 ? Math.floor(fit * 2) / 2 : fit; // whole or half steps keep pixel art crisp
+  // On a phone the whole map fits only with tiles too small for a finger, so start closer in and let the player pan.
+  if (zoom === 0) zoom = Math.min(2, Math.max(1, MIN_TILE_PX / (TW * base)));
   const scale = base * zoom * dpr;
+  // Keep at least part of the map on screen whatever the pan.
+  const halfW = (size.w * scale) / dpr / 2, halfH = (size.h * scale) / dpr / 2;
+  panX = Math.max(-halfW - availW / 2 + 60, Math.min(halfW + availW / 2 - 60, panX));
+  panY = Math.max(-halfH - availH / 2 + 60, Math.min(halfH + availH / 2 - 60, panY));
   view = { ...view, scale, ox: (canvas.width - size.w * scale) / 2 + panX * dpr, oy: top * dpr + (availH * dpr - size.h * scale) / 2 + panY * dpr };
 }
 
-function toMap(ev: PointerEvent | MouseEvent) {
-  const dpr = window.devicePixelRatio || 1;
-  return pickTile(state.map, (ev.clientX * dpr - view.ox) / view.scale, (ev.clientY * dpr - view.oy) / view.scale, view.rot);
+/** Screen point to canvas pixels, measured from the canvas's real box so any CSS stretch is undone. */
+function toCanvas(ev: { clientX: number; clientY: number }) {
+  const box = canvas.getBoundingClientRect();
+  return { x: (ev.clientX - box.left) * (canvas.width / box.width), y: (ev.clientY - box.top) * (canvas.height / box.height) };
+}
+
+function toMap(ev: { clientX: number; clientY: number }, slack = 0) {
+  const c = toCanvas(ev);
+  return pickAt(state.map, state.units, (c.x - view.ox) / view.scale, (c.y - view.oy) / view.scale, view.rot, slack);
+}
+
+function screenOf(p: Pos) {
+  const c = tileCenter(state.map, p, view.rot), box = canvas.getBoundingClientRect();
+  return { clientX: box.left + (c.x * view.scale + view.ox) * (box.width / canvas.width), clientY: box.top + (c.y * view.scale + view.oy) * (box.height / canvas.height) };
+}
+
+/** Pans so a tile sits in the middle of the free space between the bars. */
+function centreOn(p: Pos) {
+  const top = $("top").getBoundingClientRect().height, bottom = $("bottom").getBoundingClientRect().height;
+  const now = screenOf(p);
+  panX += innerWidth / 2 - now.clientX;
+  panY += top + (innerHeight - top - bottom) / 2 - now.clientY;
+  layout();
+}
+
+/** When the map is bigger than the screen, bring the hero into view as their turn starts. */
+function followHero() {
+  if (!heroTurn()) return;
+  const pos = activeUnit(state).pos, p = screenOf(pos);
+  const top = $("top").getBoundingClientRect().height, bottom = $("bottom").getBoundingClientRect().height;
+  if (p.clientX < 60 || p.clientX > innerWidth - 60 || p.clientY < top + 80 || p.clientY > innerHeight - bottom - 40) centreOn(pos);
 }
 
 /* ---------- input ---------- */
 
-function onTap(p: Pos) {
-  if (!heroTurn() || busy) return;
+/** What tapping tile `p` would do now, or why it can't. */
+function actionAt(p: Pos): { cmd: Command } | { why: string } | null {
   const u = activeUnit(state);
   if (selected) {
-    if (!castProblem(state, u, selected, p)) {
-      run({ t: "cast", unit: u.id, ability: selected, target: p });
-      selected = null;
-      refresh(); maybeFoeTurn();
-    }
-    return;
+    const why = castProblem(state, u, selected, p);
+    return why ? { why } : { cmd: { t: "cast", unit: u.id, ability: selected, target: p } };
   }
-  if (reachable(state.map, u.pos, moveRules(state, u)).has(`${p.x},${p.y}`)) { run({ t: "move", unit: u.id, to: p }); refresh(); }
+  if (p.x === u.pos.x && p.y === u.pos.y) return null;
+  if (reachable(state.map, u.pos, moveRules(state, u)).has(`${p.x},${p.y}`)) return { cmd: { t: "move", unit: u.id, to: p } };
+  return unitAt(state, p) ? null : { why: t(lang, "cantReach") };
+}
+
+function act(cmd: Command) {
+  const ok = run(cmd);
+  if (cmd.t === "cast" && ok) selected = null;
+  pending = null;
+  refresh();
+  if (cmd.t === "cast") maybeFoeTurn();
+}
+
+/** A mouse click acts at once (the hover already previewed it). A finger has no hover, so its first tap chooses
+    the tile and shows what will happen; tapping it again or pressing Confirm does it. */
+function onTap(p: Pos, touch: boolean) {
+  if (!heroTurn() || busy) return;
+  const a = actionAt(p);
+  if (!a) { pending = null; refresh(); tooltip(p); return; }
+  if ("why" in a) { pending = null; refresh(); if (selected || touch) toast(a.why); tooltip(p); return; }
+  if (!touch || (pending && pending.x === p.x && pending.y === p.y)) { act(a.cmd); tooltip(null); return; }
+  pending = p; refresh(); tooltip(p);
+}
+
+function confirmPending() {
+  if (!pending || !heroTurn() || busy) return;
+  const a = actionAt(pending);
+  if (a && "cmd" in a) act(a.cmd); else { pending = null; refresh(); }
+  tooltip(null);
 }
 
 function frame(time: number) {
@@ -268,36 +348,61 @@ async function start() {
   images = await loadImages(srcs);
   loadOrNew();
   refresh();
+  followHero();
   addEventListener("resize", layout);
 
+  // One finger (or the mouse) taps or drags to pan; two fingers pinch to zoom.
+  const touches = new Map<number, { x: number; y: number }>();
   let down: { x: number; y: number; panX: number; panY: number; dragged: boolean } | null = null;
-  canvas.addEventListener("pointerdown", (ev) => { down = { x: ev.clientX, y: ev.clientY, panX, panY, dragged: false }; });
+  let pinch: { dist: number; zoom: number } | null = null;
+  const spread = () => { const [a, b] = [...touches.values()]; return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0; };
+  canvas.addEventListener("pointerdown", (ev) => {
+    touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (touches.size === 2) { pinch = { dist: spread(), zoom }; down = null; return; }
+    down = { x: ev.clientX, y: ev.clientY, panX, panY, dragged: false };
+  });
   canvas.addEventListener("pointermove", (ev) => {
-    if (down && (ev.buttons || ev.pointerType === "touch")) {
-      const dx = ev.clientX - down.x, dy = ev.clientY - down.y;
-      if (Math.abs(dx) + Math.abs(dy) > 8) { down.dragged = true; panX = down.panX + dx; panY = down.panY + dy; layout(); }
+    if (touches.has(ev.pointerId)) touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pinch && touches.size === 2) {
+      zoom = Math.min(3, Math.max(0.5, pinch.zoom * spread() / Math.max(1, pinch.dist)));
+      layout(); return;
     }
+    const touch = ev.pointerType !== "mouse";
+    if (down && (ev.buttons || touch)) {
+      const dx = ev.clientX - down.x, dy = ev.clientY - down.y;
+      if (Math.abs(dx) + Math.abs(dy) > (touch ? 14 : 6)) { down.dragged = true; panX = down.panX + dx; panY = down.panY + dy; layout(); }
+    }
+    if (touch) return; // a finger has no hover: its tap shows the preview instead
     const h = toMap(ev);
     if (h?.x !== hover?.x || h?.y !== hover?.y) hover = h;
-    tooltip(ev);
+    tooltip(hover, ev);
   });
-  canvas.addEventListener("pointerup", (ev) => {
+  const lift = (ev: PointerEvent) => {
+    touches.delete(ev.pointerId);
+    if (pinch) { if (touches.size === 0) pinch = null; down = null; return; }
     const tap = down && !down.dragged;
     down = null;
-    const p = toMap(ev);
-    if (tap && p) { hover = p; onTap(p); tooltip(ev); }
-  });
+    if (!tap || ev.type === "pointercancel") return;
+    const touch = ev.pointerType !== "mouse";
+    const p = toMap(ev, touch ? 0.6 : 0);
+    if (p) onTap(p, touch);
+  };
+  canvas.addEventListener("pointerup", lift);
+  canvas.addEventListener("pointercancel", lift);
+  canvas.addEventListener("pointerleave", (ev) => { if (ev.pointerType === "mouse") { hover = null; tooltip(null); } });
   canvas.addEventListener("wheel", (ev) => { ev.preventDefault(); zoom = Math.min(3, Math.max(0.5, zoom * (ev.deltaY < 0 ? 1.15 : 1 / 1.15))); layout(); }, { passive: false });
   $("zoomIn").addEventListener("click", () => { zoom = Math.min(3, zoom * 1.25); layout(); });
   $("zoomOut").addEventListener("click", () => { zoom = Math.max(0.5, zoom / 1.25); layout(); });
   $("rotate").addEventListener("click", () => { view.rot = (view.rot + 1) % 4; });
-  $("end").addEventListener("click", () => { if (heroTurn()) { run({ t: "endTurn", unit: activeUnit(state).id }); selected = null; refresh(); maybeFoeTurn(); } });
-  $("wait").addEventListener("click", () => { if (heroTurn()) { run({ t: "wait", unit: activeUnit(state).id }); selected = null; refresh(); maybeFoeTurn(); } });
+  $("end").addEventListener("click", () => { if (heroTurn()) { run({ t: "endTurn", unit: activeUnit(state).id }); selected = null; pending = null; refresh(); maybeFoeTurn(); } });
+  $("wait").addEventListener("click", () => { if (heroTurn()) { run({ t: "wait", unit: activeUnit(state).id }); selected = null; pending = null; refresh(); maybeFoeTurn(); } });
   $("undo").addEventListener("click", undo);
+  $("confirm").addEventListener("click", confirmPending);
+  $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
   $("new").addEventListener("click", newBattle);
   $("again").addEventListener("click", newBattle);
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });
-  addEventListener("keydown", (ev) => { if (ev.key === "Escape") { selected = null; refresh(); } });
+  addEventListener("keydown", (ev) => { if (ev.key === "Escape") { selected = null; pending = null; refresh(); } });
   requestAnimationFrame(frame);
   maybeFoeTurn();
   // Small hook for automated browser checks: where a tile is on screen, and the current state.
@@ -305,7 +410,8 @@ async function start() {
     state: () => state,
     marks: () => [...marks().entries()],
     select: (id: string | null) => { selected = id; refresh(); },
-    screenOf: (p: Pos) => { const c = tileCenter(state.map, p, view.rot); const dpr = window.devicePixelRatio || 1; return { x: (c.x * view.scale + view.ox) / dpr, y: (c.y * view.scale + view.oy) / dpr }; },
+    pick: (x: number, y: number) => toMap({ clientX: x, clientY: y }),
+    screenOf: (p: Pos) => { const c = screenOf(p); return { x: c.clientX, y: c.clientY }; },
   } });
 }
 

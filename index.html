@@ -8,7 +8,7 @@
     :root { color-scheme: dark; --bg: #1d1f2b; --panel: rgba(20, 22, 32, 0.9); --ink: #f2efe6; --quiet: #a9a7b8; --accent: #ffd86b; --hero: #ffe680; --foe: #ff8a7a; }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.35 system-ui, sans-serif; overflow: hidden; -webkit-user-select: none; user-select: none; }
-    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+    canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
     .bar { position: fixed; left: 0; right: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; background: var(--panel); }
     #top { top: 0; padding-top: max(8px, env(safe-area-inset-top)); }
     #bottom { bottom: 0; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
@@ -22,12 +22,16 @@
     .spacer { flex: 1; }
     button { font: inherit; color: var(--ink); background: #3a3d55; border: 1px solid #5a5e80; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
     button.primary { background: #6b5a1e; border-color: var(--accent); }
+    button.go { background: #2f6b3a; border-color: #8fe39a; font-weight: 600; }
     button.on { background: #7a2f28; border-color: #ff8a7a; }
     button:disabled { opacity: 0.45; cursor: default; }
     .ab { display: flex; flex-direction: column; align-items: flex-start; min-width: 74px; line-height: 1.15; }
     .ab small { color: var(--quiet); font-size: 11px; }
     #abilities { display: flex; gap: 6px; flex-wrap: wrap; }
     #hint { flex-basis: 100%; font-size: 12px; color: var(--quiet); }
+    /* Floats just above the bottom bar so showing it never shifts the map under the player's finger. */
+    #act { position: fixed; left: 0; right: 0; display: flex; justify-content: center; gap: 10px; pointer-events: none; }
+    #act button { pointer-events: auto; padding: 10px 18px; font-size: 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
     #tip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid #5a5e80; border-radius: 8px; padding: 6px 9px; font-size: 12px; max-width: 240px; display: none; }
     #tip b { color: var(--accent); }
     #overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); flex-direction: column; gap: 16px; }
@@ -55,6 +59,7 @@
     <button id="end" class="primary"></button>
     <span id="hint"></span>
   </div>
+  <div id="act"><button id="cancel"></button><button id="confirm" class="go"></button></div>
   <div id="tip"></div>
   <div id="overlay"><h1 id="result"></h1><button id="again" class="primary"></button></div>
   <div id="toast"></div>
