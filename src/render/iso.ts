@@ -3,7 +3,8 @@
    The view can be turned in 90 degree steps so nothing stays hidden behind a hill or a tree. */
 import { GridMap, Pos, tileAt } from "../engine/grid";
 import { MAX_REVIVES } from "../engine/combat";
-import type { BattleState, Facing, Unit } from "../engine/state";
+import { wavering } from "../engine/escape";
+import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
 
 export const TW = 64, TH = 32, LEVEL = 16;
 
@@ -79,7 +80,7 @@ export function pickTile(m: GridMap, px: number, py: number, rot: number): Pos |
 export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: number, rot: number, slack = 0): Pos | null {
   let best: { p: Pos; depth: number } | null = null;
   for (const u of units) {
-    if (u.life === "dead") continue;
+    if (u.life === "dead" || u.life === "escaped") continue;
     const c = tileCenter(m, u.pos, rot);
     if (Math.abs(px - c.x) > 18 || py < c.y - 58 || py > c.y + 10) continue;
     const r = rotate(m, u.pos, rot), depth = r.x + r.y;
@@ -148,6 +149,8 @@ export interface DrawOptions {
   preview?: { unit: string; min: number; max: number };
   /** A unit to point out (tapped in the turn bar). */
   focus?: string | null;
+  /** Escape routes of retreating or fleeing foes, drawn as dotted lines to the edge. */
+  escapePaths?: Pos[][];
 }
 
 const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32" };
@@ -184,16 +187,17 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.setTransform(view.scale, 0, 0, view.scale, view.ox, view.oy);
-  const places = s.units.filter((v) => v.life !== "dead").map((v) => {
+  const places = s.units.filter((v) => v.life === "up" || v.life === "downed").map((v) => {
     const mo = opt.motions?.get(v.id);
     const moving = !!mo && opt.time < mo.born + motionMs(mo);
     return { u: v, moving, ...placeOf(m, v, mo, opt.time, view.rot) };
   });
+  const round = roundOf(s);
   const depth = (p: Pos) => { const r = rotate(m, p, view.rot); return r.x + r.y; };
   const drawPlace = (pl: (typeof places)[number]) => {
     ctx.globalAlpha = pl.alpha;
     const pv = opt.preview && opt.preview.unit === pl.u.id ? opt.preview : undefined;
-    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id);
+    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round));
     ctx.globalAlpha = 1;
   };
   // Painter's order: back diagonals first; on each tile its ground, then what stands on it.
@@ -248,6 +252,23 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     // A unit between two tiles goes after the whole diagonal it is entering, so nothing on that row covers it.
     for (const pl of places) if (pl.moving && depth(pl.slot) === k) drawPlace(pl);
   }
+  for (const path of opt.escapePaths ?? []) {
+    // Dotted line from the foe to the edge it is heading for, ending in an arrow.
+    if (path.length < 2) continue;
+    const pts = path.map((p) => tileCenter(m, p, view.rot));
+    ctx.save();
+    ctx.setLineDash([4, 4]); ctx.lineDashOffset = -opt.time / 60;
+    ctx.strokeStyle = "rgba(255, 200, 90, 0.95)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(pts[0]!.x, pts[0]!.y);
+    for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+    const a = pts[pts.length - 2]!, b = pts[pts.length - 1]!, ang = Math.atan2(b.y - a.y, b.x - a.x);
+    ctx.setLineDash([]); ctx.fillStyle = "rgba(255, 200, 90, 0.95)";
+    ctx.beginPath(); ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x - 9 * Math.cos(ang - 0.5), b.y - 9 * Math.sin(ang - 0.5));
+    ctx.lineTo(b.x - 9 * Math.cos(ang + 0.5), b.y - 9 * Math.sin(ang + 0.5)); ctx.fill();
+    ctx.restore();
+  }
   for (const f of opt.floaters) {
     const age = (opt.time - f.born) / 1000;
     if (age < 0 || age > 1.4) continue;
@@ -271,7 +292,7 @@ function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, fill: stri
 
 function drawUnit(
   ctx: CanvasRenderingContext2D, u: Unit, img: Images, c: { x: number; y: number }, active: boolean, time: number, rot: number,
-  preview?: { min: number; max: number }, focus = false,
+  preview?: { min: number; max: number }, focus = false, shaky = false,
 ) {
   const sheet = img[`unit-${u.look}`];
   const team = u.team === "heroes" ? "#ffe680" : "#ff8a7a";
@@ -324,5 +345,17 @@ function drawUnit(
   if (u.rooted) {
     ctx.font = "11px system-ui, sans-serif"; ctx.textAlign = "center";
     ctx.fillText("🌿", c.x + 20, c.y - 56);
+  }
+  // Escape states: a shield badge while retreating, running feet (pulsing) while fleeing, "!" while wavering.
+  const badge = u.escape === "retreat" ? "🛡" : u.escape === "flee" ? "💨" : shaky ? "!" : "";
+  if (badge) {
+    const pulse = u.escape === "flee" || shaky ? 0.6 + 0.4 * Math.sin(time / 140) : 1;
+    ctx.globalAlpha = base * pulse;
+    ctx.beginPath(); ctx.arc(c.x - 22, c.y - 59, 7, 0, Math.PI * 2);
+    ctx.fillStyle = u.escape === "flee" ? "#b8322a" : u.escape === "retreat" ? "#2d5a8c" : "#a07a10"; ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.font = "bold 9px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#fff"; ctx.fillText(badge, c.x - 22, c.y - 58.5);
+    ctx.textBaseline = "alphabetic"; ctx.globalAlpha = base;
   }
 }

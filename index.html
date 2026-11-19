@@ -41,7 +41,9 @@
     #overlay h1 { margin: 0; font-size: 40px; }
     #toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .3s; pointer-events: none; }
     #toast.show { opacity: 1; }
-  </style>
+    .esc { color: #ffc85a; }
+  #resultNote { color: #ffc85a; margin: 0 16px; text-align: center; }
+</style>
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -67,7 +69,7 @@
   </div>
   <div id="act"><button id="cancel"></button><button id="confirm" class="go"></button></div>
   <div id="tip"></div>
-  <div id="overlay"><h1 id="result"></h1><button id="again" class="primary"></button></div>
+  <div id="overlay"><h1 id="result"></h1><p id="resultNote"></p><button id="again" class="primary"></button></div>
   <div id="toast"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>

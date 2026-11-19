@@ -9,6 +9,7 @@ import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damag
 import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
+import { isBorder, turnMp, wavering } from "./engine/escape";
 import { BattleSave, fromJSON, replay, SAVE_VERSION, toJSON } from "./engine/save";
 import {
   activeUnit, applyCommand, BattleEvent, BattleSetup, BattleState, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
@@ -139,6 +140,17 @@ function animate(events: BattleEvent[], was: Map<string, Pos>) {
 function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
   const now = performance.now();
   for (const ev of events) {
+    if (ev.e === "escapeState" && ev.state !== "none") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: t(lang, ev.state === "flee" ? "fleeing" : "retreating"), color: "#ffc85a", born: now + 400 });
+      continue;
+    }
+    if (ev.e === "escaped") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: t(lang, "escapedTag"), color: "#ffc85a", born: now });
+      toast(t(lang, "escapedToast", { name: u.name }));
+      continue;
+    }
     if (ev.e !== "cast") continue;
     for (const h of ev.hits) {
       const u = unitById(state, h.unit);
@@ -328,6 +340,8 @@ function refresh() {
   const over = $("overlay");
   over.style.display = state.winner ? "flex" : "none";
   $("result").textContent = state.winner === "heroes" ? t(lang, "victory") : t(lang, "defeat");
+  const escaped = state.units.filter((x) => x.team === "foes" && x.life === "escaped").length;
+  $("resultNote").textContent = escaped ? t(lang, "escapedNote", { n: escaped }) : "";
   document.documentElement.lang = lang;
   layout();
 }
@@ -343,6 +357,9 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
   const left = MAX_REVIVES - target.revives;
   lines.push(left > 0 ? t(lang, "revivesLeft", { n: left }) : `<span class="down">${t(lang, "lastFall")}</span>`);
+  if (target.escape === "retreat") lines.push(`<b class="esc">${t(lang, "retreating")}</b> · ${t(lang, "retreatInfo")}`);
+  else if (target.escape === "flee") lines.push(`<b class="esc">${t(lang, "fleeing")}</b> · ${t(lang, "fleeInfo")}`);
+  if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
     if (ab.damage && target.team !== u.team) {
@@ -361,9 +378,9 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
     } else if (ab.heal) lines.push(`${abilityName(lang, selected)}: <b>+${ab.heal.min}–${ab.heal.max}</b>`);
   } else if (!selected && target.team === "foes") {
     // Foe info: its abilities, which are ready, and which could reach the hero next turn.
-    const hero = state.units.find((h) => h.team === "heroes" && h.life !== "dead");
+    const hero = state.units.find((h) => h.team === "heroes" && (h.life === "up" || h.life === "downed"));
     const zone = hero ? dangerZone(state, target).get(`${hero.pos.x},${hero.pos.y}`) ?? [] : [];
-    lines.push(`${t(lang, "ap")} ${target.maxAp} · ${t(lang, "mp")} ${target.maxMp}`);
+    lines.push(`${t(lang, "ap")} ${target.maxAp} · ${t(lang, "mp")} ${turnMp(target)}`);
     for (const id of target.abilities) {
       const ab = ABILITIES[id]!;
       const cd = target.cooldowns[id];
@@ -498,6 +515,24 @@ function previewHit() {
   return { unit: target.id, ...damagePreview(state, u, target, ab) };
 }
 
+/** For each foe backing off or running: the way it would take to the nearest edge tile. */
+let escapeCache: { s: BattleState; paths: Pos[][] } | null = null;
+function escapePaths(): Pos[][] {
+  if (escapeCache?.s === state) return escapeCache.paths;
+  const paths: Pos[][] = [];
+  for (const u of state.units) {
+    if (u.team !== "foes" || u.life !== "up" || u.escape === "none") continue;
+    let best: { cost: number; path: Pos[] } | null = null;
+    for (const [k, r] of reachable(state.map, u.pos, { ...moveRules(state, u), mp: 99 })) {
+      const [x, y] = k.split(",").map(Number);
+      if (isBorder(state, { x: x!, y: y! }) && (!best || r.cost < best.cost)) best = r;
+    }
+    if (best && best.path.length) paths.push([{ ...u.pos }, ...best.path]);
+  }
+  escapeCache = { s: state, paths };
+  return paths;
+}
+
 function frame(time: number) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#1d1f2b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -506,6 +541,7 @@ function frame(time: number) {
   drawBattle(ctx, state, images, view, {
     marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions,
     danger: dangerTiles(), preview: moving ? undefined : previewHit(), focus: focus?.id,
+    escapePaths: moving ? undefined : escapePaths(),
   });
   requestAnimationFrame(frame);
 }

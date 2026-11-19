@@ -192,12 +192,38 @@ export function bestStep(s: BattleState): Plan {
   return plan;
 }
 
-/** Plays the active unit's whole turn and returns the commands, ending with endTurn. */
+/** A retreating or fleeing unit heads for the nearest edge and leaves if it can reach it this turn.
+    A retreating one still takes a shot first if it can do so without moving. */
+function escapeTurn(start: BattleState, run: (c: Command) => boolean, now: () => BattleState) {
+  const u = activeUnit(start), id = u.id;
+  if (u.escape === "retreat") {
+    const shot = bestStep(start);
+    if (!shot.moveTo && shot.ability && shot.target) run({ t: "cast", unit: id, ability: shot.ability, target: shot.target });
+  }
+  const s = now();
+  if (s.winner || s.active !== id) return;
+  const me = activeUnit(s);
+  const edge = (p: Pos) => Math.min(p.x, p.y, s.map.w - 1 - p.x, s.map.h - 1 - p.y);
+  let best: { p: Pos; d: number; cost: number } = { p: me.pos, d: edge(me.pos), cost: 0 };
+  for (const r of reachable(s.map, me.pos, moveRules(s, me)).values()) {
+    const p = r.path[r.path.length - 1]!, d = edge(p);
+    if (d < best.d || (d === best.d && r.cost < best.cost)) best = { p, d, cost: r.cost };
+  }
+  if (!samePos(best.p, me.pos)) run({ t: "move", unit: id, to: best.p });
+  if (best.d === 0) run({ t: "escape", unit: id });
+}
+
+/** Plays the active unit's whole turn and returns the commands, ending with endTurn (or escape). */
 export function planTurn(start: BattleState): Command[] {
   const cmds: Command[] = [];
   let s = start;
   const id = activeUnit(s).id;
   const run = (c: Command) => { const r = applyCommand(s, c); if (r.ok) { s = r.state; cmds.push(c); return true; } return false; };
+  if (activeUnit(s).escape !== "none") {
+    escapeTurn(s, run, () => s);
+    if (!s.winner && s.active === id) run({ t: "endTurn", unit: id });
+    return cmds;
+  }
   for (let i = 0; i < 8 && !s.winner && s.active === id; i++) {
     const plan = bestStep(s);
     if (plan.moveTo) run({ t: "move", unit: id, to: plan.moveTo });
