@@ -12,10 +12,10 @@ import { rngInt, rngNext, seedFrom } from "../engine/rng";
 import type { BattleSave } from "../engine/save";
 import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
 import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
-import { aheadOf, choices, generateMap, MAP_LAYERS, placeRival, type RunMap, type RunNode } from "./map";
-import { COMPANIONS, TALKS } from "../data/companions";
+import { aheadOf, choices, generateMap, MAP_LAYERS, placeQuest, placeRival, type RunMap, type RunNode } from "./map";
+import { COMPANIONS, QUESTS, TALKS, type Lesson } from "../data/companions";
 import type { Line } from "../data/rivals";
-import { memberSpec, newMember, react, readDeeds, type Deeds, type Member } from "./party";
+import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, type Member } from "./party";
 import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, type Rival } from "./rivals";
 
 export const RUN_VERSION = 5;
@@ -42,7 +42,9 @@ export type Offer =
   /** A conversation (data/companions.ts TALKS); after a choice, its reply shows until the player moves on. */
   | { kind: "talk"; id: string; reply?: Line }
   /** A rest's cleansing fire: burn shards (choice 0) or keep them (choice 1). */
-  | { kind: "altar" };
+  | { kind: "altar" }
+  /** A companion's personal quest: its lesson moment (choices from questChoices), then the reply. */
+  | { kind: "quest"; companion: string; reply?: Line };
 
 export interface RunState {
   version: number;
@@ -164,7 +166,7 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
   const node = next.map.nodes[nodeId]!;
   delete next.spoils;
   next.remarks = [];
-  if (node.kind === "rest" || node.kind === "shop" || node.kind === "recruit") {
+  if (node.kind === "rest" || node.kind === "shop" || node.kind === "recruit" || node.kind === "quest") {
     if (node.kind === "rest") {
       next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * (REST_HEAL + rulesOf(next).healBonus)));
       for (const m of next.party) {
@@ -173,12 +175,18 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
         if (m.status === "with") m.hp = Math.min(memberMaxHp(next, m), m.hp + Math.round(memberMaxHp(next, m) * (REST_HEAL + rulesOf(next).healBonus)));
       }
       if (next.shards >= ALTAR.shards) next.offers.push({ kind: "altar" });
+      // Past the town, the camps hold survivors of the storm fire Centella lit.
+      if ((next.region ?? 0) >= 1) seeIt(next, "centella");
     } else if (node.kind === "shop") next.offers.push({ kind: "shop", stock: shopStock(next, nodeId) });
     else if (node.recruit) {
       const talk = TALKS[node.recruit]!;
       if (COMPANIONS[talk.companion] && !next.party.some((m) => m.id === talk.companion)) next.offers.push({ kind: "talk", id: node.recruit });
+    } else if (node.quest) {
+      const m = next.party.find((x) => x.id === node.quest);
+      if (m && m.status === "with" && !m.lesson) next.offers.push({ kind: "quest", companion: m.id });
     }
     next.at = nodeId; next.path.push(nodeId);
+    placeQuests(next);
     return next;
   }
   next.battle = { version: 2, setup: battleSetup(next, nodeId, lang), commands: [], rewindsUsed: 0, node: nodeId };
@@ -220,6 +228,13 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
     }
   }
 
+  // What the flaws cost, seen with their own eyes.
+  const saw = (id: string) => fielded(next).some((m) => m.id === id);
+  const fellNow = end.units.some((u) => u.team === "heroes" && u.life === "dead" && next.party.some((m) => m.id === u.id));
+  if (node.kind === "rival" && next.rivals.find((r) => r.id === node.rival)?.cause.kind === "escaped" && saw("remanso")) seeIt(next, "remanso");
+  if ((deeds.allyBledOut || fellNow) && saw("guijo")) seeIt(next, "guijo");
+  if (deeds.sapRemedy && saw("moheda")) seeIt(next, "moheda");
+
   // Spoils: every foe put down (not the ones that got away), scaled by depth and the kind of node.
   const mult = (1 + REWARD.perLayer * depthOf(next, node)) * (node.kind === "boss" ? REWARD.bossMult : node.kind === "elite" ? REWARD.eliteMult : node.kind === "rival" ? REWARD.rivalMult : 1);
   const coins = Math.round(beaten.length * REWARD.coinsPerFoe * mult * rulesOf(next).coins);
@@ -253,11 +268,38 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
     for (const m of fielded(next)) m.hp = Math.min(memberMaxHp(next, m), m.hp + Math.round(memberMaxHp(next, m) * REGION_REST));
     for (const r of activeRivals(next.rivals)) placeRival(next.map, null, r.id, `${next.seed}:region:${next.region}:${r.id}`);
   }
+  placeQuests(next);
   next.offers.push({ kind: "reward", options: rewardOptions(next, node) });
   return next;
 }
 
 /** Companions travelling with the party react to something done on the run map. */
+/** The choices a companion's lesson moment offers: the sacrifice only once they are ready for it. */
+export function questChoices(run: RunState, companion: string): Lesson[] {
+  const m = run.party.find((x) => x.id === companion);
+  return m && readyForLesson(m) ? ["sacrifice", "hold", "double"] : ["hold", "double"];
+}
+
+/** A companion sees what their flaw costs: said once, remembered for their quest. */
+function seeIt(run: RunState, id: string) {
+  const m = run.party.find((x) => x.id === id);
+  if (!m || m.status !== "with" || m.seen || m.lesson) return;
+  m.seen = true;
+  run.remarks.push(QUESTS[id]!.seen);
+}
+
+/** Keeps each pending quest on a node the party can still reach; one cut off by the path taken moves ahead. */
+function placeQuests(run: RunState) {
+  const ahead = aheadOf(run.map, run.at);
+  for (const m of run.party) {
+    const node = run.map.nodes.find((n) => n.quest === m.id);
+    const pending = m.status === "with" && !m.lesson && !!QUESTS[m.id];
+    if (node && pending && ahead.has(node.id)) continue;
+    if (node && node.id !== run.at) { node.quest = undefined; node.kind = "battle"; }
+    if (pending) placeQuest(run.map, run.at, m.id, `${run.seed}:${run.region ?? 0}:${run.path.length}`);
+  }
+}
+
 const NO_STYLE = { element: null, range: null, opener: null, protects: false };
 
 function witness(run: RunState, deeds: Partial<Deeds>) {
@@ -322,6 +364,16 @@ export function choose(run: RunState, index: number): RunState {
     witness(next, { destroyShards: 1 });
     return next;
   }
+  if (offer.kind === "quest") {
+    if (offer.reply) { next.offers.shift(); return next; }
+    const lesson = questChoices(run, offer.companion)[index];
+    if (!lesson) throw new Error("no such choice");
+    const q = QUESTS[offer.companion]!, m = next.party.find((x) => x.id === offer.companion)!;
+    m.lesson = lesson;
+    (next.offers[0] as { reply?: Line }).reply = q.choices[lesson].reply;
+    if (lesson === "double" && q.doubleLeaves) m.status = "left";
+    return next;
+  }
   if (offer.kind === "talk") {
     // First answer: the choice and its reply; second answer (index ignored): close the conversation.
     if (offer.reply) { next.offers.shift(); return next; }
@@ -329,7 +381,7 @@ export function choose(run: RunState, index: number): RunState {
     const pick = talk.choices[index];
     if (!pick) throw new Error("no such choice");
     (next.offers[0] as { reply?: Line }).reply = pick.reply;
-    if (pick.joins) next.party.push(newMember(talk.companion, pick.approval, !!pick.reveals));
+    if (pick.joins) { next.party.push(newMember(talk.companion, pick.approval, !!pick.reveals)); placeQuests(next); }
     return next;
   }
   next.offers.shift();

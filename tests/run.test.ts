@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { HERO, REGIONS } from "../src/data/region";
 import { applyCommand, createBattle, type BattleState, type Command, type UnitSpec } from "../src/engine/state";
 import { parseMap } from "../src/engine/grid";
-import { APPROVAL, COMPANIONS, TALKS } from "../src/data/companions";
+import { APPROVAL, COMPANIONS, LESSON_APPROVAL, QUESTS, TALKS } from "../src/data/companions";
 import { ABILITIES } from "../src/data/abilities";
-import { memberSpec, newMember, react, readDeeds } from "../src/run/party";
-import { aheadOf, generateMap, MAP_LAYERS } from "../src/run/map";
+import { endingOf, memberSpec, newMember, react, readDeeds } from "../src/run/party";
+import { aheadOf, generateMap, MAP_LAYERS, QUEST_GAP } from "../src/run/map";
 import { ITEMS, PERKS, SHOP, xpToNext } from "../src/data/gear";
 import { gainXp, heroSpec, newProgress } from "../src/run/hero";
-import { ALTAR, battleSetup, buy, RUN_VERSION, upgradeRun, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
+import { ALTAR, questChoices, battleSetup, buy, RUN_VERSION, upgradeRun, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
 
 /** Answers every offer with the first option and leaves shops. */
 function answer(run: RunState): RunState {
@@ -385,5 +385,70 @@ describe("recruits", () => {
     expect(run.party[0]!.crossed).toBe(1);
     expect(run.party[0]!.approval).toBe(APPROVAL.start + COMPANIONS.moheda!.reacts.destroyShards!);
     expect(run.remarks.length).toBeGreaterThan(0);
+  });
+});
+
+describe("personal quests and endings", () => {
+  const joined = (id: string, talk: string) => {
+    let run = newRun("quest");
+    const node = run.map.nodes.find((n) => n.recruit === talk)!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))!.id };
+    run = enterNode(run, node.id, "en");
+    run = choose(choose(run, 0), 0);
+    return { run, member: run.party.find((m) => m.id === id)! };
+  };
+
+  it("joining places the companion's quest at least two layers ahead", () => {
+    const { run } = joined("remanso", "remanso.meet");
+    const q = run.map.nodes.find((n) => n.quest === "remanso")!;
+    expect(q.kind).toBe("quest");
+    expect(q.layer).toBeGreaterThanOrEqual(1 + QUEST_GAP);
+  });
+
+  it("offers the sacrifice only once they are ready, and endings follow the lesson", () => {
+    let { run } = joined("guijo", "guijo.meet");
+    const quest = run.map.nodes.find((n) => n.quest === "guijo")!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(quest.id))!.id };
+    const at = enterNode(run, quest.id, "en");
+    expect(at.offers[0]).toEqual({ kind: "quest", companion: "guijo" });
+    expect(questChoices(at, "guijo")).toEqual(["hold", "double"]);
+    expect(endingOf(at.party[0]!)).toBe("regular");
+
+    const ready = structuredClone(at);
+    ready.party[0]!.seen = true; ready.party[0]!.approval = LESSON_APPROVAL;
+    expect(questChoices(ready, "guijo")[0]).toBe("sacrifice");
+    const good = choose(ready, 0);
+    expect(good.party[0]!.lesson).toBe("sacrifice");
+    expect(endingOf(good.party[0]!)).toBe("good");
+    expect(choose(good, 0).offers).toHaveLength(0);
+
+    const stays = choose(at, 1); // not ready: [hold, double]; he stays behind in the tunnel
+    expect(stays.party[0]!.status).toBe("left");
+    expect(endingOf(stays.party[0]!)).toBe("bad");
+  });
+
+  it("Centella killing her rival after seeing the damage is her bad ending", () => {
+    const m = { ...newMember("centella", 0, true), lesson: "hold" as const };
+    expect(endingOf(m)).toBe("regular");
+    expect(endingOf({ ...m, seen: true })).toBe("bad");
+    expect(endingOf({ ...m, lesson: undefined, status: "fallen" })).toBe("bad");
+  });
+
+  it("past the town, a rest shows Centella the burned marsh", () => {
+    let run = newRun("marsh");
+    run.region = 1;
+    run.party = [newMember("centella", 0, true)];
+    const rest = run.map.nodes.find((n) => n.kind === "rest")!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(rest.id))!.id };
+    run = enterNode(run, rest.id, "en");
+    expect(run.party[0]!.seen).toBe(true);
+    expect(run.remarks).toContainEqual(QUESTS.centella!.seen);
+  });
+
+  it("every recruit has a quest with all three endings in both languages", () => {
+    for (const r of REGIONS) for (const s of r.recruits) {
+      const q = QUESTS[TALKS[s.talk]!.companion]!;
+      for (const e of ["good", "regular", "bad"] as const) { expect(q.endings[e].es).toBeTruthy(); expect(q.endings[e].en).toBeTruthy(); }
+    }
   });
 });

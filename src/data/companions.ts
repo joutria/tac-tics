@@ -18,10 +18,12 @@ export type Deed =
   | "quickWin"
   | "shardsGained" | "spendShards"
   /** Savia shards burned at a rest's cleansing fire. */
-  | "destroyShards";
+  | "destroyShards"
+  /** Moheda's Sap Cap used on another companion (her "seen it" moment; nobody reacts to it). */
+  | "sapRemedy";
 
 export const DEEDS: Deed[] = ["helpUp", "heal", "finishDowned", "killFleeing", "letEscape", "allyBledOut", "noneDowned",
-  "rivalBeaten", "rivalEscaped", "quickWin", "shardsGained", "spendShards", "destroyShards"];
+  "rivalBeaten", "rivalEscaped", "quickWin", "shardsGained", "spendShards", "destroyShards", "sapRemedy"];
 
 export const QUICK_WIN_ROUNDS = 4;
 
@@ -226,5 +228,112 @@ export const TALKS: Record<string, Talk> = {
       { text: { es: "«La Savia arrasó el pueblo. No prometo nada.»", en: "\"The Sap razed the town. I promise nothing.\"" }, reply: { es: "Moheda: «Honesto. Entonces tomaré notas sobre ti también».", en: "Moheda: \"Honest. Then I'll take notes on you too.\"" }, approval: -10, reveals: true, joins: true },
       { text: { es: "«Sigue con tus frascos.»", en: "\"Stay with your jars.\"" }, reply: { es: "Moheda: «Lo haré. Ellos no discuten».", en: "Moheda: \"I will. They don't argue.\"" }, approval: 0, joins: false },
     ],
+  },
+};
+
+/* Personal quests and endings (M3 draft, "Endings"). Every recruit's flaw comes from their main value, and their
+   quest holds a lesson moment that tests it. The good ending needs them to give up what that value holds on to;
+   they can only do it once they are ready: approval LESSON_APPROVAL or more, and having seen what the flaw costs. */
+
+/** Approval a companion needs to be ready for their lesson. */
+export const LESSON_APPROVAL = 25;
+
+export type Lesson = "sacrifice" | "hold" | "double";
+export type Ending = "good" | "regular" | "bad";
+
+export interface Quest {
+  companion: string;
+  lines: Line[];
+  /** Said instead of the sacrifice choice while the companion is not ready. */
+  notReady: Line;
+  choices: Record<Lesson, { text: Line; reply: Line }>;
+  /** Doubling down makes them leave the party. */
+  doubleLeaves?: boolean;
+  /** Holding on after seeing the cost is the bad ending, not the regular one (Centella). */
+  heldAfterSeenIsBad?: boolean;
+  /** Said when the companion first sees what their flaw costs. */
+  seen: Line;
+  endings: Record<Ending, Line>;
+}
+
+export const QUESTS: Record<string, Quest> = {
+  remanso: {
+    companion: "remanso",
+    lines: [
+      { es: "Volvéis al molino. Una criatura marcada por la Savia, una que dejasteis ir, ronda a los supervivientes.", en: "You come back to the mill. A Sap-marked creature, one you once let go, is circling the survivors." },
+      { es: "Remanso: «La dejé huir. Le di otra oportunidad. Y ha vuelto a por ellos».", en: "Remanso: \"I let it run. I gave it another chance. And it came back for them.\"" },
+    ],
+    notReady: { es: "Remanso aprieta los puños, pero todavía cree que puede cambiar.", en: "Remanso clenches his paws, but he still believes it can change." },
+    choices: {
+      sacrifice: { text: { es: "«Esta vez, termínalo tú.»", en: "\"This time, you end it.\"" }, reply: { es: "Remanso da el último golpe. No mira hacia otro lado. «Algunos no tienen vuelta. Lo siento».", en: "Remanso strikes the last blow. He doesn't look away. \"Some can't come back. I'm sorry.\"" } },
+      hold: { text: { es: "«Nosotros nos encargamos.»", en: "\"We'll take care of it.\"" }, reply: { es: "El grupo acaba con ella. Remanso se queda mirando el agua mucho rato.", en: "The party finishes it. Remanso stares at the water for a long time." } },
+      double: { text: { es: "«Déjala ir otra vez.»", en: "\"Let it go again.\"" }, reply: { es: "Remanso: «Sí. Puede cambiar. Tiene que poder».", en: "Remanso: \"Yes. It can change. It has to.\"" } },
+    },
+    seen: { es: "Remanso reconoce al rival. «Ese… lo dejamos ir. Y mira lo que ha hecho».", en: "Remanso recognises the rival. \"That one… we let it go. And look what it's done.\"" },
+    endings: {
+      good: { es: "Remanso mantiene el molino y enseña a los supervivientes a nadar, y a pelear. Sigue sacando extraños del río, pero antes les mira las manos por si hay Savia.", en: "He keeps the mill running and teaches the survivors to swim, and to fight. He still pulls strangers out of the river, but he checks their hands for Sap first." },
+      regular: { es: "Remanso sigue perdonando a todos. Casi siempre sale bien. No habla de las veces que no.", en: "He keeps sparing everyone. Most of the time it works. He doesn't talk about the times it didn't." },
+      bad: { es: "El rival que salvó inunda el molino. Encuentran a Remanso río abajo, vivo, repitiendo que podía haber cambiado.", en: "The rival he saved floods the mill. Remanso is found downstream, alive, still saying it could have changed." },
+    },
+  },
+  guijo: {
+    companion: "guijo",
+    doubleLeaves: true,
+    lines: [
+      { es: "Los túneles de la cantera. Al fondo, la familia de Guijo, marcada por la Savia. La Savia avanza por la roca hacia el campamento.", en: "The quarry tunnels. At the far end, Guijo's family, Sap-marked. The Sap is creeping through the rock towards the survivors' camp." },
+      { es: "Guijo: «Si los saco, la Savia sale con ellos. Si sello el túnel…»", en: "Guijo: \"If I carry them out, the Sap comes out with them. If I seal the tunnel…\"" },
+    ],
+    notReady: { es: "Guijo no puede ni pensarlo. Nunca ha dejado a nadie atrás.", en: "Guijo can't even think it. He has never left anyone behind." },
+    choices: {
+      sacrifice: { text: { es: "«Sella el túnel, Guijo.»", en: "\"Seal the tunnel, Guijo.\"" }, reply: { es: "Guijo pone la última piedra con sus propias manos. Se queda un momento con la frente apoyada en ella.", en: "Guijo sets the last stone with his own hands. He rests his forehead on it for a moment." } },
+      hold: { text: { es: "«Sácalos. Ya veremos.»", en: "\"Carry them out. We'll see.\"" }, reply: { es: "Guijo los saca uno a uno. Nadie ve las vetas grises que traen consigo.", en: "Guijo carries them out one by one. Nobody sees the grey veins they bring along." } },
+      double: { text: { es: "«Quédate con ellos.»", en: "\"Stay with them.\"" }, reply: { es: "Guijo baja al túnel. «Alguien tiene que quedarse». No vuelve a subir.", en: "Guijo goes down into the tunnel. \"Someone has to stay.\" He doesn't come back up." } },
+    },
+    seen: { es: "Guijo se queda junto al que cayó. «Lo intentamos. No bastó. Y aun así seguimos».", en: "Guijo stays by the one who fell. \"We tried. It wasn't enough. And still we go on.\"" },
+    endings: {
+      good: { es: "Guijo levanta un muro alrededor del campamento con la piedra que cortó aquel día. Cada mañana talla un nombre en él.", en: "He builds a wall around the camp with the stone he cut that day. He carves one name on it every morning." },
+      regular: { es: "El campamento crece. También las manchas grises de sus paredes. Guijo sigue cargando gente.", en: "The camp grows. So do the grey patches on its walls. Guijo keeps carrying people." },
+      bad: { es: "La cantera está en silencio. A veces los mineros oyen golpes muy abajo, constantes, como alguien que cuenta.", en: "The quarry is quiet now. Sometimes the miners hear knocking from deep below, steady, like someone counting." },
+    },
+  },
+  centella: {
+    companion: "centella",
+    doubleLeaves: true,
+    heldAfterSeenIsBad: true,
+    lines: [
+      { es: "En el juncal quemado espera el rival que quemó la madriguera de Centella, herido, sin escapatoria.", en: "In the burned reeds waits the rival who burned Centella's den, wounded, with nowhere to run." },
+      { es: "Centella: «Por fin. Llevo toda una vida esperando esto».", en: "Centella: \"At last. I've waited my whole life for this.\"" },
+    ],
+    notReady: { es: "Centella no escucha. Solo ve a su presa.", en: "Centella isn't listening. All she sees is her prey." },
+    choices: {
+      sacrifice: { text: { es: "«Mira lo que costó la caza. Déjalo ir.»", en: "\"Look what the hunt cost. Let it go.\"" }, reply: { es: "Centella tiembla de rabia. Luego baja la cola. «Dos aldeas… Vete. Antes de que cambie de idea».", en: "Centella shakes with rage. Then her tail drops. \"Two villages… Go. Before I change my mind.\"" } },
+      hold: { text: { es: "«Acaba con él.»", en: "\"Finish it.\"" }, reply: { es: "Un relámpago, y se acabó. Centella se queda quieta, esperando sentir algo.", en: "One bolt, and it's over. Centella stands still, waiting to feel something." } },
+      double: { text: { es: "«Caza a todos los marcados. Sola, si hace falta.»", en: "\"Hunt every marked one. Alone, if you must.\"" }, reply: { es: "Centella sale disparada hacia la tormenta sin mirar atrás.", en: "Centella bolts into the storm without looking back." } },
+    },
+    seen: { es: "En el campamento, los supervivientes del juncal hablan del incendio de la tormenta. Centella reconoce el lugar. Fue su fuego, el que encendió para acorralar a su presa.", en: "At camp, survivors from the marsh talk about the storm fire. Centella knows the place. It was her fire, lit to corner her prey." },
+    endings: {
+      good: { es: "Centella vuelve al juncal y reconstruye la primera aldea que quemó, tejado a tejado. Sigue siendo lo más rápido del valle. Ahora lo usa para llevar mensajes.", en: "She goes back to the marsh and rebuilds the first village she burned, one roof at a time. She's still the fastest thing in the valley. Now she uses it to run messages." },
+      regular: { es: "Consiguió lo que quería. Sigue esperando sentirlo.", en: "She got what she wanted. She keeps waiting to feel it." },
+      bad: { es: "Caza a toda criatura marcada que encuentra. Una noche, su propio pelaje empieza a brillar dorado.", en: "She hunts every Sap-marked creature she can find. One night her own fur starts to glow gold." },
+    },
+  },
+  moheda: {
+    companion: "moheda",
+    lines: [
+      { es: "En la casa de bombas, la investigación de Moheda está casi lista. Pero sus muestras están contagiando el campamento de al lado.", en: "In the pump house, Moheda's research is nearly done. But her samples are infecting the camp next door." },
+      { es: "Moheda: «Un poco más y tendré la cura. Solo un poco más».", en: "Moheda: \"A little longer and I'll have the cure. Just a little longer.\"" },
+    ],
+    notReady: { es: "Moheda tapa sus frascos con el cuerpo. «Todavía no lo entiendes».", en: "Moheda shields her jars with her body. \"You don't understand yet.\"" },
+    choices: {
+      sacrifice: { text: { es: "«Quémalo todo. Muestras y notas.»", en: "\"Burn it all. Samples and notes.\"" }, reply: { es: "Moheda echa cuaderno tras cuaderno al fuego. No llora. Toma nota mental de no hacerlo.", en: "Moheda feeds notebook after notebook to the fire. She doesn't cry. She makes a mental note not to." } },
+      hold: { text: { es: "«Termina la investigación.»", en: "\"Finish the research.\"" }, reply: { es: "Moheda termina. La cura funciona a medias.", en: "Moheda finishes. The cure half works." } },
+      double: { text: { es: "«Pruébala en ti, para ir más rápido.»", en: "\"Test it on yourself, to go faster.\"" }, reply: { es: "Moheda se bebe el frasco. Sus esporas empiezan a brillar.", en: "Moheda drinks the jar. Her spores begin to glow." } },
+    },
+    seen: { es: "La herida que Moheda trató con su Seta de Savia se ha vuelto dorada. Ella la mira mucho rato y no dice nada.", en: "The wound Moheda treated with her Sap Cap has turned gold. She stares at it for a long time and says nothing." },
+    endings: {
+      good: { es: "Moheda solo escribe lo que recuerda, que cada año es menos. El campamento que salvó llama a su primer huerto como ella. Nada en él brilla.", en: "She writes down only what she remembers, which is less every year. The camp she saved names its first garden after her. Nothing in it glows." },
+      regular: { es: "Su cura salva a unos y marca a otros. Lleva una lista de ambos y no se la enseña a nadie.", en: "Her cure saves some people and marks others. She keeps a list of both and never shows anyone." },
+      bad: { es: "Las casas de bombas se llenan de esporas que brillan. Algo ahí dentro aún responde a su nombre.", en: "The pump houses fill with spores that glow. Someone in there still answers to her name." },
+    },
   },
 };

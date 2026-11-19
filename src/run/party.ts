@@ -2,7 +2,7 @@
    and forbidden actions"). Everything is read from the battle's setup and command log, so approval is part of the
    deterministic record, as the plan asks. */
 import { SAP_RICH } from "../data/abilities";
-import { APPROVAL, COMPANIONS, DEEDS, QUICK_WIN_ROUNDS, type Companion, type Deed } from "../data/companions";
+import { APPROVAL, COMPANIONS, DEEDS, LESSON_APPROVAL, QUESTS, QUICK_WIN_ROUNDS, type Companion, type Deed, type Ending, type Lesson } from "../data/companions";
 import { GROWTH } from "../data/gear";
 import type { Line } from "../data/rivals";
 import { applyCommand, createBattle, type BattleSetup, type Command, type UnitSpec } from "../engine/state";
@@ -18,6 +18,22 @@ export interface Member {
   status: "with" | "leaving" | "left" | "fallen" | "turned";
   /** Escalation lines already said, so each is said once. */
   said: ("cold" | "refuses" | "leaves" | "betrays")[];
+  /** Has seen what their flaw costs (their quest's "seen it" condition). */
+  seen?: boolean;
+  /** What they did at their quest's lesson moment. */
+  lesson?: Lesson;
+}
+
+/** Ready for the lesson: approval high enough and the cost of their flaw seen. */
+export const readyForLesson = (m: Member) => !!m.seen && m.approval >= LESSON_APPROVAL;
+
+/** A companion's ending when the run is over (M3 draft, "Endings"). */
+export function endingOf(m: Member): Ending {
+  if (m.status !== "with") return "bad";
+  if (m.lesson === "double") return "bad";
+  if (m.lesson === "sacrifice") return "good";
+  if (m.lesson === "hold" && m.seen && QUESTS[m.id]?.heldAfterSeenIsBad) return "bad";
+  return "regular";
 }
 
 export const newMember = (id: string, approval: number, known: boolean): Member =>
@@ -64,6 +80,7 @@ export function readDeeds(setup: BattleSetup, commands: Command[]): Deeds {
       for (const h of e.hits) {
         const was = before.units.find((u) => u.id === h.unit);
         if (!was) continue;
+        if ((e.ability === "sapCap" || e.ability === "sapCapRich") && was.team === "heroes" && was.id !== caster.id) seen.sapRemedy++;
         if (h.revived) seen.helpUp++;
         if (h.heal > 0) seen.heal++;
         if (was.team === "heroes") continue;

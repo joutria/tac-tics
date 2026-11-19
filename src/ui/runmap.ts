@@ -6,11 +6,11 @@ import { ITEMS, PERKS, SHOP, xpToNext, type Mods } from "../data/gear";
 import { abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
-import { APPROVAL, COMPANIONS, TALKS } from "../data/companions";
-import { ALTAR, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
-import type { Member } from "../run/party";
+import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
+import { ALTAR, questChoices, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
+import { endingOf, readyForLesson, type Member } from "../run/party";
 
-export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", boss: "♛" };
+export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛" };
 
 const SVG = "http://www.w3.org/2000/svg";
 const el = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>) => {
@@ -34,6 +34,8 @@ export interface MapActions {
   heal: () => void;
   leave: () => void;
   wear: (itemId: string) => void;
+  /** Starts a new run (from the epilogue). */
+  newRun?: () => void;
 }
 
 const html = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -63,8 +65,9 @@ function rewardCard(r: RewardOption, lang: Lang): string {
 /** The first thing to answer (perk, reward or shop), or the gear panel when `gearOpen`. */
 function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActions, gearOpen: boolean, closeGear: () => void) {
   const offer = run.offers[0];
-  panel.style.display = offer || gearOpen ? "flex" : "none";
-  if (!offer && !gearOpen) { panel.replaceChildren(); return; }
+  const epilogue = !!run.over && run.party.length > 0 && !gearOpen;
+  panel.style.display = offer || gearOpen || epilogue ? "flex" : "none";
+  if (!offer && !gearOpen && !epilogue) { panel.replaceChildren(); return; }
   const button = (inner: string, onClick: () => void, cls = "card", disabled = false) => {
     const b = document.createElement("button"); b.className = cls; b.innerHTML = inner; b.disabled = disabled; b.onclick = onClick; return b;
   };
@@ -76,7 +79,31 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
   const spoils = document.createElement("p"); spoils.className = "spoils";
   if (sp && offer && offer.kind !== "shop") spoils.textContent = t(lang, "spoils", { c: sp.coins, x: sp.xp })
     + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: run.hero.level }) : "");
-  if (offer?.kind === "talk") {
+  if (epilogue) {
+    // The run is over: one short epilogue per companion ever recruited.
+    title.textContent = t(lang, "epilogue");
+    for (const m of run.party) {
+      const q = QUESTS[m.id];
+      if (!q) continue;
+      const end = endingOf(m);
+      const p = document.createElement("p"); p.className = `say ending ${end}`;
+      p.innerHTML = `<b>${html(COMPANIONS[m.id]!.spec.name)} · ${html(t(lang, `ending.${end}`))}</b><br>${html(q.endings[end][lang])}`;
+      list.append(p);
+    }
+    if (act.newRun) foot.append(button(t(lang, "newRun"), act.newRun, "primary"));
+  } else if (offer?.kind === "quest") {
+    const q = QUESTS[offer.companion]!;
+    title.textContent = t(lang, "questOf", { name: COMPANIONS[offer.companion]!.spec.name });
+    for (const l of q.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
+    if (offer.reply) {
+      const p = document.createElement("p"); p.className = "say reply"; p.textContent = offer.reply[lang]; list.append(p);
+      foot.append(button(t(lang, "goOn"), () => act.choose(0), "primary"));
+    } else {
+      const m = run.party.find((x) => x.id === offer.companion)!;
+      if (!readyForLesson(m)) { const p = document.createElement("p"); p.className = "say down"; p.textContent = q.notReady[lang]; list.append(p); }
+      questChoices(run, offer.companion).forEach((lesson, i) => list.append(button(`<span>${html(q.choices[lesson].text[lang])}</span>`, () => act.choose(i))));
+    }
+  } else if (offer?.kind === "talk") {
     const talk = TALKS[offer.id]!;
     title.textContent = COMPANIONS[talk.companion]!.spec.name;
     for (const l of talk.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
@@ -168,7 +195,8 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
     icon.textContent = NODE_ICON[n.kind];
     g.append(icon);
     const rival = n.rival ? run.rivals.find((r) => r.id === n.rival && !r.settled) : undefined;
-    const label = rival ? `${rivalName(rival, lang)} · ${t(lang, "rival", { n: rival.level })}` : t(lang, `node.${n.kind}`);
+    const label = rival ? `${rivalName(rival, lang)} · ${t(lang, "rival", { n: rival.level })}`
+      : n.quest && COMPANIONS[n.quest] ? t(lang, "questOf", { name: COMPANIONS[n.quest]!.spec.name }) : t(lang, `node.${n.kind}`);
     const title = el("title", {}); title.textContent = label; g.append(title);
     if (open.has(n.id)) {
       g.setAttribute("tabindex", "0"); g.setAttribute("role", "button"); g.setAttribute("aria-label", label);

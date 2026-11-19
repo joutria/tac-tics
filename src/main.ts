@@ -135,6 +135,7 @@ function showMap() {
     heal: () => safely(() => shopHeal(journey)),
     leave: () => update(leaveShop(journey)),
     wear: (id) => { journey = wear(journey, id); showMap(); },
+    newRun: () => startRun(),
   }, gearOpen, () => { gearOpen = false; showMap(); });
   if (choosingDifficulty) renderDifficulty($("runPanel"));
   $<HTMLButtonElement>("newRun").textContent = t(lang, "newRun");
@@ -157,7 +158,7 @@ function pickNode(id: number) {
   const kind = journey.map.nodes[id]!.kind;
   const before = journey.heroHp;
   journey = enterNode(journey, id, lang);
-  if (!journey.battle) { toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
+  if (!journey.battle) { if (kind === "rest") toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
   startBattle(kind === "rival" || kind === "boss");
 }
 
