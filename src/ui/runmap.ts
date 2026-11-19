@@ -132,7 +132,7 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
 
   const lv = run.hero.level;
   root.querySelector("#runHead")!.innerHTML =
-    `<b>${t(lang, "regionTown")}</b> · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
+    `<b>${t(lang, "regionTown")}</b> · ${t(lang, `diff.${run.difficulty ?? "normal"}`)} · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
     + `${t(lang, "level", { n: lv })} · ${t(lang, "xpBar", { a: run.hero.xp, b: xpToNext(lv) })} · ${t(lang, "hp")} ${run.heroHp}/${heroMaxHp(run)} · 🪙 ${run.coins} · ◆ ${run.shards}`;
   const waiting = nextNodes(run).flatMap((n) => run.rivals.filter((r) => r.id === n.rival && !r.settled)).map((r) => rivalName(r, lang));
   const party = fielded(run).map((m) => `${COMPANIONS[m.id]!.spec.name} ${m.hp}/${memberMaxHp(run, m)} (${moodOf(m, lang)})`);

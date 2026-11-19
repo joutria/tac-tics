@@ -112,7 +112,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
       if (enemy) {
         if (o.life === "downed") v += dmg > 0 ? 45 : 0;
         else v += Math.min(dmg, o.hp) + (dmg >= o.hp ? 25 : 0) + (1 - o.hp / o.maxHp) * 8 + (u.hunts === "healer" && isHealer(o) ? 12 : 0);
-      } else v -= dmg * 1.5 + (o.id === u.id ? 0 : 5);
+      } else if (o.id !== u.id) v -= dmg * 1.5 + 5; // casters are spared by their own area attacks
     }
     if (ab.heal && !enemy && o.life === "up") v += Math.min(avg(ab.heal), o.maxHp - o.hp);
     if (ab.revive && !enemy && o.life === "downed") v += 40;

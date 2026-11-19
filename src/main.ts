@@ -13,7 +13,8 @@ import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { buy, choose, enterNode, finishBattle, leaveShop, newRun, RUN_VERSION, shopHeal, wear, type RunState } from "./run/run";
+import { buy, choose, enterNode, finishBattle, leaveShop, newRun, rulesOf, RUN_VERSION, shopHeal, wear, type RunState } from "./run/run";
+import { DIFFICULTY, type Difficulty } from "./data/region";
 import { renderRunMap } from "./ui/runmap";
 import { BattleSave, replay } from "./engine/save";
 import {
@@ -26,7 +27,6 @@ import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Mo
 const RUN_KEY = "tac-tics.run.v1";
 const LANG_KEY = "tac-tics.lang";
 const VIEW_KEY = "tac-tics.view";
-const REWINDS_PER_BATTLE = 1;
 const FOE_STEP_MS = 380;
 const WALK_STEP_MS = 190, PUSH_STEP_MS = 90, BLINK_MS = 320;
 const MIN_TILE_PX = 58; // a tile narrower than this is hard to hit with a finger
@@ -88,15 +88,40 @@ let gearOpen = false;
 /** Map screen or battle screen. */
 let onMap = true;
 
+/** While true, the map shows the Easy / Normal / Hard choice instead of the run. */
+let choosingDifficulty = false;
+
+/** A new run starts with the difficulty choice; the run itself is made once the player picks. */
 function startRun() {
   journey = newRun(`${Date.now()}`);
+  choosingDifficulty = true;
   showMap();
+}
+
+function pickDifficulty(d: Difficulty) {
+  journey = newRun(`${Date.now()}`, d);
+  choosingDifficulty = false;
+  showMap();
+}
+
+function renderDifficulty(panel: HTMLElement) {
+  panel.style.display = "flex";
+  const title = document.createElement("h2"); title.textContent = t(lang, "pickDifficulty");
+  const list = document.createElement("div"); list.className = "cards";
+  for (const d of Object.keys(DIFFICULTY) as Difficulty[]) {
+    const b = document.createElement("button"); b.className = "card";
+    const name = document.createElement("b"); name.textContent = t(lang, `diff.${d}`);
+    const desc = document.createElement("span"); desc.textContent = t(lang, `diff.${d}.desc`);
+    b.append(name, desc); b.onclick = () => pickDifficulty(d);
+    list.append(b);
+  }
+  panel.replaceChildren(title, list);
 }
 
 function showMap() {
   onMap = true; busy = false;
   journey.battle = undefined;
-  persist();
+  if (!choosingDifficulty) persist();
   resetView();
   $("runmap").style.display = "flex";
   $("overlay").style.display = "none";
@@ -110,6 +135,7 @@ function showMap() {
     leave: () => update(leaveShop(journey)),
     wear: (id) => { journey = wear(journey, id); showMap(); },
   }, gearOpen, () => { gearOpen = false; showMap(); });
+  if (choosingDifficulty) renderDifficulty($("runPanel"));
   $<HTMLButtonElement>("newRun").textContent = t(lang, "newRun");
   $("gearBtn").textContent = `🎒 ${t(lang, "gear")}`;
   $("mapLang").textContent = lang === "es" ? "English" : "Español";
@@ -126,6 +152,7 @@ function confirmNewRun(): boolean {
 }
 
 function pickNode(id: number) {
+  if (choosingDifficulty) return;
   const kind = journey.map.nodes[id]!.kind;
   const before = journey.heroHp;
   journey = enterNode(journey, id, lang);
@@ -287,7 +314,7 @@ function undo() {
 /* ---------- rewind: back to the start of the hero's previous turn, once per battle ---------- */
 
 function rewindTarget(): number | null {
-  if (!heroTurn() || busy || (save.rewindsUsed ?? 0) >= REWINDS_PER_BATTLE) return null;
+  if (!heroTurn() || busy || (save.rewindsUsed ?? 0) >= rulesOf(journey).rewinds) return null;
   return heroStarts.length >= 2 ? heroStarts[heroStarts.length - 2]! : null;
 }
 
@@ -399,7 +426,7 @@ function refresh() {
   $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited;
   $<HTMLButtonElement>("undo").disabled = !canUndo();
   const rw = $<HTMLButtonElement>("rewind");
-  const left = REWINDS_PER_BATTLE - (save.rewindsUsed ?? 0);
+  const left = rulesOf(journey).rewinds - (save.rewindsUsed ?? 0);
   rw.disabled = rewindTarget() === null;
   rw.textContent = performance.now() < rewindArmed ? `⟲ ${t(lang, "rewindAgain")}` : `⟲ ${t(lang, "rewind")} (${left})`;
   rw.title = t(lang, "rewindHint");
@@ -715,7 +742,7 @@ async function start() {
   $("confirm").addEventListener("click", confirmPending);
   $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
   $("again").addEventListener("click", afterBattleButton);
-  $("gearBtn").addEventListener("click", () => { gearOpen = !gearOpen; showMap(); });
+  $("gearBtn").addEventListener("click", () => { if (choosingDifficulty) return; gearOpen = !gearOpen; showMap(); });
   $("newRun").addEventListener("click", () => { if (journey.over || confirmNewRun()) startRun(); });
   $("mapLang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); showMap(); });
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });

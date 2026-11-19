@@ -7,7 +7,7 @@ import { memberSpec, newMember, react, readDeeds } from "../src/run/party";
 import { aheadOf, generateMap, MAP_LAYERS } from "../src/run/map";
 import { ITEMS, PERKS, SHOP, xpToNext } from "../src/data/gear";
 import { gainXp, heroSpec, newProgress } from "../src/run/hero";
-import { battleSetup, buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, shopHeal, wear, type RunState } from "../src/run/run";
+import { battleSetup, buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
 
 /** Answers every offer with the first option and leaves shops. */
 function answer(run: RunState): RunState {
@@ -224,5 +224,25 @@ describe("companions", () => {
     expect(r.ok && r.events[0]).toEqual({ e: "refused", unit: "r", target: { x: 3, y: 2 } });
     expect(r.ok && r.state.turns).toBe(s.turns + 1); // the turn ended
     expect(r.ok && r.state.units.find((u) => u.id === "f")!.hp).toBe(40);
+  });
+});
+
+describe("difficulty", () => {
+  const foes = (d: "easy" | "normal" | "hard") => {
+    const run = newRun("diff-seed", d);
+    const node = run.map.nodes.find((n) => n.layer === 3 && (n.kind === "battle" || n.kind === "elite"))!;
+    return battleSetup(run, node.id, "en").units.filter((u) => u.team === "foes");
+  };
+  it("hard fields more and tougher foes than normal, easy weaker ones", () => {
+    const [e, n, h] = [foes("easy"), foes("normal"), foes("hard")];
+    expect(h.length).toBe(Math.min(4, n.length + 1));
+    expect(e.length).toBe(n.length);
+    expect(h[0]!.hp).toBeGreaterThan(n[0]!.hp);
+    expect(e[0]!.hp).toBeLessThan(n[0]!.hp);
+  });
+  it("defaults to normal and sets rewinds per level", () => {
+    expect(newRun("x").difficulty).toBe("normal");
+    expect(rulesOf(newRun("x", "hard")).rewinds).toBe(0);
+    expect(rulesOf(newRun("x", "easy")).rewinds).toBe(3);
   });
 });
