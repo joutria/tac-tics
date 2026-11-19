@@ -55,7 +55,7 @@ console.log(`endings: ${[...endings.entries()].sort().map(([k, n]) => `${k} ${n}
 function answerOffers(run: RunState): RunState {
   while (run.offers.length) {
     const o = run.offers[0]!;
-    if (o.kind === "perk" || o.kind === "talk" || o.kind === "quest") run = choose(run, 0);
+    if (o.kind === "perk" || o.kind === "talk" || o.kind === "quest" || o.kind === "job") run = choose(run, 0);
     else if (o.kind === "altar") run = choose(run, run.heroHp < heroMaxHp(run) * 0.5 ? 0 : 1);
     else if (o.kind === "reward") {
       const hurt = run.heroHp < heroMaxHp(run) * 0.4;

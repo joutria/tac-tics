@@ -7,6 +7,7 @@ import { abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
 import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
+import { JOBS } from "../data/jobs";
 import { ALTAR, questChoices, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
 import { endingOf, readyForLesson, type Member } from "../run/party";
 
@@ -91,6 +92,13 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
       list.append(p);
     }
     if (act.newRun) foot.append(button(t(lang, "newRun"), act.newRun, "primary"));
+  } else if (offer?.kind === "job") {
+    title.textContent = t(lang, "pickJob");
+    for (const [i, id] of offer.options.entries()) {
+      const j = JOBS[id];
+      list.append(button(`<b>${html(j.name[lang])}</b><span>${html(j.desc[lang])}</span><small>${j.abilities.map((a) => html(abilityName(lang, a))).join(" · ")}</small>`, () => act.choose(i)));
+    }
+    if (offer.options.length === 1) { const p = document.createElement("p"); p.className = "spoils"; p.textContent = t(lang, "jobLocked"); list.append(p); }
   } else if (offer?.kind === "quest") {
     const q = QUESTS[offer.companion]!;
     title.textContent = t(lang, "questOf", { name: COMPANIONS[offer.companion]!.spec.name });

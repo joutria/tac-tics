@@ -4,6 +4,8 @@ import { applyCommand, createBattle, type BattleState, type Command, type UnitSp
 import { parseMap } from "../src/engine/grid";
 import { APPROVAL, COMPANIONS, LESSON_APPROVAL, QUESTS, TALKS } from "../src/data/companions";
 import { ABILITIES } from "../src/data/abilities";
+import { EXECUTIONER_FACTOR, GUARD_FACTOR, JOB_LAYER, JOBS } from "../src/data/jobs";
+import { damageFactor } from "../src/engine/combat";
 import { endingOf, memberSpec, newMember, react, readDeeds } from "../src/run/party";
 import { aheadOf, generateMap, MAP_LAYERS, QUEST_GAP } from "../src/run/map";
 import { ITEMS, PERKS, SHOP, xpToNext } from "../src/data/gear";
@@ -395,6 +397,7 @@ describe("personal quests and endings", () => {
     run = { ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))!.id };
     run = enterNode(run, node.id, "en");
     run = choose(choose(run, 0), 0);
+    while (run.offers.length) run = choose(run, 0); // the job offer, when joining on its layer
     return { run, member: run.party.find((m) => m.id === id)! };
   };
 
@@ -420,7 +423,7 @@ describe("personal quests and endings", () => {
     const good = choose(ready, 0);
     expect(good.party[0]!.lesson).toBe("sacrifice");
     expect(endingOf(good.party[0]!)).toBe("good");
-    expect(choose(good, 0).offers).toHaveLength(0);
+    expect(choose(good, 0).offers.some((o) => o.kind === "quest")).toBe(false);
 
     const stays = choose(at, 1); // not ready: [hold, double]; he stays behind in the tunnel
     expect(stays.party[0]!.status).toBe("left");
@@ -450,5 +453,60 @@ describe("personal quests and endings", () => {
       const q = QUESTS[TALKS[s.talk]!.companion]!;
       for (const e of ["good", "regular", "bad"] as const) { expect(q.endings[e].es).toBeTruthy(); expect(q.endings[e].en).toBeTruthy(); }
     }
+  });
+});
+
+describe("hero jobs", () => {
+  const atLayer = (layer: number, leanings?: { beacon: number; blaze: number }) => {
+    let run = newRun("jobs");
+    const node = run.map.nodes.find((n) => n.layer === layer && ["rest", "shop", "recruit"].includes(n.kind))!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))!.id, leanings };
+    return enterNode(run, node.id, "en");
+  };
+
+  it("offers the job the run leans towards halfway through the first region, both on a tie", () => {
+    expect(atLayer(1).offers.some((o) => o.kind === "job")).toBe(false);
+    expect(atLayer(JOB_LAYER).offers.find((o) => o.kind === "job")).toEqual({ kind: "job", options: ["beacon", "blaze"] });
+    expect(atLayer(JOB_LAYER, { beacon: 1, blaze: 3 }).offers.find((o) => o.kind === "job")).toEqual({ kind: "job", options: ["blaze"] });
+  });
+
+  it("taking a job teaches its abilities and passive, and companions react", () => {
+    let run = atLayer(JOB_LAYER, { beacon: 4, blaze: 0 });
+    run.party = [newMember("remanso", 0, true)];
+    while (run.offers[0]!.kind !== "job") run = run.offers[0]!.kind === "shop" ? leaveShop(run) : choose(run, 0);
+    run = choose(run, 0);
+    expect(run.hero.job).toBe("beacon");
+    const spec = heroSpec(HERO, run.hero);
+    expect(spec.abilities).toEqual(expect.arrayContaining(JOBS.beacon.abilities));
+    expect(spec.passive).toBe("guard");
+    expect(run.party[0]!.approval).toBe(APPROVAL.start + COMPANIONS.remanso!.reacts.jobBeacon!);
+    // Only once a run.
+    const later = enterNode(run, nextNodes(run)[0]!.id, "en");
+    expect(later.offers.some((o) => o.kind === "job")).toBe(false);
+  });
+
+  it("Guard cuts damage to allies beside the hero; Executioner hits the wounded harder; Dawn cleanses", () => {
+    const flat = parseMap("flat9", Array.from({ length: 9 }, () => Array(9).fill("g0").join(" ")));
+    const mk = (o: Partial<UnitSpec> & Pick<UnitSpec, "id" | "team" | "pos">): UnitSpec => ({
+      name: o.id, element: "neutral", look: "lumo", hp: 40, ap: 6, mp: 3, speed: 50, jump: 1, str: 0, mag: 20, agi: 10, res: {}, abilities: ["ray", "dawn"], ...o,
+    });
+    const units = (passive?: "guard" | "executioner") => [
+      mk({ id: "hero", team: "heroes", pos: { x: 4, y: 4 }, passive }), mk({ id: "a", team: "heroes", pos: { x: 4, y: 5 } }),
+      mk({ id: "f", team: "foes", pos: { x: 4, y: 8 } }),
+    ];
+    const s0 = createBattle({ seed: 1, map: flat, units: units() }), s1 = createBattle({ seed: 1, map: flat, units: units("guard") });
+    const ray = ABILITIES.ray!;
+    const at = (s: BattleState, id: string) => s.units.find((u) => u.id === id)!;
+    expect(damageFactor(s1, at(s1, "f"), at(s1, "a"), ray)).toBeCloseTo(damageFactor(s0, at(s0, "f"), at(s0, "a"), ray) * GUARD_FACTOR);
+    const s2 = createBattle({ seed: 1, map: flat, units: units("executioner") });
+    const f = at(s2, "f"); const full = damageFactor(s2, at(s2, "hero"), f, ray); f.hp = 10;
+    expect(damageFactor(s2, at(s2, "hero"), f, ray)).toBeCloseTo(full * EXECUTIONER_FACTOR);
+    const s3 = createBattle({ seed: 1, map: flat, units: units() });
+    at(s3, "a").statuses = [{ id: "poison", turns: 2, power: 3 }, { id: "shield", turns: 2, power: 5 }];
+    const hero = at(s3, "hero");
+    s3.active = hero.id;
+    const r = applyCommand(s3, { t: "cast", unit: s3.active, ability: "dawn", target: { x: 4, y: 5 } });
+    if (!r.ok) throw new Error(r.error);
+    expect(at(r.state, "a").statuses.map((x) => x.id)).toEqual(["shield"]);
   });
 });

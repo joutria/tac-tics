@@ -130,6 +130,8 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     const o = unitAt(s, p);
     if (!o) continue;
     const enemy = isFoe(u, o);
+    if (ab.alliesOnly && enemy) continue;
+    if (ab.cleanse && !enemy && o.life === "up") v += 5 * o.statuses.filter((x) => x.turns > 0 && !["shield", "regen"].includes(x.id)).length;
     if (ab.damage) {
       const dmg = avg(damagePreview(s, u, o, ab, from));
       if (enemy) {

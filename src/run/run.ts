@@ -14,6 +14,7 @@ import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
 import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
 import { aheadOf, choices, generateMap, MAP_LAYERS, placeQuest, placeRival, type RunMap, type RunNode } from "./map";
 import { COMPANIONS, QUESTS, TALKS, type Lesson } from "../data/companions";
+import { JOB_LAYER, type Job } from "../data/jobs";
 import type { Line } from "../data/rivals";
 import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, type Member } from "./party";
 import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, type Rival } from "./rivals";
@@ -43,6 +44,8 @@ export type Offer =
   | { kind: "talk"; id: string; reply?: Line }
   /** A rest's cleansing fire: burn shards (choice 0) or keep them (choice 1). */
   | { kind: "altar" }
+  /** The hero's job: the one the run leans towards, or both on a tie. */
+  | { kind: "job"; options: Job[] }
   /** A companion's personal quest: its lesson moment (choices from questChoices), then the reply. */
   | { kind: "quest"; companion: string; reply?: Line };
 
@@ -74,6 +77,8 @@ export interface RunState {
   /** What the last battle gave, for the screen. */
   spoils?: { coins: number; xp: number; shards: number; levels: number };
   over: null | "won" | "lost";
+  /** How the run has played, towards the hero's job: Beacon protects and spares, Blaze finishes. */
+  leanings?: Record<Job, number>;
 }
 
 export function newRun(seed: string, difficulty: Difficulty = "normal"): RunState {
@@ -187,6 +192,7 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
     }
     next.at = nodeId; next.path.push(nodeId);
     placeQuests(next);
+    offerJob(next);
     return next;
   }
   next.battle = { version: 2, setup: battleSetup(next, nodeId, lang), commands: [], rewindsUsed: 0, node: nodeId };
@@ -212,6 +218,7 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
   // Companions: the fallen are lost for the run; the rest carry their HP and react to what they saw.
   const deeds = readDeeds(b.setup, b.commands);
   if (shards > 0) deeds.shardsGained = 1;
+  lean(next, { beacon: deeds.helpUp + deeds.letEscape + deeds.noneDowned, blaze: deeds.killFleeing + deeds.rivalBeaten + deeds.finishDowned });
   next.remarks = [];
   for (const m of fielded(next)) {
     const u = end.units.find((x) => x.id === m.id);
@@ -270,10 +277,25 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
   }
   placeQuests(next);
   next.offers.push({ kind: "reward", options: rewardOptions(next, node) });
+  offerJob(next);
   return next;
 }
 
 /** Companions travelling with the party react to something done on the run map. */
+function lean(run: RunState, by: Record<Job, number>) {
+  const l = run.leanings ?? { beacon: 0, blaze: 0 };
+  run.leanings = { beacon: l.beacon + by.beacon, blaze: l.blaze + by.blaze };
+}
+
+/** Halfway through the first region (after a node on JOB_LAYER or later), once: the job the run leans towards. */
+function offerJob(run: RunState) {
+  if (run.hero.job || (run.region ?? 0) > 0 || run.at === null || run.offers.some((o) => o.kind === "job")) return;
+  if (run.map.nodes[run.at]!.layer < JOB_LAYER) return;
+  const l = run.leanings ?? { beacon: 0, blaze: 0 };
+  const options: Job[] = l.beacon > l.blaze ? ["beacon"] : l.blaze > l.beacon ? ["blaze"] : ["beacon", "blaze"];
+  run.offers.push({ kind: "job", options });
+}
+
 /** The choices a companion's lesson moment offers: the sacrifice only once they are ready for it. */
 export function questChoices(run: RunState, companion: string): Lesson[] {
   const m = run.party.find((x) => x.id === companion);
@@ -362,6 +384,18 @@ export function choose(run: RunState, index: number): RunState {
     next.heroHp = heroMaxHp(next);
     for (const m of next.party) if (m.status === "with") m.hp = memberMaxHp(next, m);
     witness(next, { destroyShards: 1 });
+    lean(next, { beacon: 2, blaze: 0 });
+    offerJob(next);
+    return next;
+  }
+  if (offer.kind === "job") {
+    const job = offer.options[index];
+    if (!job) throw new Error("no such job");
+    next.offers.shift();
+    const before = heroMaxHp(next);
+    next.hero.job = job;
+    next.heroHp += heroMaxHp(next) - before;
+    witness(next, job === "beacon" ? { jobBeacon: 1 } : { jobBlaze: 1 });
     return next;
   }
   if (offer.kind === "quest") {
