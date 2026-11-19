@@ -8,7 +8,7 @@ import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
-import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
+import { manhattan, Pos, sightBlock, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
@@ -270,6 +270,11 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       if (ev.downed || ev.died) floaters.push({ pos: { ...u.pos }, text: t(lang, ev.died ? "dead" : "downed"), color: "#ffffff", born: now + 300 });
       continue;
     }
+    if (ev.e === "caughtFire") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: `🔥 ${t(lang, "st.burn")}`, color: STATUS.burn.colour, born: now });
+      continue;
+    }
     if (ev.e === "stunned") {
       const u = unitById(state, ev.unit);
       floaters.push({ pos: { ...u.pos }, text: `${STATUS.stun.icon} ${t(lang, "st.stun")}`, color: STATUS.stun.colour, born: now });
@@ -277,13 +282,18 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       continue;
     }
     if (ev.e !== "cast") continue;
+    for (const f of ev.fx) {
+      const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡" }[f.fx];
+      if (word) floaters.push({ pos: { ...f.at }, text: word, color: f.fx === "explode" ? "#ffb347" : "#e8f4ff", born: now + (f.fx === "explode" ? 0 : 100) });
+    }
     for (const h of ev.hits) {
       const u = unitById(state, h.unit);
       // A pushed unit gets its numbers where it lands, once it has slid there.
       const start = was.get(h.unit);
       const wait = h.pushedTo && start ? 120 + PUSH_STEP_MS * Math.max(1, manhattan(start, h.pushedTo)) : 0;
       const add = (text: string, color: string, delay = 0) => floaters.push({ pos: { ...u.pos }, text, color, born: now + wait + delay });
-      if (h.damage) add(`-${h.damage}${h.crit ? "!" : ""}`, h.crit ? "#ffd86b" : "#ff8a7a");
+      const tag = h.source === "blast" ? "💥 " : h.source === "chain" ? "⚡ " : "";
+      if (h.damage) add(`${tag}-${h.damage}${h.crit ? "!" : ""}`, h.crit ? "#ffd86b" : "#ff8a7a", h.source ? 200 : 0);
       if (h.heal) add(`+${h.heal}`, "#7ed957");
       if (h.revived) add(t(lang, "revived"), "#7ed957");
       if (h.maxHpLost) add(t(lang, "maxHpDown", { n: h.maxHpLost }), "#c9a0ff", 350);
@@ -392,7 +402,7 @@ function marks(): Map<string, Mark> {
     const p = { x, y }, d = manhattan(u.pos, p);
     if (d < ab.range[0] || d > maxRange(state, ab, u.pos, p)) continue;
     const why = castProblem(state, u, selected, p);
-    out.set(`${x},${y}`, !why ? "target" : why === "no line of sight" || TERRAIN[tileAt(state.map, p)!.terrain].blocksSight ? "blocked" : "range");
+    out.set(`${x},${y}`, !why ? "target" : why === "no line of sight" || sightBlock(tileAt(state.map, p)!) > 0 ? "blocked" : "range");
   }
   const focus = pending ?? hover;
   if (focus && out.get(`${focus.x},${focus.y}`) === "target") for (const p of areaTiles(ab, focus)) out.set(`${p.x},${p.y}`, "area");
@@ -482,7 +492,9 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   const tip = $("tip");
   const u = heroTurn() ? activeUnit(state) : null;
   const target = at && unitAt(state, at);
-  if (!at || !target) { tip.style.display = "none"; return; }
+  const ground = at ? tileInfo(at) : [];
+  if (!at || (!target && !ground.length)) { tip.style.display = "none"; return; }
+  if (!target) { showTip(tip, ground.join("<br>"), at, ev); return; }
   const hover = at;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
   const rival = target.rival ? journey.rivals.find((r) => r.id === target.id && !r.settled) : undefined;
@@ -534,7 +546,25 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       lines.push(`${abilityName(lang, id)}${dmg}${leaves} · ${ab.range[0]}–${ab.range[1]} · ${state_}${zone.includes(id) ? ` · <b class="down">${t(lang, "reachesYou")}</b>` : ""}`);
     }
   }
-  tip.innerHTML = lines.join("<br>");
+  showTip(tip, [...lines, ...ground].join("<br>"), at, ev);
+}
+
+/** What the ground under a tile does: objects, fire, ice. */
+function tileInfo(at: Pos): string[] {
+  const tile = tileAt(state.map, at);
+  if (!tile) return [];
+  const out: string[] = [];
+  if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
+  if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
+  if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, "fireInfo")}`);
+  if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);
+  if (tile.terrain === "bridge") out.push(t(lang, "bridgeInfo"));
+  if (tile.terrain === "water") out.push(t(lang, "waterInfo"));
+  return out;
+}
+
+function showTip(tip: HTMLElement, html: string, at: Pos, ev?: { clientX: number; clientY: number }) {
+  tip.innerHTML = html;
   tip.style.display = "block";
   const spot = ev ?? screenOf(at);
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -694,7 +724,7 @@ function frame(time: number) {
 
 async function start() {
   const base = import.meta.env.BASE_URL;
-  const tiles = ["top-grass", "top-dirt", "top-water", "top-rock", "top-tree", "side-left", "side-right", "obj-rock", "obj-tree"];
+  const tiles = ["top-grass", "top-dirt", "top-water", "top-rock", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-rock", "obj-tree"];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   for (const u of [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec)]) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);

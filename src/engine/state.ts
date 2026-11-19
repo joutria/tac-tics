@@ -11,9 +11,10 @@ import { ABILITIES } from "../data/abilities";
 import type { Element } from "../data/elements";
 import { abilityAvailable, castProblem, hurt, resolveCast, type Hit } from "./combat";
 import { absorb, removeStatus, statusOf, tickDown, POISON_HEAL_FACTOR, type Status, type StatusId } from "./status";
-import { GridMap, NEIGHBOURS, Pos, samePos, tileAt, TERRAIN } from "./grid";
+import { GridMap, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
 import { routeTo } from "./movement";
 import { rngNext, seedFrom } from "./rng";
+import { fireUnder, updateTiles, type TerrainFx } from "./terrain";
 import { escapeStateFor, FLEE_LOCK, isBorder, turnMp, type EscapeState } from "./escape";
 
 export type Team = "heroes" | "foes";
@@ -119,7 +120,9 @@ export type Command =
 
 export type BattleEvent =
   | { e: "moved"; unit: string; path: Pos[] }
-  | { e: "cast"; unit: string; ability: string; target: Pos; hits: Hit[] }
+  | { e: "cast"; unit: string; ability: string; target: Pos; hits: Hit[]; fx: TerrainFx[] }
+  /** Walked into fire, or started a turn in it. */
+  | { e: "caughtFire"; unit: string }
   | { e: "waited"; unit: string }
   | { e: "turnStarted"; unit: string; round: number }
   | { e: "died"; unit: string }
@@ -171,7 +174,7 @@ export function createBattle(setup: BattleSetup): BattleState {
     ids.add(u.id);
     for (const a of u.abilities) if (!ABILITIES[a]) throw new Error(`unit ${u.id} has unknown ability ${a}`);
     const tile = tileAt(setup.map, u.pos);
-    if (!tile || !TERRAIN[tile.terrain].walkable) throw new Error(`unit ${u.id} starts on a tile it cannot stand on`);
+    if (!standable(tile)) throw new Error(`unit ${u.id} starts on a tile it cannot stand on`);
   }
   let rng = seedFrom(setup.seed);
   const rolls = new Map<string, number>();
@@ -216,6 +219,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
     if (!u) return;
     s.clock = u.ct;
     s.active = u.id;
+    updateTiles(s);
     if (u.life === "downed") {
       u.downedTurns -= 1;
       if (u.downedTurns <= 0) { u.life = "dead"; events.push({ e: "died", unit: u.id }); s.winner = winnerOf(s); continue; }
@@ -229,6 +233,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
         u.ct += delayFor(u.speed); u.seq = ++s.seqCounter;
         continue;
       }
+      if (fireUnder(s, u)) events.push({ e: "caughtFire", unit: u.id });
       if (startOfTurnTicks(s, u, events)) { s.winner = winnerOf(s); u.ct += delayFor(u.speed); u.seq = ++s.seqCounter; continue; }
       u.ap = u.maxAp;
       u.mp = Math.max(0, turnMp(u) - (statusOf(u, "slow")?.power ?? 0));
@@ -285,6 +290,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       actor.mp -= route.cost;
       actor.moved = true;
       events.push({ e: "moved", unit: actor.id, path: route.path });
+      if (fireUnder(s, actor)) events.push({ e: "caughtFire", unit: actor.id });
       break;
     }
     case "cast": {
@@ -300,7 +306,8 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
         return { ok: true, state: r.state, events: [{ e: "refused", unit: actor.id, target: cmd.target }, ...r.events] };
       }
       if (!samePos(cmd.target, actor.pos)) actor.facing = facingOf(actor.pos, cmd.target);
-      const hits = resolveCast(s, actor, ab, cmd.target);
+      const fx: TerrainFx[] = [];
+      const hits = resolveCast(s, actor, ab, cmd.target, fx);
       actor.ap -= ab.ap;
       actor.spentAp = true;
       actor.usedThisTurn[ab.id] = (actor.usedThisTurn[ab.id] ?? 0) + 1;
@@ -310,7 +317,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
         if (dist <= 1) s.habits.melee++; else s.habits.ranged++;
         s.habits.elements[ab.element] = (s.habits.elements[ab.element] ?? 0) + 1;
       }
-      events.push({ e: "cast", unit: actor.id, ability: ab.id, target: cmd.target, hits });
+      events.push({ e: "cast", unit: actor.id, ability: ab.id, target: cmd.target, hits, fx });
       for (const h of hits) if (h.died) events.push({ e: "died", unit: h.unit });
       s.winner = winnerOf(s);
       break;

@@ -2,7 +2,7 @@
    Grid +x runs down-right on screen and +y down-left; each height level lifts a tile by 16 px.
    The view can be turned in 90 degree steps so nothing stays hidden behind a hill or a tree. */
 import { STATUS } from "../engine/status";
-import { GridMap, Pos, tileAt } from "../engine/grid";
+import { GridMap, Pos, PROP_HP, tileAt, type Prop } from "../engine/grid";
 import { MAX_REVIVES } from "../engine/combat";
 import { wavering } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
@@ -154,7 +154,7 @@ export interface DrawOptions {
   escapePaths?: Pos[][];
 }
 
-const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32" };
+const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
 
 const FACING_FRAME = { S: { col: 0, flip: false }, N: { col: 2, flip: false }, E: { col: 4, flip: false }, W: { col: 4, flip: true } } as const;
 const SHEET_ROW: Record<string, number> = { lumo: 1 };
@@ -224,7 +224,16 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
           ctx.drawImage(img["side-left"]!, c.x - TW / 2, c.y + lvl * LEVEL);
           ctx.drawImage(img["side-right"]!, c.x, c.y + lvl * LEVEL);
         }
-        ctx.drawImage(img[`top-${tile.terrain}`]!, c.x - TW / 2, c.y - TH / 2);
+        const top = img[`top-${tile.terrain}`];
+        if (top) ctx.drawImage(top, c.x - TW / 2, c.y - TH / 2);
+        else {
+          // Terrain with no tile art yet (ice, bridge): a plain diamond, with planks drawn on a bridge.
+          diamond(ctx, c.x, c.y, FLAT_COLOUR[tile.terrain] ?? "#888", "rgba(0,0,0,0.3)");
+          if (tile.terrain === "bridge") {
+            ctx.strokeStyle = "rgba(60,35,15,0.6)"; ctx.lineWidth = 1;
+            for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(c.x - TW / 4 + i * 7, c.y - TH / 4 + i * 3.5); ctx.lineTo(c.x + TW / 4 + i * 7, c.y + TH / 4 + i * 3.5 - TH / 2); ctx.stroke(); }
+          }
+        }
       }
       const mark = opt.marks.get(k2);
       if (mark) diamond(ctx, c.x, c.y, ...MARK_STYLE[mark], mark === "chosen" ? 2.5 : 1);
@@ -237,6 +246,15 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.fillStyle = "#fff"; ctx.fillText(String(tile.h), c.x, c.y + 8);
         ctx.textBaseline = "alphabetic";
       }
+      if ((tile.fireUntil ?? 0) > s.clock) {
+        // Fire: a flickering orange wash and a flame.
+        ctx.globalAlpha = 0.35 + 0.15 * Math.sin(opt.time / 90 + p.x * 3 + p.y);
+        diamond(ctx, c.x, c.y, "#ff7a2a", "rgba(255,200,80,0.8)");
+        ctx.globalAlpha = 1;
+        ctx.font = "16px system-ui, sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("🔥", c.x, c.y + 4 - 2 * Math.abs(Math.sin(opt.time / 160 + p.x)));
+      }
+      if (tile.prop) drawProp(ctx, tile.prop, c, tile.propHp ?? 0);
       if (!flat && tile.terrain === "rock") ctx.drawImage(img["obj-rock"]!, c.x - 18, c.y - 30, 36, 36);
       if (!flat && tile.terrain === "tree") {
         // See-through when someone stands right behind it, so trees never hide a unit.
@@ -368,4 +386,21 @@ function drawUnit(
     ctx.fillStyle = "#fff"; ctx.fillText(badge, c.x - 22, c.y - 58.5);
     ctx.textBaseline = "alphabetic"; ctx.globalAlpha = base;
   }
+}
+
+/** Barrels and crates, drawn with plain shapes so they read at a glance in both views. */
+function drawProp(ctx: CanvasRenderingContext2D, prop: Prop, c: { x: number; y: number }, hp: number) {
+  ctx.save();
+  if (prop === "barrel") {
+    ctx.fillStyle = "#8c2f1f"; ctx.strokeStyle = "#2a0f08"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.ellipse(c.x, c.y - 4, 9, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillRect(c.x - 9, c.y - 22, 18, 18); ctx.strokeRect(c.x - 9, c.y - 22, 18, 18);
+    ctx.beginPath(); ctx.ellipse(c.x, c.y - 22, 9, 4, 0, 0, Math.PI * 2); ctx.fillStyle = "#b5432c"; ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#ffd23f"; ctx.font = "bold 10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText("!", c.x, c.y - 9);
+  } else {
+    ctx.fillStyle = hp < PROP_HP.crate ? "#8a6236" : "#a8773f"; ctx.strokeStyle = "#3d2810"; ctx.lineWidth = 1.5;
+    ctx.fillRect(c.x - 11, c.y - 24, 22, 20); ctx.strokeRect(c.x - 11, c.y - 24, 22, 20);
+    ctx.beginPath(); ctx.moveTo(c.x - 11, c.y - 24); ctx.lineTo(c.x + 11, c.y - 4); ctx.moveTo(c.x + 11, c.y - 24); ctx.lineTo(c.x - 11, c.y - 4); ctx.stroke();
+  }
+  ctx.restore();
 }

@@ -13,6 +13,7 @@ import { hasLineOfSight } from "../src/engine/sight";
 import { abilityReaches, dangerZone, nextTurnSpots } from "../src/engine/threat";
 import { activeUnit, applyCommand, BattleSetup, BattleState, Command, createBattle, delayFor, roundOf, UnitSpec, unitAt, unitById, upcomingTurns } from "../src/engine/state";
 import { activeRivals, afterBattle, pickCounter, readStyle, rivalSpec, rivalTaunt, RESIST_STEP } from "../src/run/rivals";
+import { BLAST_DAMAGE } from "../src/engine/terrain";
 import { ESCAPE_FROM_ROUND, FLEE_TAKEN, RETREAT_TAKEN, turnMp, wavering } from "../src/engine/escape";
 
 const setup: BattleSetup = { seed: "test-seed", map: MEADOW, units: TEST_UNITS };
@@ -513,5 +514,81 @@ describe("status effects", () => {
     expect(unitById(s, "h").hp).toBe(before);
     s = end(s, "f");
     expect(unitById(s, "h").hp).toBe(before + 6);
+  });
+});
+
+describe("interactive terrain", () => {
+  const ab = (id: string, element: Ability["element"], extra: Partial<Ability> = {}): Ability => ({
+    id, element, ap: 1, range: [1, 8], los: false, target: "any", area: "single", cooldown: 0, perTurn: 9, damage: { min: 2, max: 2, stat: "mag" }, ...extra,
+  });
+  Object.assign(ABILITIES, {
+    xFire: ab("xFire", "fire"), xIce: ab("xIce", "ice", { damage: undefined }), xBolt: ab("xBolt", "bolt", { target: "foe", damage: { min: 10, max: 10, stat: "mag" } }),
+    xHit: ab("xHit", "neutral", { target: "foe", damage: { min: 5, max: 5, stat: "mag" } }), xShove: ab("xShove", "neutral", { target: "foe", damage: undefined, push: 2 }),
+  });
+  const kit = ["xFire", "xIce", "xBolt", "xHit", "xShove", "ray"];
+  const field = (rows: string[], units: UnitSpec[]) => createBattle({ seed: 4, map: parseMap("t", rows), units });
+  const hero = (pos: { x: number; y: number }, o: Partial<UnitSpec> = {}) => unit({ id: "h", team: "heroes", pos, speed: 90, abilities: kit, ...o });
+  const foe = (id: string, pos: { x: number; y: number }) => unit({ id, team: "foes", pos, hp: 60 });
+  const tile = (s: BattleState, x: number, y: number) => s.map.tiles[y * s.map.w + x]!;
+  const cast = (s: BattleState, ability: string, target: { x: number; y: number }) => play(s, [{ t: "cast", unit: "h", ability, target }]);
+
+  it("reads objects from map rows", () => {
+    const m = parseMap("p", ["g0B g0C b0 i0"]);
+    expect(m.tiles.map((t) => [t.terrain, t.prop])).toEqual([["grass", "barrel"], ["grass", "crate"], ["bridge", undefined], ["ice", undefined]]);
+    expect(() => parseMap("p", ["g0X"])).toThrow();
+  });
+  it("fire sets grass alight, burns whoever walks in, then leaves dirt", () => {
+    let s = field(["g0 g0 g0 g0 g0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 5, y: 0 })]);
+    s = cast(s, "xFire", { x: 2, y: 0 });
+    expect(tile(s, 2, 0).fireUntil).toBeGreaterThan(s.clock);
+    const r = applyCommand(s, { t: "move", unit: "h", to: { x: 2, y: 0 } });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.events.some((e) => e.e === "caughtFire")).toBe(true);
+    s = play(r.state, [{ t: "move", unit: "h", to: { x: 1, y: 0 } }]);
+    for (let i = 0; i < 8; i++) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(tile(s, 2, 0).terrain).toBe("dirt");
+    expect(tile(s, 2, 0).fireUntil).toBeUndefined();
+  });
+  it("ice makes water walkable until it thaws, and fire melts it", () => {
+    let s = field(["g0 w0 w0 g0 g0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 5, y: 0 })]);
+    expect(applyCommand(s, { t: "move", unit: "h", to: { x: 1, y: 0 } }).ok).toBe(false);
+    s = cast(cast(s, "xIce", { x: 1, y: 0 }), "xIce", { x: 2, y: 0 });
+    expect(applyCommand(s, { t: "move", unit: "h", to: { x: 1, y: 0 } }).ok).toBe(true);
+    s = cast(s, "xFire", { x: 2, y: 0 });
+    expect(tile(s, 2, 0).terrain).toBe("water");
+    while (s.clock < 500) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(tile(s, 1, 0).terrain).toBe("water");
+  });
+  it("barrels blow up the 3x3 around them and set off their neighbours", () => {
+    let s = field(["g0 g0 g0B g0B g0", "g0 g0 g0 g0 g0"], [hero({ x: 0, y: 0 }), foe("a", { x: 1, y: 1 }), foe("b", { x: 4, y: 1 })]);
+    const r = applyCommand(s, { t: "cast", unit: "h", ability: "xHit", target: { x: 2, y: 0 } });
+    if (!r.ok) throw new Error(r.error);
+    s = r.state;
+    expect(tile(s, 2, 0).prop).toBeUndefined();
+    expect(tile(s, 3, 0).prop).toBeUndefined();
+    expect(unitById(s, "a").hp).toBe(60 - BLAST_DAMAGE);
+    expect(unitById(s, "b").hp).toBe(60 - BLAST_DAMAGE);
+    expect(unitById(s, "a").statuses.some((x) => x.id === "burn")).toBe(true);
+    expect(unitById(s, "h").hp).toBe(40);
+    const ev = r.events.find((e) => e.e === "cast");
+    expect(ev?.e === "cast" && ev.fx.filter((f) => f.fx === "explode").length).toBe(2);
+  });
+  it("crates break under enough damage and slide when pushed", () => {
+    let s = field(["g0 g0 g0C g0 g0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 5, y: 0 })]);
+    s = cast(s, "xShove", { x: 2, y: 0 });
+    expect(tile(s, 4, 0).prop).toBe("crate");
+    s = cast(cast(s, "xHit", { x: 4, y: 0 }), "xHit", { x: 4, y: 0 });
+    expect(tile(s, 4, 0).prop).toBe("crate");
+    s = cast(s, "xHit", { x: 4, y: 0 });
+    expect(tile(s, 4, 0).prop).toBeUndefined();
+  });
+  it("bolt runs through water to everyone on the same pond", () => {
+    const s0 = field(["g0 g0 g0 g0 g0 g0", "g0 w0 w0 w0 g0 g0", "g0 g0 g0 g0 g0 g0"],
+      [hero({ x: 0, y: 2 }), foe("a", { x: 1, y: 0 }), foe("b", { x: 3, y: 2 }), foe("c", { x: 5, y: 2 })]);
+    const s = cast(s0, "xBolt", { x: 1, y: 0 });
+    const hitA = 60 - unitById(s, "a").hp;
+    expect(hitA).toBeGreaterThan(0);
+    expect(unitById(s, "b").hp).toBe(60 - Math.floor(hitA * 0.5));
+    expect(unitById(s, "c").hp).toBe(60);
   });
 });

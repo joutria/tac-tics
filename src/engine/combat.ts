@@ -11,11 +11,12 @@
    rounded down, then a Shield on the target soaks what it can. Attacks always hit. Area attacks hit everyone in the area, allies included, but not the caster. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
-import { inside, manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
+import { inside, manhattan, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
 import { hasLineOfSight } from "./sight";
+import { chainBolt, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
 import { isFoe, unitAt, type BattleState, type Unit } from "./state";
 
 export const CRIT_CHANCE = 0.05;
@@ -45,6 +46,8 @@ export interface Hit {
   /** Statuses this hit put on the unit, and ones it washed off. */
   statuses?: StatusId[];
   cleansed?: StatusId[];
+  /** Dealt by the terrain rather than the ability itself: a barrel blast or a bolt chained through water. */
+  source?: "blast" | "chain";
 }
 
 export const unitAbilities = (u: Unit) => [...u.abilities, "helpUp"];
@@ -80,12 +83,12 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
     return !!o && o.life === "up" && o.id !== u.id && !samePos(p, target);
   })) return "no line of sight";
   switch (ab.target) {
-    case "foe": if (!other || !isFoe(u, other)) return "needs an enemy"; break;
+    case "foe": if ((!other || !isFoe(u, other)) && !(tileAt(s.map, target)?.prop && (ab.damage || ab.push))) return "needs an enemy"; break;
     case "ally": { const t = samePos(target, from) ? u : other; if (!t || isFoe(u, t) || t.life !== "up") return "needs a standing ally"; break; }
     case "downedAlly": if (!other || isFoe(u, other) || other.life !== "downed") return "needs a downed ally"; break;
     case "emptyTile": {
       const tile = tileAt(s.map, target);
-      if (!tile || !TERRAIN[tile.terrain].walkable || occupant) return "needs an empty tile";
+      if (!standable(tile) || occupant) return "needs an empty tile";
       break;
     }
     case "any": break;
@@ -127,11 +130,15 @@ export function damagePreview(s: BattleState, caster: Unit, target: Unit, ab: Ab
 }
 
 /** Applies a cast to the state (which is already a private copy) and reports what happened. */
-export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: Pos): Hit[] {
+export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: Pos, fx: TerrainFx[] = []): Hit[] {
   const hits: Hit[] = [];
   const from = { ...caster.pos };
   if (ab.teleport) { caster.pos = { ...target }; return hits; }
+  const ground: TerrainHit[] = [];
+  const credit = (u: Unit, h: { downed: boolean; died: boolean }) => { if ((h.downed || h.died) && isFoe(caster, u)) caster.downs += 1; };
+  const hurtByTerrain = (u: Unit, dmg: number, h: TerrainHit) => { hurt(u, dmg, h); credit(u, h); };
   for (const p of areaTiles(ab, target)) {
+    touchTile(s, ab, from, p, fx, ground, hurtByTerrain);
     const u = unitAt(s, p);
     // An area attack hits allies caught in it, but never the one who casts it (so it can be used point-blank).
     if (!u || (u.id === caster.id && ab.damage)) continue;
@@ -163,8 +170,14 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
     if (ab.element === "water" && u.life === "up" && statusOf(u, "burn")) { removeStatus(u, "burn"); hit.cleansed = ["burn"]; }
     if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [ab.status.id];
     if (ab.push && u.life === "up") push(s, u, from, ab.push, hit);
-    if ((hit.downed || hit.died) && isFoe(caster, u)) caster.downs += 1;
+    credit(u, hit);
     hits.push(hit);
+  }
+  if (ab.element === "bolt" && ab.damage) chainBolt(s, caster, hits, fx, ground, hurtByTerrain);
+  for (const g of ground) {
+    hits.push({ unit: g.unit, damage: g.damage, heal: 0, crit: false, downed: g.downed, died: g.died, revived: false, rooted: false,
+      source: g.source,
+      ...(g.shielded ? { shielded: g.shielded } : {}), ...(g.burned ? { statuses: ["burn" as const] } : {}) });
   }
   return hits;
 }
@@ -190,7 +203,7 @@ function push(s: BattleState, u: Unit, from: Pos, tiles: number, hit: Hit) {
     const n = { x: u.pos.x + step.x, y: u.pos.y + step.y };
     const here = tileAt(s.map, u.pos)!, next = tileAt(s.map, n);
     // Pushed units can be shoved down any drop, but never up a step.
-    const free = !!next && TERRAIN[next.terrain].walkable && !unitAt(s, n) && next.h <= here.h;
+    const free = standable(next) && !unitAt(s, n) && next.h <= here.h;
     if (!free) {
       const extra = PUSH_HIT * (tiles - i);
       hit.damage += Math.min(extra, u.hp);

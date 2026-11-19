@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { ELEMENTS, ELEMENT_IDS, BEATS } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
-import { TERRAIN, tileAt } from "../src/engine/grid";
+import { standable, TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
 import { ARENAS } from "../src/data/region";
@@ -53,7 +53,7 @@ for (const m of [MEADOW]) {
     if (ids.has(u.id)) fail(`unit id ${u.id} is used twice`);
     ids.add(u.id);
     const tile = tileAt(m, u.pos);
-    if (!tile || !TERRAIN[tile.terrain].walkable) fail(`unit ${u.id} starts on a tile it cannot stand on in ${m.id}`);
+    if (!standable(tile)) fail(`unit ${u.id} starts on a tile it cannot stand on in ${m.id}`);
     if (!ELEMENTS[u.element]) fail(`unit ${u.id} has unknown element ${u.element}`);
     if (!existsSync(`public/art/creatures/${u.look}.png`)) fail(`unit ${u.id}: missing art public/art/creatures/${u.look}.png`);
   }
@@ -95,7 +95,7 @@ for (const a of ARENAS) {
   if (a.foes.length < 4) fail(`arena ${a.map.id}: needs 4 foe spots (elites field 4)`);
   for (const p of spots) {
     const tile = tileAt(a.map, p);
-    if (!tile || !TERRAIN[tile.terrain].walkable) fail(`arena ${a.map.id}: start ${p.x},${p.y} is not walkable`);
+    if (!standable(tile)) fail(`arena ${a.map.id}: start ${p.x},${p.y} is not walkable`);
   }
   if (new Set(spots.map((p) => `${p.x},${p.y}`)).size !== spots.length) fail(`arena ${a.map.id}: two starts share a tile`);
 }
