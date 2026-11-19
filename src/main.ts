@@ -14,7 +14,7 @@ import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { buy, choose, enterNode, finishBattle, leaveShop, newRun, rulesOf, RUN_VERSION, shopHeal, wear, type RunState } from "./run/run";
+import { buy, choose, enterNode, finishBattle, leaveShop, newRun, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
 import { DIFFICULTY, type Difficulty } from "./data/region";
 import { renderRunMap } from "./ui/runmap";
 import { BattleSave, replay } from "./engine/save";
@@ -178,7 +178,9 @@ function startBattle(announce: boolean) {
 function afterBattleButton() {
   if (journey.over) { startRun(); return; }
   if (!journey.battle || !state.winner) return;
+  const region = journey.region;
   journey = finishBattle(journey, state);
+  if (journey.region !== region) { toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
   const sp = journey.spoils;
   if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : ""), 2600);
   showMap();
@@ -188,7 +190,7 @@ function loadOrNew() {
   const text = safeGet(RUN_KEY);
   if (text) {
     try {
-      const saved = JSON.parse(text) as RunState;
+      const saved = upgradeRun(JSON.parse(text) as RunState);
       if (saved.version !== RUN_VERSION) throw new Error(`unknown run version ${saved.version}`);
       journey = saved;
       if (journey.battle) { startBattle(false); toast(t(lang, "resume")); } else showMap();

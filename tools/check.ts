@@ -7,7 +7,7 @@ import { TEST_UNITS } from "../src/data/units";
 import { standable, TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
-import { ARENAS } from "../src/data/region";
+import { REGIONS } from "../src/data/region";
 import { ITEMS, PERKS } from "../src/data/gear";
 import { COMPANIONS, TALKS } from "../src/data/companions";
 import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
@@ -87,8 +87,15 @@ for (const [id, talk] of Object.entries(TALKS)) {
   talk.choices.forEach((c, i) => { lineOk(`talk ${id} choice ${i}`, c.text); lineOk(`talk ${id} reply ${i}`, c.reply); });
 }
 
-// Region arenas: the party and up to four foes start on tiles they can stand on, all different.
-for (const a of ARENAS) {
+// Regions: a name in both languages, species, a boss species that exists, and arenas where the party and up to
+// four foes start on tiles they can stand on, all different.
+for (const r of REGIONS) {
+  lineOk(`region ${r.id} name`, r.name);
+  if (!r.species.length) fail(`region ${r.id}: no species`);
+  if (!r.species[r.boss.species]) fail(`region ${r.id}: boss species ${r.boss.species} does not exist`);
+  if (!r.arenas.length) fail(`region ${r.id}: no arenas`);
+}
+for (const a of REGIONS.flatMap((r) => r.arenas)) {
   if (a.map.tiles.length !== a.map.w * a.map.h) fail(`map ${a.map.id}: tile count does not match its size`);
   const spots = [a.hero, ...a.allies, ...a.foes];
   if (a.allies.length < 3) fail(`arena ${a.map.id}: needs 3 ally spots (a field of 4)`);
