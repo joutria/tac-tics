@@ -6,6 +6,7 @@ import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
 import { TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
+import { ABILITIES } from "../src/data/abilities";
 
 const problems: string[] = [];
 const fail = (msg: string) => problems.push(msg);
@@ -15,6 +16,16 @@ const es = Object.keys(TEXT.es), en = Object.keys(TEXT.en);
 for (const k of es) if (!en.includes(k)) fail(`text "${k}" is missing in English`);
 for (const k of en) if (!es.includes(k)) fail(`text "${k}" is missing in Spanish`);
 for (const [lang, table] of Object.entries(TEXT)) for (const [k, v] of Object.entries(table)) if (!v) fail(`text "${k}" is empty in ${lang}`);
+
+// Abilities: every one has a name and description in both languages, sane numbers, and every unit's exist.
+for (const [id, ab] of Object.entries(ABILITIES)) {
+  if (ab.id !== id) fail(`ability ${id} has id ${ab.id}`);
+  for (const k of [`ab.${id}`, `ab.${id}.d`]) if (!(k in TEXT.es)) fail(`ability ${id} has no text "${k}"`);
+  if (ab.range[0] > ab.range[1]) fail(`ability ${id}: range min above max`);
+  if (ab.damage && ab.damage.min > ab.damage.max) fail(`ability ${id}: damage min above max`);
+  if (ab.ap <= 0 || ab.perTurn <= 0) fail(`ability ${id}: AP and uses per turn must be positive`);
+}
+for (const u of TEST_UNITS) for (const a of u.abilities) if (!ABILITIES[a]) fail(`unit ${u.id} has unknown ability ${a}`);
 
 // Elements: opposites point both ways; every circle element beats exactly one other.
 for (const e of ELEMENT_IDS) {

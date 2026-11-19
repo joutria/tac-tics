@@ -2,7 +2,7 @@
    moment it was made (mid-turn included) and stays small. Co-op will send the same commands over the network. */
 import { applyCommand, BattleSetup, BattleState, Command, createBattle } from "./state";
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export interface BattleSave {
   version: number;

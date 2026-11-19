@@ -5,33 +5,58 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Tac-tics</title>
   <style>
-    :root { color-scheme: dark; --bg: #1d1f2b; --panel: rgba(20, 22, 32, 0.88); --ink: #f2efe6; --quiet: #a9a7b8; --accent: #ffd86b; }
+    :root { color-scheme: dark; --bg: #1d1f2b; --panel: rgba(20, 22, 32, 0.9); --ink: #f2efe6; --quiet: #a9a7b8; --accent: #ffd86b; --hero: #ffe680; --foe: #ff8a7a; }
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, sans-serif; overflow: hidden; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.35 system-ui, sans-serif; overflow: hidden; -webkit-user-select: none; user-select: none; }
     canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
-    #hud { position: fixed; left: 0; right: 0; top: 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-      padding: max(10px, env(safe-area-inset-top)) 16px 10px; background: var(--panel); }
+    .bar { position: fixed; left: 0; right: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; background: var(--panel); }
+    #top { top: 0; padding-top: max(8px, env(safe-area-inset-top)); }
+    #bottom { bottom: 0; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
     #turn { font-weight: 600; }
-    #stats, #hint { color: var(--quiet); }
-    #hint { flex-basis: 100%; font-size: 13px; }
+    #stats { color: var(--quiet); }
+    #queue { display: flex; gap: 4px; flex-basis: 100%; overflow-x: auto; align-items: center; color: var(--quiet); font-size: 12px; }
+    .chip { padding: 2px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap; font-size: 12px; }
+    .chip.heroes { border-color: var(--hero); color: var(--hero); }
+    .chip.foes { border-color: var(--foe); color: var(--foe); }
+    .chip.now { background: rgba(255,255,255,0.12); font-weight: 600; }
     .spacer { flex: 1; }
-    button { font: inherit; color: var(--ink); background: #3a3d55; border: 1px solid #5a5e80; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+    button { font: inherit; color: var(--ink); background: #3a3d55; border: 1px solid #5a5e80; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
     button.primary { background: #6b5a1e; border-color: var(--accent); }
-    button:disabled { opacity: 0.5; cursor: default; }
-    #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+    button.on { background: #7a2f28; border-color: #ff8a7a; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .ab { display: flex; flex-direction: column; align-items: flex-start; min-width: 74px; line-height: 1.15; }
+    .ab small { color: var(--quiet); font-size: 11px; }
+    #abilities { display: flex; gap: 6px; flex-wrap: wrap; }
+    #hint { flex-basis: 100%; font-size: 12px; color: var(--quiet); }
+    #tip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid #5a5e80; border-radius: 8px; padding: 6px 9px; font-size: 12px; max-width: 240px; display: none; }
+    #tip b { color: var(--accent); }
+    #overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); flex-direction: column; gap: 16px; }
+    #overlay h1 { margin: 0; font-size: 40px; }
+    #toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .3s; pointer-events: none; }
     #toast.show { opacity: 1; }
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
-  <div id="hud">
+  <div id="top" class="bar">
     <span id="turn"></span><span id="stats"></span>
     <span class="spacer"></span>
+    <button id="zoomOut" aria-label="−">−</button><button id="zoomIn" aria-label="+">+</button>
+    <button id="rotate"></button>
     <button id="lang"></button>
     <button id="new"></button>
+    <div id="queue"></div>
+  </div>
+  <div id="bottom" class="bar">
+    <div id="abilities"></div>
+    <span class="spacer"></span>
+    <button id="undo"></button>
+    <button id="wait"></button>
     <button id="end" class="primary"></button>
     <span id="hint"></span>
   </div>
+  <div id="tip"></div>
+  <div id="overlay"><h1 id="result"></h1><button id="again" class="primary"></button></div>
   <div id="toast"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
