@@ -241,7 +241,10 @@ function toast(msg: string) {
 
 function layout() {
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+  // Size the drawing buffer to the box the canvas really fills. Mobile browsers can make 100vh taller than the
+  // visible window (the address bar), which used to stretch the picture and put taps one tile too low.
+  const box = canvas.getBoundingClientRect();
+  canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
   const top = $("top").getBoundingClientRect().height, bottom = $("bottom").getBoundingClientRect().height;
   const size = mapPixelSize(state.map);
   const availW = innerWidth - 16, availH = innerHeight - top - bottom - 8;
@@ -257,14 +260,20 @@ function layout() {
   view = { ...view, scale, ox: (canvas.width - size.w * scale) / 2 + panX * dpr, oy: top * dpr + (availH * dpr - size.h * scale) / 2 + panY * dpr };
 }
 
+/** Screen point to canvas pixels, measured from the canvas's real box so any CSS stretch is undone. */
+function toCanvas(ev: { clientX: number; clientY: number }) {
+  const box = canvas.getBoundingClientRect();
+  return { x: (ev.clientX - box.left) * (canvas.width / box.width), y: (ev.clientY - box.top) * (canvas.height / box.height) };
+}
+
 function toMap(ev: { clientX: number; clientY: number }, slack = 0) {
-  const dpr = window.devicePixelRatio || 1;
-  return pickAt(state.map, state.units, (ev.clientX * dpr - view.ox) / view.scale, (ev.clientY * dpr - view.oy) / view.scale, view.rot, slack);
+  const c = toCanvas(ev);
+  return pickAt(state.map, state.units, (c.x - view.ox) / view.scale, (c.y - view.oy) / view.scale, view.rot, slack);
 }
 
 function screenOf(p: Pos) {
-  const c = tileCenter(state.map, p, view.rot), dpr = window.devicePixelRatio || 1;
-  return { clientX: (c.x * view.scale + view.ox) / dpr, clientY: (c.y * view.scale + view.oy) / dpr };
+  const c = tileCenter(state.map, p, view.rot), box = canvas.getBoundingClientRect();
+  return { clientX: box.left + (c.x * view.scale + view.ox) * (box.width / canvas.width), clientY: box.top + (c.y * view.scale + view.oy) * (box.height / canvas.height) };
 }
 
 /** Pans so a tile sits in the middle of the free space between the bars. */
@@ -401,7 +410,8 @@ async function start() {
     state: () => state,
     marks: () => [...marks().entries()],
     select: (id: string | null) => { selected = id; refresh(); },
-    screenOf: (p: Pos) => { const c = tileCenter(state.map, p, view.rot); const dpr = window.devicePixelRatio || 1; return { x: (c.x * view.scale + view.ox) / dpr, y: (c.y * view.scale + view.oy) / dpr }; },
+    pick: (x: number, y: number) => toMap({ clientX: x, clientY: y }),
+    screenOf: (p: Pos) => { const c = screenOf(p); return { x: c.clientX, y: c.clientY }; },
   } });
 }
 
