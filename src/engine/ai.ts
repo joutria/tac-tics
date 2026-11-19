@@ -10,7 +10,7 @@ import { manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
 import { reachable } from "./movement";
 import { isBorder } from "./escape";
 import { hasLineOfSight } from "./sight";
-import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, roundOf, unitAt, type AiKind, type Unit } from "./state";
+import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, onMap, roundOf, unitAt, type AiKind, type Unit } from "./state";
 
 interface Weights {
   /** How much a point of expected incoming damage hurts a standing spot. */
@@ -111,7 +111,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
       const dmg = avg(damagePreview(s, u, o, ab, from));
       if (enemy) {
         if (o.life === "downed") v += dmg > 0 ? 45 : 0;
-        else v += Math.min(dmg, o.hp) + (dmg >= o.hp ? 25 : 0) + (1 - o.hp / o.maxHp) * 8;
+        else v += Math.min(dmg, o.hp) + (dmg >= o.hp ? 25 : 0) + (1 - o.hp / o.maxHp) * 8 + (u.hunts === "healer" && isHealer(o) ? 12 : 0);
       } else v -= dmg * 1.5 + (o.id === u.id ? 0 : 5);
     }
     if (ab.heal && !enemy && o.life === "up") v += Math.min(avg(ab.heal), o.maxHp - o.hp);
@@ -122,11 +122,13 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
   return v;
 }
 
+const isHealer = (o: Unit) => o.abilities.some((id) => !!ABILITIES[id]?.heal);
+
 function candidateTargets(s: BattleState, ab: Ability): Pos[] {
   if (ab.teleport) return [];
   const spots = new Map<string, Pos>();
   for (const o of s.units) {
-    if (o.life === "dead") continue;
+    if (!onMap(o)) continue;
     spots.set(key(o.pos), o.pos);
     if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }

@@ -7,6 +7,7 @@ import { TEST_UNITS } from "../src/data/units";
 import { TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
+import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
 
 const problems: string[] = [];
 const fail = (msg: string) => problems.push(msg);
@@ -16,6 +17,13 @@ const es = Object.keys(TEXT.es), en = Object.keys(TEXT.en);
 for (const k of es) if (!en.includes(k)) fail(`text "${k}" is missing in English`);
 for (const k of en) if (!es.includes(k)) fail(`text "${k}" is missing in Spanish`);
 for (const [lang, table] of Object.entries(TEXT)) for (const [k, v] of Object.entries(table)) if (!v) fail(`text "${k}" is empty in ${lang}`);
+
+// Rival lines: filled in both languages, and placeholders match.
+for (const [where, line] of [...EPITHETS.map((l, i) => [`epithet ${i}`, l] as const), ...Object.entries(TITLES), ...Object.entries(TAUNTS)]) {
+  if (!line.es || !line.en) fail(`rival ${where}: empty in a language`);
+  const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join();
+  if (vars(line.es) !== vars(line.en)) fail(`rival ${where}: placeholders differ between languages`);
+}
 
 // Abilities: every one has a name and description in both languages, sane numbers, and every unit's exist.
 for (const [id, ab] of Object.entries(ABILITIES)) {

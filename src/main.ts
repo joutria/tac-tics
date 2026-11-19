@@ -1,7 +1,7 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
 import { ABILITIES } from "./data/abilities";
-import { elementMultiplier } from "./data/elements";
+import { elementMultiplier, ELEMENTS } from "./data/elements";
 import { MEADOW } from "./data/maps/meadow";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
@@ -10,6 +10,7 @@ import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
+import { activeRivals, afterBattle, rivalSpec, rivalTaunt, rivalTitle, type Rival } from "./run/rivals";
 import { BattleSave, fromJSON, replay, SAVE_VERSION, toJSON } from "./engine/save";
 import {
   activeUnit, applyCommand, BattleEvent, BattleSetup, BattleState, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
@@ -20,6 +21,8 @@ import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Mo
 const SAVE_KEY = "tac-tics.save.v2";
 const LANG_KEY = "tac-tics.lang";
 const VIEW_KEY = "tac-tics.view";
+/** Rivals carried from battle to battle. The run save will hold them once runs exist (M2 step 3). */
+const RIVALS_KEY = "tac-tics.rivals.v1";
 const REWINDS_PER_BATTLE = 1;
 const FOE_STEP_MS = 380;
 const WALK_STEP_MS = 190, PUSH_STEP_MS = 90, BLINK_MS = 320;
@@ -75,13 +78,35 @@ function rebuild(commands: Command[]) {
 
 function resetView() { selected = null; pending = null; inspect = null; motions.clear(); animUntil = 0; tooltip(null); }
 
+function loadRivals(): Rival[] {
+  try { return JSON.parse(safeGet(RIVALS_KEY) ?? "[]") as Rival[]; } catch { return []; }
+}
+
 function newBattle() {
-  const setup: BattleSetup = { seed: Date.now(), map: MEADOW, units: TEST_UNITS };
+  // A rival who got away takes the place of the foe it was, with what it learned.
+  const rivals = activeRivals(loadRivals());
+  const units = TEST_UNITS.map((u) => { const r = rivals.find((x) => x.id === u.id); return r ? rivalSpec(r, lang, u.pos) : u; });
+  const setup: BattleSetup = { seed: Date.now(), map: MEADOW, units };
   save = { version: SAVE_VERSION, setup, commands: [], rewindsUsed: 0 };
   rebuild([]);
   resetView();
-  persist(); refresh(); followHero(); maybeFoeTurn();
+  persist(); refresh(); followHero();
+  const here = rivals.filter((r) => units.some((u) => u.id === r.id));
+  if (here.length) toast(here.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
+  maybeFoeTurn();
 }
+
+/** Once per battle, when it ends: new rivals, and what old ones learned or how they were settled. */
+function settleRivals() {
+  if (!state.winner || save.rivalsDone) return;
+  const before = loadRivals();
+  const after = afterBattle(before, save.setup, save.commands, state);
+  safeSet(RIVALS_KEY, JSON.stringify(after));
+  save.rivalsDone = true; persist();
+  const fresh = after.filter((r) => !before.some((b) => b.id === r.id) || (r.level > (before.find((b) => b.id === r.id)?.level ?? 0)));
+  rivalNote = fresh.length ? t(lang, "newRivals", { names: fresh.map((r) => rivalSpec(r, lang).name).join(", ") }) : "";
+}
+let rivalNote = "";
 
 function loadOrNew() {
   const text = safeGet(SAVE_KEY);
@@ -340,8 +365,9 @@ function refresh() {
   const over = $("overlay");
   over.style.display = state.winner ? "flex" : "none";
   $("result").textContent = state.winner === "heroes" ? t(lang, "victory") : t(lang, "defeat");
+  settleRivals();
   const escaped = state.units.filter((x) => x.team === "foes" && x.life === "escaped").length;
-  $("resultNote").textContent = escaped ? t(lang, "escapedNote", { n: escaped }) : "";
+  $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", rivalNote].filter(Boolean).join(" ");
   document.documentElement.lang = lang;
   layout();
 }
@@ -355,6 +381,11 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   if (!at || !target) { tip.style.display = "none"; return; }
   const hover = at;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
+  const rival = target.rival ? loadRivals().find((r) => r.id === target.id && !r.settled) : undefined;
+  if (rival) {
+    lines.push(`<span class="rival">★ ${t(lang, "rival", { n: rival.level })} · ${rivalTitle(rival, lang)}</span>`);
+    lines.push(rival.counters.map((c) => t(lang, `counter.${c.kind}` as TextKey, { element: c.element ? ELEMENTS[c.element][lang] : "" })).join(" · "));
+  }
   const left = MAX_REVIVES - target.revives;
   lines.push(left > 0 ? t(lang, "revivesLeft", { n: left }) : `<span class="down">${t(lang, "lastFall")}</span>`);
   if (target.escape === "retreat") lines.push(`<b class="esc">${t(lang, "retreating")}</b> · ${t(lang, "retreatInfo")}`);
@@ -401,9 +432,9 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
 }
 
 let toastTimer = 0;
-function toast(msg: string) {
+function toast(msg: string, ms = 1600) {
   const el = $("toast"); el.textContent = msg; el.classList.add("show");
-  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => el.classList.remove("show"), 1600);
+  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => el.classList.remove("show"), ms);
 }
 
 /* ---------- view: fit, zoom, pan, rotate ---------- */

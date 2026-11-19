@@ -12,6 +12,7 @@ import { fromJSON, replay, toJSON } from "../src/engine/save";
 import { hasLineOfSight } from "../src/engine/sight";
 import { abilityReaches, dangerZone, nextTurnSpots } from "../src/engine/threat";
 import { activeUnit, applyCommand, BattleSetup, BattleState, Command, createBattle, delayFor, roundOf, UnitSpec, unitAt, unitById, upcomingTurns } from "../src/engine/state";
+import { activeRivals, afterBattle, pickCounter, readStyle, rivalSpec, rivalTaunt, RESIST_STEP } from "../src/run/rivals";
 import { ESCAPE_FROM_ROUND, FLEE_TAKEN, RETREAT_TAKEN, turnMp, wavering } from "../src/engine/escape";
 
 const setup: BattleSetup = { seed: "test-seed", map: MEADOW, units: TEST_UNITS };
@@ -340,5 +341,86 @@ describe("escapes", () => {
     unitById(s, "f").rooted = true;
     expect(nextTurnSpots(s, unitById(s, "f"))).toEqual([{ x: 3, y: 3 }]);
     expect(dangerZone(s, unitById(s, "f")).size).toBeGreaterThan(0);
+  });
+});
+
+describe("rivals", () => {
+  // The hero shoots the foe from range with Ray (light), then the foe runs off the edge.
+  const units = [
+    unit({ id: "h", name: "Tila", team: "heroes", pos: { x: 3, y: 5 }, speed: 60, abilities: ["ray", "glow"] }),
+    unit({ id: "f", team: "foes", pos: { x: 3, y: 1 }, speed: 50, marked: true, abilities: ["bite"] }),
+  ];
+  const setup: BattleSetup = { seed: 9, map: flat(7, 7), units };
+  function escapedBattle() {
+    let s = createBattle(setup);
+    const cmds: Command[] = [];
+    const run = (c: Command) => { s = play(s, [c]); cmds.push(c); };
+    run({ t: "cast", unit: "h", ability: "ray", target: { x: 3, y: 1 } });
+    run({ t: "cast", unit: "h", ability: "glow", target: { x: 3, y: 5 } });
+    run({ t: "endTurn", unit: "h" });
+    // Fast-forward: the foe is fleeing and steps to the edge, then leaves on its next turn.
+    unitById(s, "f").escape = "flee";
+    run({ t: "move", unit: "f", to: { x: 3, y: 0 } });
+    run({ t: "endTurn", unit: "f" });
+    while (activeUnit(s).id !== "f") run({ t: "endTurn", unit: activeUnit(s).id });
+    s = { ...s };
+    return { s, cmds };
+  }
+
+  it("reads the party's style from the battle", () => {
+    const { cmds } = escapedBattle();
+    const style = readStyle(setup, cmds.slice(0, 3));
+    expect(style).toEqual({ element: "light", range: "far", opener: "ray", protects: true });
+  });
+
+  it("turns an escaped foe into a rival with a counter, and makes it stronger each time it gets away", () => {
+    const base = createBattle(setup);
+    const end = structuredClone(base);
+    unitById(end, "f").life = "escaped"; end.winner = "heroes";
+    const cmds: Command[] = [{ t: "cast", unit: "h", ability: "ray", target: { x: 3, y: 1 } }];
+    let rivals = afterBattle([], setup, cmds, end);
+    expect(rivals).toHaveLength(1);
+    const r = rivals[0]!;
+    expect(r.cause).toEqual({ kind: "escaped", hero: "Tila" });
+    expect(r.counters).toEqual([{ kind: "resist", element: "light" }]);
+    const spec = rivalSpec(r, "en");
+    expect(spec.res.light).toBe(RESIST_STEP);
+    expect(spec.rival).toBe(true);
+    expect(rivalTaunt(r, "en")).toContain("light");
+    expect(rivalTaunt(r, "es")).toContain("luz");
+    // Same battle, same rival: deterministic.
+    expect(afterBattle([], setup, cmds, end)).toEqual(rivals);
+    // It gets away again: level 2, and its light resistance grows, since the party still leans on light.
+    rivals = afterBattle(rivals, setup, cmds, end);
+    expect(rivals[0]!.level).toBe(2);
+    expect(rivals[0]!.counters.map((c) => c.kind)).toEqual(["resist", "resist"]);
+    expect(rivalSpec(rivals[0]!, "en").res.light).toBe(2 * RESIST_STEP);
+    expect(rivalSpec(rivals[0]!, "en").hp).toBeGreaterThan(40);
+  });
+
+  it("is finished when the party beats it", () => {
+    const base = createBattle(setup);
+    const end = structuredClone(base);
+    unitById(end, "f").life = "escaped"; end.winner = "heroes";
+    const rivals = afterBattle([], setup, [], end);
+    const beaten = structuredClone(base);
+    unitById(beaten, "f").life = "dead"; beaten.winner = "heroes";
+    expect(activeRivals(afterBattle(rivals, setup, [], beaten))).toHaveLength(0);
+  });
+
+  it("picks counters it lacks before repeating one", () => {
+    const style = { element: null, range: "far" as const, opener: null, protects: true };
+    expect(pickCounter({ counters: [] }, style).kind).toBe("closer");
+    expect(pickCounter({ counters: [{ kind: "closer" }] }, style).kind).toBe("hunter");
+  });
+
+  it("a hunter goes for the healer", () => {
+    const s = createBattle({ seed: 2, map: flat(7, 7), units: [
+      unit({ id: "a", team: "heroes", pos: { x: 2, y: 3 }, speed: 10, hp: 30, abilities: ["ray"] }),
+      unit({ id: "b", team: "heroes", pos: { x: 4, y: 3 }, speed: 10, hp: 40, abilities: ["glow"] }),
+      unit({ id: "f", team: "foes", pos: { x: 3, y: 3 }, speed: 90, abilities: ["bite"], hunts: "healer", mp: 0 }),
+    ] });
+    const cast = planTurn(s).find((c) => c.t === "cast");
+    expect(cast && cast.t === "cast" && cast.target).toEqual({ x: 4, y: 3 });
   });
 });

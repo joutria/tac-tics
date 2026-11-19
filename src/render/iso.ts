@@ -346,6 +346,12 @@ function drawUnit(
     ctx.font = "11px system-ui, sans-serif"; ctx.textAlign = "center";
     ctx.fillText("🌿", c.x + 20, c.y - 56);
   }
+  if (u.rival) {
+    // A rival from an earlier battle: a purple star over its head.
+    ctx.font = "bold 13px system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#d9a0ff";
+    ctx.strokeText("★", c.x, c.y - 76); ctx.fillText("★", c.x, c.y - 76);
+  }
   // Escape states: a shield badge while retreating, running feet (pulsing) while fleeing, "!" while wavering.
   const badge = u.escape === "retreat" ? "🛡" : u.escape === "flee" ? "💨" : shaky ? "!" : "";
   if (badge) {

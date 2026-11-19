@@ -46,6 +46,10 @@ export interface UnitSpec {
   ai?: AiKind;
   /** Savia-marked: may retreat or flee, and becomes a rival if it gets away. */
   marked?: boolean;
+  /** A rival from an earlier battle (see src/run/rivals.ts). Only the screen reads it. */
+  rival?: boolean;
+  /** A rival's learned habit: it goes for units that can heal first. */
+  hunts?: "healer";
 }
 
 export interface Unit extends UnitSpec {
