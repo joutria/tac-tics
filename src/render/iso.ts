@@ -66,7 +66,31 @@ export function pickTile(m: GridMap, px: number, py: number, rot: number): Pos |
   return null;
 }
 
-export type Mark = "move" | "range" | "target" | "area";
+/** What a tap or click at a point means. Units win over ground, because their sprites stand up over the tiles
+    behind them; then the tile whose top face is under the point; then, for a finger landing on a cliff side or
+    between tiles, the nearest tile top within `slack` tile-widths. */
+export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: number, rot: number, slack = 0): Pos | null {
+  let best: { p: Pos; depth: number } | null = null;
+  for (const u of units) {
+    if (u.life === "dead") continue;
+    const c = tileCenter(m, u.pos, rot);
+    if (Math.abs(px - c.x) > 18 || py < c.y - 58 || py > c.y + 10) continue;
+    const r = rotate(m, u.pos, rot), depth = r.x + r.y;
+    if (!best || depth > best.depth) best = { p: u.pos, depth };
+  }
+  if (best) return best.p;
+  const exact = pickTile(m, px, py, rot);
+  if (exact || slack <= 0) return exact;
+  let near: { p: Pos; d: number } | null = null;
+  for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+    const c = tileCenter(m, { x, y }, rot);
+    const d = Math.abs(px - c.x) / (TW / 2) + Math.abs(py - c.y) / (TH / 2);
+    if (d <= 1 + slack && (!near || d < near.d)) near = { p: { x, y }, d };
+  }
+  return near?.p ?? null;
+}
+
+export type Mark = "move" | "range" | "target" | "area" | "chosen";
 export interface Floater { pos: Pos; text: string; color: string; born: number }
 
 export interface DrawOptions {
@@ -80,10 +104,11 @@ export interface DrawOptions {
 const FACING_FRAME = { S: { col: 0, flip: false }, N: { col: 2, flip: false }, E: { col: 4, flip: false }, W: { col: 4, flip: true } } as const;
 const SHEET_ROW: Record<string, number> = { lumo: 1 };
 const MARK_STYLE: Record<Mark, [string, string]> = {
-  move: ["rgba(120, 200, 255, 0.42)", "rgba(220, 245, 255, 0.9)"],
+  move: ["rgba(70, 150, 255, 0.5)", "rgba(200, 230, 255, 1)"],
   range: ["rgba(255, 120, 100, 0.24)", "rgba(255, 170, 150, 0.6)"],
   target: ["rgba(255, 90, 70, 0.45)", "rgba(255, 210, 200, 0.95)"],
   area: ["rgba(255, 170, 60, 0.5)", "rgba(255, 230, 160, 1)"],
+  chosen: ["rgba(255, 216, 107, 0.6)", "rgba(255, 255, 255, 1)"],
 };
 
 export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: Images, view: View, opt: DrawOptions) {
@@ -105,7 +130,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       }
       ctx.drawImage(img[`top-${tile.terrain}`]!, c.x - TW / 2, c.y - TH / 2);
       const mark = opt.marks.get(`${p.x},${p.y}`);
-      if (mark) diamond(ctx, c.x, c.y, ...MARK_STYLE[mark]);
+      if (mark) diamond(ctx, c.x, c.y, ...MARK_STYLE[mark], mark === "chosen" ? 2.5 : 1);
       if (opt.hover && opt.hover.x === p.x && opt.hover.y === p.y) diamond(ctx, c.x, c.y, "rgba(255, 255, 255, 0.2)", "#fff");
       if (tile.terrain === "rock") ctx.drawImage(img["obj-rock"]!, c.x - 18, c.y - 30, 36, 36);
       if (tile.terrain === "tree") {
@@ -136,11 +161,11 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
   ctx.restore();
 }
 
-function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, fill: string, stroke: string) {
+function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, fill: string, stroke: string, width = 1) {
   ctx.beginPath();
   ctx.moveTo(x, y - TH / 2); ctx.lineTo(x + TW / 2, y); ctx.lineTo(x, y + TH / 2); ctx.lineTo(x - TW / 2, y); ctx.closePath();
   ctx.fillStyle = fill; ctx.fill();
-  ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke();
+  ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.stroke();
 }
 
 function drawUnit(ctx: CanvasRenderingContext2D, u: Unit, img: Images, c: { x: number; y: number }, active: boolean, time: number, rot: number) {
