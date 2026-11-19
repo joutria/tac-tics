@@ -48,6 +48,8 @@ export interface UnitSpec {
   marked?: boolean;
   /** A rival from an earlier battle (see src/run/rivals.ts). Only the screen reads it. */
   rival?: boolean;
+  /** HP it starts the battle with, if lower than full (a run carries the hero's HP between battles). */
+  hpNow?: number;
   /** A rival's learned habit: it goes for units that can heal first. */
   hunts?: "healer";
 }
@@ -167,7 +169,7 @@ export function createBattle(setup: BattleSetup): BattleState {
   // First turns: half a delay in, so faster units start first; equal speeds are ordered by a seeded roll.
   const order = [...setup.units].sort((a, b) => b.speed - a.speed || rolls.get(b.id)! - rolls.get(a.id)!);
   const units: Unit[] = order.map((u, i) => ({
-    ...structuredClone(u), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
+    ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
     life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, downs: 0, escape: "none", cooldowns: {}, usedThisTurn: {}, rooted: false,
     ct: Math.round(delayFor(u.speed) / 2), seq: i, waited: false, spentAp: false, moved: false,
   }));

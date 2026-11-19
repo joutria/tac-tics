@@ -7,6 +7,7 @@ import { TEST_UNITS } from "../src/data/units";
 import { TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
+import { ARENAS } from "../src/data/region";
 import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
 
 const problems: string[] = [];
@@ -54,6 +55,18 @@ for (const m of [MEADOW]) {
     if (!ELEMENTS[u.element]) fail(`unit ${u.id} has unknown element ${u.element}`);
     if (!existsSync(`public/art/creatures/${u.look}.png`)) fail(`unit ${u.id}: missing art public/art/creatures/${u.look}.png`);
   }
+}
+
+// Region arenas: the party and up to four foes start on tiles they can stand on, all different.
+for (const a of ARENAS) {
+  if (a.map.tiles.length !== a.map.w * a.map.h) fail(`map ${a.map.id}: tile count does not match its size`);
+  const spots = [a.hero, ...a.foes];
+  if (a.foes.length < 4) fail(`arena ${a.map.id}: needs 4 foe spots (elites field 4)`);
+  for (const p of spots) {
+    const tile = tileAt(a.map, p);
+    if (!tile || !TERRAIN[tile.terrain].walkable) fail(`arena ${a.map.id}: start ${p.x},${p.y} is not walkable`);
+  }
+  if (new Set(spots.map((p) => `${p.x},${p.y}`)).size !== spots.length) fail(`arena ${a.map.id}: two starts share a tile`);
 }
 
 // Isometric tiles the renderer needs.

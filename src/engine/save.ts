@@ -10,8 +10,6 @@ export interface BattleSave {
   commands: Command[];
   /** Rewinds spent this battle (the screen allows one). Not part of the rules, so replay ignores it. */
   rewindsUsed?: number;
-  /** Rivals were already updated from this battle's end (so reloading a finished battle does not count twice). */
-  rivalsDone?: boolean;
 }
 
 export function replay(setup: BattleSetup, commands: Command[]): BattleState {

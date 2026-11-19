@@ -10,19 +10,20 @@ import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
-import { activeRivals, afterBattle, rivalSpec, rivalTaunt, rivalTitle, type Rival } from "./run/rivals";
-import { BattleSave, fromJSON, replay, SAVE_VERSION, toJSON } from "./engine/save";
+import { rivalTaunt, rivalTitle } from "./run/rivals";
+import { enterNode, finishBattle, newRun, RUN_VERSION, type RunState } from "./run/run";
+import { renderRunMap } from "./ui/runmap";
+import { BattleSave, replay } from "./engine/save";
 import {
-  activeUnit, applyCommand, BattleEvent, BattleSetup, BattleState, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
+  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, setFlat, tileCenter, TW, View } from "./render/iso";
 
-const SAVE_KEY = "tac-tics.save.v2";
+/** The run save: the run, with the battle being fought inside it. */
+const RUN_KEY = "tac-tics.run.v1";
 const LANG_KEY = "tac-tics.lang";
 const VIEW_KEY = "tac-tics.view";
-/** Rivals carried from battle to battle. The run save will hold them once runs exist (M2 step 3). */
-const RIVALS_KEY = "tac-tics.rivals.v1";
 const REWINDS_PER_BATTLE = 1;
 const FOE_STEP_MS = 380;
 const WALK_STEP_MS = 190, PUSH_STEP_MS = 90, BLINK_MS = 320;
@@ -78,49 +79,87 @@ function rebuild(commands: Command[]) {
 
 function resetView() { selected = null; pending = null; inspect = null; motions.clear(); animUntil = 0; tooltip(null); }
 
-function loadRivals(): Rival[] {
-  try { return JSON.parse(safeGet(RIVALS_KEY) ?? "[]") as Rival[]; } catch { return []; }
+/* ---------- the run: map screen, entering nodes, closing battles ---------- */
+
+let journey: RunState;
+/** Map screen or battle screen. */
+let onMap = true;
+
+function startRun() {
+  journey = newRun(`${Date.now()}`);
+  showMap();
 }
 
-function newBattle() {
-  // A rival who got away takes the place of the foe it was, with what it learned.
-  const rivals = activeRivals(loadRivals());
-  const units = TEST_UNITS.map((u) => { const r = rivals.find((x) => x.id === u.id); return r ? rivalSpec(r, lang, u.pos) : u; });
-  const setup: BattleSetup = { seed: Date.now(), map: MEADOW, units };
-  save = { version: SAVE_VERSION, setup, commands: [], rewindsUsed: 0 };
-  rebuild([]);
+function showMap() {
+  onMap = true; busy = false;
+  journey.battle = undefined;
+  persist();
+  resetView();
+  $("runmap").style.display = "flex";
+  $("overlay").style.display = "none";
+  renderRunMap($("runmap"), journey, lang, pickNode);
+  $<HTMLButtonElement>("newRun").textContent = t(lang, "newRun");
+  $("mapLang").textContent = lang === "es" ? "English" : "Español";
+  document.documentElement.lang = lang;
+}
+
+let newRunArmed = 0;
+/** Starting over throws the current run away: the button has to be pressed twice. */
+function confirmNewRun(): boolean {
+  if (performance.now() < newRunArmed) return true;
+  newRunArmed = performance.now() + 3000;
+  toast(t(lang, "newRunAgain"));
+  return false;
+}
+
+function pickNode(id: number) {
+  const kind = journey.map.nodes[id]!.kind;
+  const before = journey.heroHp;
+  journey = enterNode(journey, id, lang);
+  if (!journey.battle) { toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
+  startBattle(kind === "rival" || kind === "boss");
+}
+
+/** Shows the battle in `journey.battle` (new or loaded). */
+function startBattle(announce: boolean) {
+  onMap = false;
+  $("runmap").style.display = "none";
+  save = journey.battle!;
+  rebuild(save.commands);
   resetView();
   persist(); refresh(); followHero();
-  const here = rivals.filter((r) => units.some((u) => u.id === r.id));
-  if (here.length) toast(here.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
+  const rivals = journey.rivals.filter((r) => !r.settled && save.setup.units.some((u) => u.id === r.id));
+  if (announce && rivals.length && !save.commands.length) toast(rivals.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
   maybeFoeTurn();
 }
 
-/** Once per battle, when it ends: new rivals, and what old ones learned or how they were settled. */
-function settleRivals() {
-  if (!state.winner || save.rivalsDone) return;
-  const before = loadRivals();
-  const after = afterBattle(before, save.setup, save.commands, state);
-  safeSet(RIVALS_KEY, JSON.stringify(after));
-  save.rivalsDone = true; persist();
-  const fresh = after.filter((r) => !before.some((b) => b.id === r.id) || (r.level > (before.find((b) => b.id === r.id)?.level ?? 0)));
-  rivalNote = fresh.length ? t(lang, "newRivals", { names: fresh.map((r) => rivalSpec(r, lang).name).join(", ") }) : "";
+/** The overlay's button after a battle: back to the map, or a new run when this one is over. */
+function afterBattleButton() {
+  if (journey.over) { startRun(); return; }
+  if (!journey.battle || !state.winner) return;
+  journey = finishBattle(journey, state);
+  if (journey.over) { showMap(); return; }
+  showMap();
 }
-let rivalNote = "";
 
 function loadOrNew() {
-  const text = safeGet(SAVE_KEY);
+  const text = safeGet(RUN_KEY);
   if (text) {
     try {
-      save = fromJSON(text); rebuild(save.commands);
-      toast(t(lang, "resume"));
+      const saved = JSON.parse(text) as RunState;
+      if (saved.version !== RUN_VERSION) throw new Error(`unknown run version ${saved.version}`);
+      journey = saved;
+      if (journey.battle) { startBattle(false); toast(t(lang, "resume")); } else showMap();
       return;
-    } catch (e) { console.warn("save ignored:", e); }
+    } catch (e) { console.warn("run save ignored:", e); }
   }
-  newBattle();
+  startRun();
 }
 
-function persist() { safeSet(SAVE_KEY, toJSON(save)); }
+function persist() {
+  if (!onMap && journey.battle) journey.battle = { ...save, node: journey.battle.node };
+  safeSet(RUN_KEY, JSON.stringify(journey));
+}
 
 function run(cmd: Command): boolean {
   const before = state.active;
@@ -196,7 +235,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
 }
 
 async function maybeFoeTurn() {
-  if (busy) return;
+  if (busy || onMap) return;
   busy = true; pending = null; tooltip(null); refresh();
   while (!state.winner && activeUnit(state).team === "foes") {
     for (const c of planTurn(state)) {
@@ -300,6 +339,7 @@ function marks(): Map<string, Mark> {
 /* ---------- HUD ---------- */
 
 function refresh() {
+  if (onMap) return;
   const u = activeUnit(state);
   $("turn").textContent = `${t(lang, "round", { n: roundOf(state) })} · ${t(lang, "turnOf", { name: u.name })}`;
   $("stats").textContent = `${t(lang, "hp")} ${u.hp}/${u.maxHp} · ${t(lang, "ap")} ${u.ap}/${u.maxAp} · ${t(lang, "mp")} ${u.mp}/${u.maxMp}`;
@@ -351,7 +391,6 @@ function refresh() {
   $("wait").textContent = t(lang, "wait");
   $("wait").title = t(lang, "waitHint");
   $("undo").textContent = t(lang, "undo");
-  $("new").textContent = t(lang, "newBattle");
   $("rotate").textContent = `⟳ ${t(lang, "rotate")}`;
   $("lang").textContent = lang === "es" ? "English" : "Español";
   const confirm = $<HTMLButtonElement>("confirm");
@@ -361,13 +400,14 @@ function refresh() {
   $("cancel").textContent = t(lang, "cancel");
   $("act").style.bottom = `${$("bottom").getBoundingClientRect().height + 10}px`;
   $("hint").textContent = !mine ? t(lang, "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
-  $("again").textContent = t(lang, "playAgain");
+  const lost = state.winner === "foes" || state.units.some((x) => x.team === "heroes" && x.life !== "up");
+  const boss = journey.battle && journey.map.nodes[journey.battle.node]!.kind === "boss";
+  $("again").textContent = t(lang, lost ? "newRun" : boss ? "regionCleared" : "toMap");
   const over = $("overlay");
-  over.style.display = state.winner ? "flex" : "none";
-  $("result").textContent = state.winner === "heroes" ? t(lang, "victory") : t(lang, "defeat");
-  settleRivals();
+  over.style.display = state.winner && !onMap ? "flex" : "none";
+  $("result").textContent = state.winner === "heroes" && !lost ? t(lang, "victory") : t(lang, "defeat");
   const escaped = state.units.filter((x) => x.team === "foes" && x.life === "escaped").length;
-  $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", rivalNote].filter(Boolean).join(" ");
+  $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", lost ? t(lang, "runLost") : ""].filter(Boolean).join(" ");
   document.documentElement.lang = lang;
   layout();
 }
@@ -381,7 +421,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   if (!at || !target) { tip.style.display = "none"; return; }
   const hover = at;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
-  const rival = target.rival ? loadRivals().find((r) => r.id === target.id && !r.settled) : undefined;
+  const rival = target.rival ? journey.rivals.find((r) => r.id === target.id && !r.settled) : undefined;
   if (rival) {
     lines.push(`<span class="rival">★ ${t(lang, "rival", { n: rival.level })} · ${rivalTitle(rival, lang)}</span>`);
     lines.push(rival.counters.map((c) => t(lang, `counter.${c.kind}` as TextKey, { element: c.element ? ELEMENTS[c.element][lang] : "" })).join(" · "));
@@ -568,6 +608,7 @@ function escapePaths(): Pos[][] {
 function frame(time: number) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#1d1f2b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (onMap) { requestAnimationFrame(frame); return; }
   const moving = time < animUntil;
   if (focus && time > focus.until) focus = null;
   drawBattle(ctx, state, images, view, {
@@ -585,6 +626,8 @@ async function start() {
   for (const u of TEST_UNITS) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);
   setFlat(safeGet(VIEW_KEY) === "flat");
+  // Until a battle starts (the map screen comes first), the battle screen holds the test fight, never shown.
+  state = createBattle({ seed: 0, map: MEADOW, units: TEST_UNITS });
   loadOrNew();
   refresh();
   followHero();
@@ -645,8 +688,9 @@ async function start() {
   $("undo").addEventListener("click", undo);
   $("confirm").addEventListener("click", confirmPending);
   $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
-  $("new").addEventListener("click", newBattle);
-  $("again").addEventListener("click", newBattle);
+  $("again").addEventListener("click", afterBattleButton);
+  $("newRun").addEventListener("click", () => { if (journey.over || confirmNewRun()) startRun(); });
+  $("mapLang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); showMap(); });
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });
   addEventListener("keydown", (ev) => { if (ev.key === "Escape") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); } });
   requestAnimationFrame(frame);
@@ -654,6 +698,8 @@ async function start() {
   // Small hook for automated browser checks: where a tile is on screen, and the current state.
   Object.assign(window, { __tactics: {
     state: () => state,
+    run: () => journey,
+    pickNode: (id: number) => pickNode(id),
     marks: () => [...marks().entries()],
     select: (id: string | null) => { selected = id; refresh(); },
     pick: (x: number, y: number) => toMap({ clientX: x, clientY: y }),

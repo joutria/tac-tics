@@ -43,6 +43,25 @@
     #toast.show { opacity: 1; }
     .esc { color: #ffc85a; }
   .rival { color: #d9a0ff; }
+  #runmap { position: fixed; inset: 0; display: none; flex-direction: column; align-items: center; gap: 8px; background: var(--bg); padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom)); z-index: 5; }
+  #runHead { text-align: center; } #runHead b { color: var(--accent); }
+  #runHint { color: var(--quiet); font-size: 13px; text-align: center; }
+  #runSvg { flex: 1; width: 100%; min-height: 0; display: flex; justify-content: center; }
+  #runSvg svg { height: 100%; max-width: 100%; }
+  #runmap .row { display: flex; gap: 8px; }
+  .link { stroke: #4a4d66; stroke-width: 3; }
+  .link.taken { stroke: var(--accent); }
+  .node circle { fill: #2a2c3d; stroke: #5a5e80; stroke-width: 2; }
+  .node text { fill: var(--ink); pointer-events: none; }
+  .node .tag { font-size: 11px; fill: var(--accent); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
+  .node.done circle { fill: #4a4220; stroke: var(--accent); }
+  .node.open { cursor: pointer; }
+  .node.open circle { stroke: var(--accent); stroke-width: 3; animation: pulse 1.2s ease-in-out infinite; }
+  .node.rival circle { stroke: #d9a0ff; }
+  .node.boss circle { fill: #3d1f2a; }
+  .node:not(.open):not(.done) { opacity: 0.55; }
+  @keyframes pulse { 50% { stroke-width: 5; } }
+  #toast { z-index: 6; } #overlay { z-index: 4; }
   #resultNote { color: #ffc85a; margin: 0 16px; text-align: center; }
 </style>
 </head>
@@ -56,7 +75,6 @@
     <button id="flat"></button>
     <button id="danger"></button>
     <button id="lang"></button>
-    <button id="new"></button>
     <div id="queue"></div>
   </div>
   <div id="bottom" class="bar">
@@ -71,6 +89,12 @@
   <div id="act"><button id="cancel"></button><button id="confirm" class="go"></button></div>
   <div id="tip"></div>
   <div id="overlay"><h1 id="result"></h1><p id="resultNote"></p><button id="again" class="primary"></button></div>
+  <div id="runmap">
+    <div id="runHead"></div>
+    <div id="runSvg"></div>
+    <div id="runHint"></div>
+    <div class="row"><button id="mapLang"></button><button id="newRun"></button></div>
+  </div>
   <div id="toast"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
