@@ -51,6 +51,10 @@ export interface Unit extends UnitSpec {
   life: Life;
   /** Own turns left before a downed unit dies. */
   downedTurns: number;
+  /** Max HP at the start of the battle; each Help up takes a slice of it away for the rest of the battle. */
+  baseHp: number;
+  /** Times this unit has been helped up this battle. After the last one allowed, its next fall is for good. */
+  revives: number;
   /** Turns of cooldown left per ability (counts down at the end of the unit's own turns). */
   cooldowns: Record<string, number>;
   usedThisTurn: Record<string, number>;
@@ -146,7 +150,7 @@ export function createBattle(setup: BattleSetup): BattleState {
   const order = [...setup.units].sort((a, b) => b.speed - a.speed || rolls.get(b.id)! - rolls.get(a.id)!);
   const units: Unit[] = order.map((u, i) => ({
     ...structuredClone(u), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
-    life: "up", downedTurns: 0, cooldowns: {}, usedThisTurn: {}, rooted: false,
+    life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, cooldowns: {}, usedThisTurn: {}, rooted: false,
     ct: Math.round(delayFor(u.speed) / 2), seq: i, waited: false, spentAp: false, moved: false,
   }));
   const s: BattleState = {

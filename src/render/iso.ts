@@ -2,6 +2,7 @@
    Grid +x runs down-right on screen and +y down-left; each height level lifts a tile by 16 px.
    The view can be turned in 90 degree steps so nothing stays hidden behind a hill or a tree. */
 import { GridMap, Pos, tileAt } from "../engine/grid";
+import { MAX_REVIVES } from "../engine/combat";
 import type { BattleState, Facing, Unit } from "../engine/state";
 
 export const TW = 64, TH = 32, LEVEL = 16;
@@ -296,6 +297,11 @@ function drawUnit(
   const w = 30, ratio = u.hp / u.maxHp;
   ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(c.x - w / 2 - 1, c.y - 62, w + 2, 5);
   ctx.fillStyle = u.team === "heroes" ? "#7ed957" : "#e85a4f"; ctx.fillRect(c.x - w / 2, c.y - 61, w * ratio, 3);
+  // Revives left, as small pips under the bar: bright = can still be helped up, dark = used.
+  for (let i = 0; i < MAX_REVIVES; i++) {
+    ctx.fillStyle = i < MAX_REVIVES - u.revives ? "#f2efe6" : "rgba(0,0,0,0.6)";
+    ctx.fillRect(c.x - w / 2 + i * 5, c.y - 56, 3, 2);
+  }
   if (preview) {
     // Sure loss in solid white, the possible extra flashing, so the player sees what is left after the hit.
     const after = (d: number) => Math.max(0, u.hp - d) / u.maxHp;
