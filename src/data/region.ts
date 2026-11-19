@@ -11,6 +11,7 @@ import { SHORE, SPILLWAY } from "./maps/reservoir";
 import { TEST_UNITS } from "./units";
 import type { Element } from "./elements";
 import type { Line } from "./rivals";
+import type { RecruitSpot } from "../run/map";
 
 export interface Arena { map: GridMap; hero: Pos; allies: Pos[]; foes: Pos[] }
 
@@ -58,6 +59,8 @@ export interface Region {
   variant?: VariantRule;
   /** Species that live only here, fielded as they are. */
   natives?: Species[];
+  /** Companions met here, by map layer. */
+  recruits: RecruitSpot[];
 }
 
 /** A species as a region fields it, in the player's language. */
@@ -88,7 +91,8 @@ const BROKEN_MIRA: Species = {
 };
 
 export const REGIONS: Region[] = [
-  { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS },
+  { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS,
+    recruits: [{ layer: 1, talk: "remanso.meet" }, { layer: 3, talk: "guijo.meet" }] },
   {
     id: "reservoir", name: { es: "El Embalse Quebrado", en: "The Broken Reservoir" },
     arenas: [
@@ -100,6 +104,7 @@ export const REGIONS: Region[] = [
     variant: { element: "ice", name: { es: "{name} Escarchado", en: "Frost {name}" }, res: { ice: 20 }, hp: 4, abilities: ["frostbite"] },
     natives: RESERVOIR_NATIVES,
     boss: { species: 0, hp: 1, stat: 0, mp: 0, name: { es: "Mira Quebrada", en: "Broken Mira" }, unit: BROKEN_MIRA },
+    recruits: [{ layer: 1, talk: "centella.meet" }, { layer: 3, talk: "moheda.meet" }],
   },
 ];
 

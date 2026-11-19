@@ -47,11 +47,12 @@ console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
 
-/** A simple player: takes the item reward (else the first), the first perk, buys what it can afford, heals if hurt. */
+/** A simple player: takes the item reward (else the first), the first perk, burns shards at the fire only when badly hurt, buys what it can afford, heals if hurt. */
 function answerOffers(run: RunState): RunState {
   while (run.offers.length) {
     const o = run.offers[0]!;
     if (o.kind === "perk" || o.kind === "talk") run = choose(run, 0);
+    else if (o.kind === "altar") run = choose(run, run.heroHp < heroMaxHp(run) * 0.5 ? 0 : 1);
     else if (o.kind === "reward") {
       const hurt = run.heroHp < heroMaxHp(run) * 0.4;
       const i = hurt ? o.options.findIndex((r) => r.t === "heal") : o.options.findIndex((r) => r.t === "item");

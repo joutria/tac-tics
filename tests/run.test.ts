@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { HERO, REGIONS } from "../src/data/region";
 import { applyCommand, createBattle, type BattleState, type Command, type UnitSpec } from "../src/engine/state";
 import { parseMap } from "../src/engine/grid";
-import { APPROVAL, COMPANIONS } from "../src/data/companions";
+import { APPROVAL, COMPANIONS, TALKS } from "../src/data/companions";
+import { ABILITIES } from "../src/data/abilities";
 import { memberSpec, newMember, react, readDeeds } from "../src/run/party";
 import { aheadOf, generateMap, MAP_LAYERS } from "../src/run/map";
 import { ITEMS, PERKS, SHOP, xpToNext } from "../src/data/gear";
 import { gainXp, heroSpec, newProgress } from "../src/run/hero";
-import { battleSetup, buy, RUN_VERSION, upgradeRun, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
+import { ALTAR, battleSetup, buy, RUN_VERSION, upgradeRun, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
 
 /** Answers every offer with the first option and leaves shops. */
 function answer(run: RunState): RunState {
@@ -230,7 +231,7 @@ describe("companions", () => {
 describe("difficulty", () => {
   const foes = (d: "easy" | "normal" | "hard") => {
     const run = newRun("diff-seed", d);
-    const node = run.map.nodes.find((n) => n.layer === 3 && (n.kind === "battle" || n.kind === "elite"))!;
+    const node = run.map.nodes.find((n) => n.layer >= 3 && (n.kind === "battle" || n.kind === "elite"))!;
     return battleSetup(run, node.id, "en").units.filter((u) => u.team === "foes");
   };
   it("hard fields more and tougher foes than normal, easy weaker ones", () => {
@@ -284,5 +285,105 @@ describe("regions", () => {
     const up = upgradeRun(old as RunState);
     expect(up.version).toBe(RUN_VERSION);
     expect(up.region).toBe(0);
+  });
+});
+
+describe("recruits", () => {
+  const flat = parseMap("flat8", Array.from({ length: 8 }, () => Array(8).fill("g0").join(" ")));
+  const mk = (o: Partial<UnitSpec> & Pick<UnitSpec, "id" | "team" | "pos">): UnitSpec => ({
+    name: o.id, element: "neutral", look: "lumo", hp: 40, ap: 6, mp: 3, speed: 50, jump: 1, str: 0, mag: 0, agi: 10, res: {}, abilities: ["ray"], ...o,
+  });
+
+  it("each region places its own recruits on their layers", () => {
+    for (const seed of ["a", "b", "c", "d", "e", "f"]) {
+      for (const region of REGIONS) {
+        const map = generateMap(seed, region.recruits);
+        for (const r of region.recruits) {
+          const n = map.nodes.filter((x) => x.recruit === r.talk);
+          expect(n).toHaveLength(1);
+          expect(n[0]!.layer).toBe(r.layer);
+        }
+      }
+    }
+  });
+
+  it("every companion has a meet talk, real abilities and a look", () => {
+    for (const r of REGIONS) for (const s of r.recruits) {
+      const talk = TALKS[s.talk]!;
+      const c = COMPANIONS[talk.companion]!;
+      for (const a of c.spec.abilities) expect(ABILITIES[a], a).toBeTruthy();
+      expect(talk.choices.some((x) => x.joins)).toBe(true);
+    }
+  });
+
+  it("reads an ally bleeding out, and a clean quick win", () => {
+    const setup = { seed: 3, map: flat, units: [
+      mk({ id: "hero", team: "heroes", pos: { x: 0, y: 0 }, speed: 30 }),
+      mk({ id: "a", team: "heroes", pos: { x: 4, y: 4 }, speed: 20, hpNow: 1 }),
+      mk({ id: "f", team: "foes", pos: { x: 4, y: 5 }, speed: 90, str: 50, abilities: ["bite"] }),
+    ] };
+    const log: Command[] = [];
+    let t = createBattle(setup);
+    for (let i = 0; i < 60 && t.units.find((u) => u.id === "a")!.life !== "dead"; i++) {
+      const a = t.units.find((u) => u.id === "a")!;
+      const c: Command = t.active === "f" && a.life === "up" ? { t: "cast", unit: "f", ability: "bite", target: a.pos } : { t: "endTurn", unit: t.active };
+      log.push(c);
+      const r = applyCommand(t, c); if (!r.ok) throw new Error(r.error); t = r.state;
+    }
+    expect(t.units.find((u) => u.id === "a")!.life).toBe("dead");
+    const deeds = readDeeds(setup, log);
+    expect(deeds.allyBledOut).toBe(1);
+    expect(deeds.noneDowned).toBe(0);
+    const g = react(newMember("guijo", 0, false), deeds).member;
+    expect(g.crossed).toBe(1);
+    expect(g.approval).toBe(APPROVAL.start + COMPANIONS.guijo!.reacts.allyBledOut!);
+
+    const quick = { seed: 3, map: flat, units: [
+      mk({ id: "hero", team: "heroes", pos: { x: 3, y: 5 }, speed: 90, mag: 300 }),
+      mk({ id: "f", team: "foes", pos: { x: 3, y: 2 }, speed: 10 }),
+    ] };
+    const win = readDeeds(quick, [{ t: "cast", unit: "hero", ability: "ray", target: { x: 3, y: 2 } }]);
+    expect(win.noneDowned).toBe(1);
+    expect(win.quickWin).toBe(1);
+  });
+
+  it("Centella's grudge against sparing rivals sours her mood but never past the clash floor", () => {
+    const c = newMember("centella", 0, true);
+    const once = react(c, { rivalEscaped: 5 }).member;
+    expect(once.approval).toBe(APPROVAL.clashFloor);
+    expect(once.status).toBe("with");
+    expect(react({ ...c, approval: -25 }, { rivalEscaped: 3, letEscape: 3 }).member.approval).toBe(-25);
+    expect(APPROVAL.clashFloor).toBeGreaterThan(APPROVAL.refuses);
+  });
+
+  it("fields at most three companions; the others wait at camp", () => {
+    let run = newRun("bench");
+    run.party = ["remanso", "guijo", "centella", "moheda"].map((id) => newMember(id, 0, false));
+    run = enterNode(run, nextNodes(run)[0]!.id, "en");
+    const allies = run.battle!.setup.units.filter((u) => u.team === "heroes" && u.id !== "hero");
+    expect(allies.map((u) => u.id)).toEqual(["remanso", "guijo", "centella"]);
+  });
+
+  it("Moheda's Sap Cap grows with shards", () => {
+    const m = newMember("moheda", 0, false);
+    expect(memberSpec(m, 1, { x: 0, y: 0 }, 0).abilities).toContain("sapCap");
+    expect(memberSpec(m, 1, { x: 0, y: 0 }, 3).abilities).toContain("sapCapRich");
+  });
+
+  it("a rest's cleansing fire burns shards to heal everyone, and Moheda never forgives it", () => {
+    let run = newRun("altar");
+    const rest = run.map.nodes.find((n) => n.kind === "rest")!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(rest.id))!.id, shards: 3, heroHp: 5 };
+    run.party = [{ ...newMember("moheda", 0, false), hp: 1 }];
+    run = enterNode(run, rest.id, "en");
+    expect(run.offers[0]).toEqual({ kind: "altar" });
+    const kept = choose(run, 1);
+    expect(kept.shards).toBe(3);
+    run = choose(run, 0);
+    expect(run.shards).toBe(3 - ALTAR.shards);
+    expect(run.heroHp).toBe(heroMaxHp(run));
+    expect(run.party[0]!.crossed).toBe(1);
+    expect(run.party[0]!.approval).toBe(APPROVAL.start + COMPANIONS.moheda!.reacts.destroyShards!);
+    expect(run.remarks.length).toBeGreaterThan(0);
   });
 });

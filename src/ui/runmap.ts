@@ -7,7 +7,7 @@ import { abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
 import { APPROVAL, COMPANIONS, TALKS } from "../data/companions";
-import { fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
+import { ALTAR, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
 import type { Member } from "../run/party";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", boss: "♛" };
@@ -84,6 +84,16 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
       const p = document.createElement("p"); p.className = "say reply"; p.textContent = offer.reply[lang]; list.append(p);
       foot.append(button(t(lang, "goOn"), () => act.choose(0), "primary"));
     } else talk.choices.forEach((c, i) => list.append(button(`<span>${html(c.text[lang])}</span>`, () => act.choose(i))));
+  } else if (offer?.kind === "altar") {
+    title.textContent = t(lang, "altarTitle");
+    const p = document.createElement("p"); p.className = "say"; p.textContent = t(lang, "altarText"); list.append(p);
+    for (const m of fielded(run)) {
+      const c = COMPANIONS[m.id]!;
+      if (!m.known || !c.forbidden.includes("destroyShards")) continue;
+      const w = document.createElement("p"); w.className = "say down"; w.textContent = `⚠ ${c.forbiddenWarning[lang]}`; list.append(w);
+    }
+    list.append(button(`<b>🔥 ${html(t(lang, "altarBurn", { n: ALTAR.shards }))}</b>`, () => act.choose(0)));
+    list.append(button(`<b>◆ ${html(t(lang, "altarKeep"))}</b>`, () => act.choose(1)));
   } else if (offer?.kind === "perk") {
     title.textContent = t(lang, "pickPerk");
     offer.options.forEach((id, i) => list.append(button(`<b>${html(PERKS[id]!.name[lang])}</b><span>${html(PERKS[id]!.desc[lang])}</span>`, () => act.choose(i))));
@@ -102,9 +112,11 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     foot.append(button(t(lang, "leave"), act.leave, "primary"));
   } else {
     title.textContent = t(lang, "gear");
-    for (const m of fielded(run)) {
+    const out = fielded(run);
+    for (const m of run.party.filter((x) => x.status === "with" || x.status === "leaving")) {
       const p = document.createElement("p"); p.className = "say";
-      p.textContent = `${COMPANIONS[m.id]!.spec.name} · ${t(lang, "hp")} ${m.hp}/${memberMaxHp(run, m)} · ${t(lang, "approval", { n: m.approval })} · ${moodOf(m, lang)}`;
+      p.textContent = `${COMPANIONS[m.id]!.spec.name} · ${t(lang, "hp")} ${m.hp}/${memberMaxHp(run, m)} · ${t(lang, "approval", { n: m.approval })} · ${moodOf(m, lang)}`
+        + (out.includes(m) ? "" : ` · ${t(lang, "atCamp")}`);
       list.append(p);
     }
     for (const slot of ["weapon", "armour", "charm"] as const) {

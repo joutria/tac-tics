@@ -828,6 +828,7 @@ async function start() {
   Object.assign(window, { __tactics: {
     state: () => state,
     run: () => journey,
+    setRun: (r: RunState) => { journey = r; showMap(); },
     pickNode: (id: number) => pickNode(id),
     marks: () => [...marks().entries()],
     select: (id: string | null) => { selected = id; refresh(); },
