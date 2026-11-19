@@ -27,6 +27,8 @@ npm run dev        # play at the address Vite prints
 npm test           # engine tests
 npm run check      # data checker: texts in both languages, abilities, elements, maps, art files
 npm run simulate   # AI against AI over 200 fights, for balance
+npm run simulate:run -- 100 normal --log sim.json   # whole AI runs, optionally written as a play log
+npm run analyze -- playlog.json sim.json            # sum up play logs (exported from Stats, or from the simulator)
 npm run build      # production build in dist/
 ```
 
@@ -39,10 +41,21 @@ npm run build      # production build in dist/
 | `src/render/iso.ts` | Isometric drawing and turning clicks into tiles |
 | `src/i18n/text.ts` | Every text in Spanish and English |
 | `src/main.ts` | The test screen |
+| `src/run/playlog.ts`, `src/ui/stats.ts` | Play log: run, battle and choice events kept on the device, the Stats panel, export |
 | `tools/check.ts` | Data checker |
+| `tools/analyze-log.ts` | Sums up exported play logs and simulator logs |
 | `tools/simulate.ts` | AI-against-AI balance simulator |
 | `tools/iso-tiles.py` | Angles the Evolvlings top-down tiles into isometric ones (placeholder art) |
 | `public/art/` | Tiles and creature sheets |
+
+## Play log
+
+The game keeps a log of what the player does in a run (difficulty, nodes picked and what else was open, every
+battle's rounds, turns, abilities used, damage, rewinds, who downed the hero, mercy deeds, reward/perk/shop picks,
+companion approval, how the run ended). It stays in the browser's storage, capped at 5000 events, and is never sent
+anywhere. On the map, 📊 Stats shows a summary and can export the log as a JSON file, switch logging off, or clear it.
+Exported files from several players can be pooled with `npm run analyze`, and the run simulator writes the same
+format so AI runs and real runs can be compared side by side.
 
 ## Design rules for the engine
 

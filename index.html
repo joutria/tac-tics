@@ -51,6 +51,8 @@
   #runmap .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
   #runPanel { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(15, 16, 24, 0.94); padding: 16px; overflow-y: auto; }
   #runPanel .say { margin: 0; line-height: 1.45; }
+  #runPanel .say, #runPanel pre.stats { max-width: 560px; }
+  #runPanel pre.stats { margin: 0; width: min(560px, 100%); white-space: pre-wrap; font-size: 12px; line-height: 1.5; color: var(--quiet); background: rgba(255,255,255,0.04); padding: 10px 12px; border-radius: 8px; }
   #runPanel .say.reply { color: var(--accent); }
   #runHint { white-space: pre-line; }
   #runPanel .spoils { margin: 0; color: var(--quiet); }
@@ -105,7 +107,7 @@
     <div id="runHead"></div>
     <div id="runSvg"></div>
     <div id="runHint"></div>
-    <div class="row"><button id="gearBtn"></button><button id="mapLang"></button><button id="newRun"></button></div>
+    <div class="row"><button id="gearBtn"></button><button id="statsBtn"></button><button id="mapLang"></button><button id="newRun"></button></div>
     <div id="runPanel"></div>
   </div>
   <div id="toast"></div>
