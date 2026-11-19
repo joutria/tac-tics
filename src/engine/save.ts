@@ -8,6 +8,8 @@ export interface BattleSave {
   version: number;
   setup: BattleSetup;
   commands: Command[];
+  /** Rewinds spent this battle (the screen allows one). Not part of the rules, so replay ignores it. */
+  rewindsUsed?: number;
 }
 
 export function replay(setup: BattleSetup, commands: Command[]): BattleState {

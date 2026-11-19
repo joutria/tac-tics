@@ -15,7 +15,10 @@
     #turn { font-weight: 600; }
     #stats { color: var(--quiet); }
     #queue { display: flex; gap: 4px; flex-basis: 100%; overflow-x: auto; align-items: center; color: var(--quiet); font-size: 12px; }
-    .chip { padding: 2px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap; font-size: 12px; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 3px; border-radius: 999px; border: 1px solid; white-space: nowrap; font-size: 12px; background: transparent; }
+    .chip img { width: 20px; height: 20px; image-rendering: pixelated; }
+    #tip .down { color: #ff8a7a; }
+    button.armed { background: #7a2f28; border-color: #ff8a7a; }
     .chip.heroes { border-color: var(--hero); color: var(--hero); }
     .chip.foes { border-color: var(--foe); color: var(--foe); }
     .chip.now { background: rgba(255,255,255,0.12); font-weight: 600; }
@@ -47,6 +50,8 @@
     <span class="spacer"></span>
     <button id="zoomOut" aria-label="−">−</button><button id="zoomIn" aria-label="+">+</button>
     <button id="rotate"></button>
+    <button id="flat"></button>
+    <button id="danger"></button>
     <button id="lang"></button>
     <button id="new"></button>
     <div id="queue"></div>
@@ -54,6 +59,7 @@
   <div id="bottom" class="bar">
     <div id="abilities"></div>
     <span class="spacer"></span>
+    <button id="rewind"></button>
     <button id="undo"></button>
     <button id="wait"></button>
     <button id="end" class="primary"></button>

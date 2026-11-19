@@ -5,18 +5,21 @@ import { elementMultiplier } from "./data/elements";
 import { MEADOW } from "./data/maps/meadow";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
-import { abilityAvailable, areaTiles, castProblem, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
+import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
 import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
+import { dangerZone } from "./engine/threat";
 import { BattleSave, fromJSON, replay, SAVE_VERSION, toJSON } from "./engine/save";
 import {
   activeUnit, applyCommand, BattleEvent, BattleSetup, BattleState, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
 } from "./engine/state";
-import { abilityDesc, abilityName, Lang, t } from "./i18n/text";
-import { drawBattle, Floater, Images, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, tileCenter, TW, View } from "./render/iso";
+import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
+import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, setFlat, tileCenter, TW, View } from "./render/iso";
 
 const SAVE_KEY = "tac-tics.save.v2";
 const LANG_KEY = "tac-tics.lang";
+const VIEW_KEY = "tac-tics.view";
+const REWINDS_PER_BATTLE = 1;
 const FOE_STEP_MS = 380;
 const WALK_STEP_MS = 190, PUSH_STEP_MS = 90, BLINK_MS = 320;
 const MIN_TILE_PX = 58; // a tile narrower than this is hard to hit with a finger
@@ -37,6 +40,13 @@ let selected: string | null = null;
 let pending: Pos | null = null;
 let busy = false;
 let turnStart = 0;
+/** Command counts at which the hero's turns began, for Rewind. */
+let heroStarts: number[] = [];
+/** Danger zone: one foe's (tapped) or every foe's (toggle). */
+let inspect: string | null = null;
+let dangerAll = false;
+let focus: { id: string; until: number } | null = null;
+let rewindArmed = 0;
 const floaters: Floater[] = [];
 const motions = new Map<string, Motion>();
 let animUntil = 0; // input waits until units have finished moving
@@ -47,11 +57,28 @@ function safeSet(k: string, v: string) { try { localStorage.setItem(k, v); } cat
 
 const heroTurn = () => !state.winner && activeUnit(state).team === "heroes";
 
+/** Replays a save one command at a time to rebuild the turn bookkeeping (where the current turn began, where each
+    of the hero's turns began), so Undo and Rewind still work after a reload. */
+function rebuild(commands: Command[]) {
+  let s = replay(save.setup, []);
+  turnStart = 0; heroStarts = s.winner || activeUnit(s).team !== "heroes" ? [] : [0];
+  commands.forEach((cmd, i) => {
+    const before = s.active;
+    const r = applyCommand(s, cmd);
+    if (!r.ok) throw new Error(`save is broken at command ${i}: ${r.error}`);
+    s = r.state;
+    if (s.active !== before) { turnStart = i + 1; if (!s.winner && activeUnit(s).team === "heroes") heroStarts.push(i + 1); }
+  });
+  state = s;
+}
+
+function resetView() { selected = null; pending = null; inspect = null; motions.clear(); animUntil = 0; tooltip(null); }
+
 function newBattle() {
   const setup: BattleSetup = { seed: Date.now(), map: MEADOW, units: TEST_UNITS };
-  save = { version: SAVE_VERSION, setup, commands: [] };
-  state = replay(setup, []);
-  turnStart = 0; selected = null; pending = null; motions.clear(); animUntil = 0;
+  save = { version: SAVE_VERSION, setup, commands: [], rewindsUsed: 0 };
+  rebuild([]);
+  resetView();
   persist(); refresh(); followHero(); maybeFoeTurn();
 }
 
@@ -59,8 +86,7 @@ function loadOrNew() {
   const text = safeGet(SAVE_KEY);
   if (text) {
     try {
-      save = fromJSON(text); state = replay(save.setup, save.commands);
-      turnStart = save.commands.length;
+      save = fromJSON(text); rebuild(save.commands);
       toast(t(lang, "resume"));
       return;
     } catch (e) { console.warn("save ignored:", e); }
@@ -78,9 +104,12 @@ function run(cmd: Command): boolean {
   state = r.state;
   animate(r.events, was);
   save.commands.push(cmd);
-  if (state.active !== before) turnStart = save.commands.length;
+  if (state.active !== before) {
+    turnStart = save.commands.length;
+    if (!state.winner && activeUnit(state).team === "heroes") heroStarts.push(turnStart);
+  }
   persist();
-  showEvents(r.events);
+  showEvents(r.events, was);
   return true;
 }
 
@@ -107,13 +136,16 @@ function animate(events: BattleEvent[], was: Map<string, Pos>) {
   }
 }
 
-function showEvents(events: BattleEvent[]) {
+function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
   const now = performance.now();
   for (const ev of events) {
     if (ev.e !== "cast") continue;
     for (const h of ev.hits) {
       const u = unitById(state, h.unit);
-      const add = (text: string, color: string, delay = 0) => floaters.push({ pos: { ...u.pos }, text, color, born: now + delay });
+      // A pushed unit gets its numbers where it lands, once it has slid there.
+      const start = was.get(h.unit);
+      const wait = h.pushedTo && start ? 120 + PUSH_STEP_MS * Math.max(1, manhattan(start, h.pushedTo)) : 0;
+      const add = (text: string, color: string, delay = 0) => floaters.push({ pos: { ...u.pos }, text, color, born: now + wait + delay });
       if (h.damage) add(`-${h.damage}${h.crit ? "!" : ""}`, h.crit ? "#ffd86b" : "#ff8a7a");
       if (h.heal) add(`+${h.heal}`, "#7ed957");
       if (h.revived) add(t(lang, "revived"), "#7ed957");
@@ -127,12 +159,16 @@ function showEvents(events: BattleEvent[]) {
 
 async function maybeFoeTurn() {
   if (busy) return;
-  busy = true; refresh();
+  busy = true; pending = null; tooltip(null); refresh();
   while (!state.winner && activeUnit(state).team === "foes") {
     for (const c of planTurn(state)) {
       await new Promise((ok) => setTimeout(ok, Math.max(FOE_STEP_MS, animUntil - performance.now() + 150)));
-      if (!run(c)) break;
+      if (run(c)) { refresh(); continue; }
+      // Safety net: a foe whose plan is refused ends its turn, so the game can never hang on it.
+      console.warn("AI command refused, ending its turn:", c);
+      if (!run({ t: "endTurn", unit: activeUnit(state).id })) { busy = false; refresh(); return; }
       refresh();
+      break;
     }
   }
   await new Promise((ok) => setTimeout(ok, Math.max(0, animUntil - performance.now())));
@@ -148,8 +184,55 @@ function undo() {
   if (!canUndo()) return;
   save.commands.pop();
   motions.clear(); animUntil = 0;
-  state = replay(save.setup, save.commands);
+  rebuild(save.commands);
   persist(); refresh();
+}
+
+/* ---------- rewind: back to the start of the hero's previous turn, once per battle ---------- */
+
+function rewindTarget(): number | null {
+  if (!heroTurn() || busy || (save.rewindsUsed ?? 0) >= REWINDS_PER_BATTLE) return null;
+  return heroStarts.length >= 2 ? heroStarts[heroStarts.length - 2]! : null;
+}
+
+function rewind() {
+  const to = rewindTarget();
+  if (to === null) return;
+  if (performance.now() > rewindArmed) { rewindArmed = performance.now() + 3000; refresh(); setTimeout(refresh, 3100); return; }
+  rewindArmed = 0;
+  save.commands = save.commands.slice(0, to);
+  save.rewindsUsed = (save.rewindsUsed ?? 0) + 1;
+  rebuild(save.commands);
+  resetView();
+  persist(); refresh(); followHero();
+  toast(t(lang, "rewound"));
+}
+
+/* ---------- danger zone ---------- */
+
+let dangerCache: { key: string; tiles: Set<string> } | null = null;
+function dangerTiles(): Set<string> | undefined {
+  if (!inspect && !dangerAll) return undefined;
+  const key = `${save.commands.length}|${JSON.stringify(save.commands[save.commands.length - 1] ?? null)}|${inspect}|${dangerAll}`;
+  if (dangerCache?.key === key) return dangerCache.tiles;
+  const tiles = new Set<string>();
+  for (const f of state.units) {
+    if (f.team !== "foes" || f.life !== "up" || (!dangerAll && f.id !== inspect)) continue;
+    for (const k of dangerZone(state, f).keys()) tiles.add(k);
+  }
+  dangerCache = { key, tiles };
+  return tiles;
+}
+
+/** Engine refusals in the player's language. */
+function explain(why: string): string {
+  const map: [string, TextKey][] = [
+    ["outside the map", "err.outside"], ["out of range", "err.range"], ["no line of sight", "noSight"],
+    ["needs an enemy", "err.foe"], ["needs a standing ally", "err.ally"], ["needs a downed ally", "err.downedAlly"],
+    ["needs an empty tile", "err.empty"], ["not enough AP", "err.ap"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
+  ];
+  const hit = map.find(([k]) => why.startsWith(k));
+  return hit ? t(lang, hit[1]) : why;
 }
 
 /* ---------- what the map highlights ---------- */
@@ -186,9 +269,16 @@ function refresh() {
   queue.replaceChildren(document.createTextNode(`${t(lang, "upNext")}:`));
   upcomingTurns(state, 8).forEach((id, i) => {
     const v = unitById(state, id);
-    const chip = document.createElement("span");
+    const chip = document.createElement("button");
     chip.className = `chip ${v.team}${i === 0 ? " now" : ""}`;
-    chip.textContent = v.life === "downed" ? `${v.name} ✚` : v.name;
+    const face = portrait(images, v.look);
+    chip.innerHTML = `${face ? `<img src="${face}" alt="">` : ""}<span>${v.life === "downed" ? `${v.name} ✚` : v.name}</span>`;
+    chip.onclick = () => {
+      // Find the unit: pan to it and make it pulse; for a foe, also show its reach.
+      focus = { id: v.id, until: performance.now() + 1800 };
+      if (v.team === "foes") inspect = v.id;
+      centreOn(v.pos);
+    };
     queue.append(chip);
   });
   const mine = heroTurn() && !busy;
@@ -205,12 +295,20 @@ function refresh() {
     const dmg = ab.damage ? `${ab.damage.min}–${ab.damage.max}` : ab.heal ? `+${ab.heal.min}–${ab.heal.max}` : "";
     b.innerHTML = `<span>${abilityName(lang, id)}</span><small>${ab.ap} ${t(lang, "ap")} · ${ab.range[0]}–${ab.range[1]}${dmg ? " · " + dmg : ""}${cd ? " · ⏳" + t(lang, "cooldown", { n: cd }) : ""}</small>`;
     b.title = abilityDesc(lang, id);
-    b.onclick = () => { selected = selected === id ? null : id; pending = null; refresh(); };
+    b.onclick = () => { selected = selected === id ? null : id; pending = null; inspect = null; tooltip(null); refresh(); };
     bar.append(b);
   }
   $<HTMLButtonElement>("end").disabled = !mine;
   $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited;
   $<HTMLButtonElement>("undo").disabled = !canUndo();
+  const rw = $<HTMLButtonElement>("rewind");
+  const left = REWINDS_PER_BATTLE - (save.rewindsUsed ?? 0);
+  rw.disabled = rewindTarget() === null;
+  rw.textContent = performance.now() < rewindArmed ? `⟲ ${t(lang, "rewindAgain")}` : `⟲ ${t(lang, "rewind")} (${left})`;
+  rw.title = t(lang, "rewindHint");
+  rw.classList.toggle("armed", performance.now() < rewindArmed);
+  const dz = $("danger"); dz.textContent = `◈ ${t(lang, "danger")}`; dz.title = t(lang, "dangerHint"); dz.classList.toggle("on", dangerAll);
+  const fl = $("flat"); fl.textContent = `▦ ${t(lang, "flat")}`; fl.title = t(lang, "flatHint"); fl.classList.toggle("on", isFlat());
   $("end").textContent = t(lang, "endTurn");
   $("wait").textContent = t(lang, "wait");
   $("wait").title = t(lang, "waitHint");
@@ -224,7 +322,7 @@ function refresh() {
   $("cancel").style.display = mine && (pending || selected) ? "" : "none";
   $("cancel").textContent = t(lang, "cancel");
   $("act").style.bottom = `${$("bottom").getBoundingClientRect().height + 10}px`;
-  $("hint").textContent = !mine ? t(lang, "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : t(lang, "hintMove");
+  $("hint").textContent = !mine ? t(lang, "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
   $("again").textContent = t(lang, "playAgain");
   const over = $("overlay");
   over.style.display = state.winner ? "flex" : "none";
@@ -249,9 +347,27 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       const m = elementMultiplier(ab.element, target.element);
       const dir = directionBonus(target, u.pos);
       lines.push(`${abilityName(lang, selected)}: <b>${r.min}–${r.max}</b>${m > 1 ? ` · ${t(lang, "strong")}` : m < 1 ? ` · ${t(lang, "weak")}` : ""}`);
+      // Forecast: what is left of the target, and whether this can put it down.
+      const lo = Math.max(0, target.hp - r.max), hi = Math.max(0, target.hp - r.min);
+      lines.push(t(lang, "hpAfter", { a: lo === hi ? `${lo}` : `${lo}–${hi}` }));
+      if (r.min >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "downsIt")}</b>`);
+      else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b>`);
+      else if (Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<span class="down">${t(lang, "critDown")}</span>`);
       if (dir > 1.2) lines.push(t(lang, "back")); else if (dir > 1) lines.push(t(lang, "side"));
       lines.push(t(lang, "crit"));
     } else if (ab.heal) lines.push(`${abilityName(lang, selected)}: <b>+${ab.heal.min}–${ab.heal.max}</b>`);
+  } else if (!selected && target.team === "foes") {
+    // Foe info: its abilities, which are ready, and which could reach the hero next turn.
+    const hero = state.units.find((h) => h.team === "heroes" && h.life !== "dead");
+    const zone = hero ? dangerZone(state, target).get(`${hero.pos.x},${hero.pos.y}`) ?? [] : [];
+    lines.push(`${t(lang, "ap")} ${target.maxAp} · ${t(lang, "mp")} ${target.maxMp}`);
+    for (const id of target.abilities) {
+      const ab = ABILITIES[id]!;
+      const cd = target.cooldowns[id];
+      const dmg = ab.damage ? ` ${ab.damage.min}–${ab.damage.max}` : "";
+      const state_ = cd ? `⏳ ${t(lang, "cooldown", { n: cd })}` : t(lang, "ready");
+      lines.push(`${abilityName(lang, id)}${dmg} · ${ab.range[0]}–${ab.range[1]} · ${state_}${zone.includes(id) ? ` · <b class="down">${t(lang, "reachesYou")}</b>` : ""}`);
+    }
   }
   tip.innerHTML = lines.join("<br>");
   tip.style.display = "block";
@@ -332,8 +448,7 @@ function actionAt(p: Pos): { cmd: Command } | { why: string } | null {
   const u = activeUnit(state);
   if (selected) {
     const why = castProblem(state, u, selected, p);
-    if (why === "no line of sight") return { why: t(lang, "noSight") };
-    return why ? { why } : { cmd: { t: "cast", unit: u.id, ability: selected, target: p } };
+    return why ? { why: explain(why) } : { cmd: { t: "cast", unit: u.id, ability: selected, target: p } };
   }
   if (p.x === u.pos.x && p.y === u.pos.y) return null;
   if (reachable(state.map, u.pos, moveRules(state, u)).has(`${p.x},${p.y}`)) return { cmd: { t: "move", unit: u.id, to: p } };
@@ -353,7 +468,12 @@ function act(cmd: Command) {
 function onTap(p: Pos, touch: boolean) {
   if (!heroTurn() || busy || animating()) return;
   const a = actionAt(p);
-  if (!a) { pending = null; refresh(); tooltip(p); return; }
+  if (!a) {
+    // Tapping a foe (no ability chosen) shows where it can strike next turn; tapping it again hides that.
+    const who = unitAt(state, p);
+    inspect = who && who.team === "foes" && inspect !== who.id ? who.id : null;
+    pending = null; refresh(); tooltip(p); return;
+  }
   if ("why" in a) { pending = null; refresh(); if (selected || touch) toast(a.why); tooltip(p); return; }
   if (!touch || (pending && pending.x === p.x && pending.y === p.y)) { act(a.cmd); tooltip(null); return; }
   pending = p; refresh(); tooltip(p);
@@ -366,11 +486,24 @@ function confirmPending() {
   tooltip(null);
 }
 
+/** The selected attack's predicted damage on the unit under the finger or cursor, for the health bar. */
+function previewHit() {
+  const at = pending ?? hover;
+  if (!selected || !at || !heroTurn()) return undefined;
+  const u = activeUnit(state), target = unitAt(state, at), ab = ABILITIES[selected]!;
+  if (!target || !ab.damage || target.team === u.team || castProblem(state, u, selected, at)) return undefined;
+  return { unit: target.id, ...damagePreview(state, u, target, ab) };
+}
+
 function frame(time: number) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#1d1f2b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
   const moving = time < animUntil;
-  drawBattle(ctx, state, images, view, { marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions });
+  if (focus && time > focus.until) focus = null;
+  drawBattle(ctx, state, images, view, {
+    marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions,
+    danger: dangerTiles(), preview: moving ? undefined : previewHit(), focus: focus?.id,
+  });
   requestAnimationFrame(frame);
 }
 
@@ -380,6 +513,7 @@ async function start() {
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   for (const u of TEST_UNITS) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);
+  setFlat(safeGet(VIEW_KEY) === "flat");
   loadOrNew();
   refresh();
   followHero();
@@ -428,15 +562,22 @@ async function start() {
   $("zoomIn").addEventListener("click", () => { zoom = Math.min(3, zoom * 1.25); layout(); });
   $("zoomOut").addEventListener("click", () => { zoom = Math.max(0.5, zoom / 1.25); layout(); });
   $("rotate").addEventListener("click", () => { view.rot = (view.rot + 1) % 4; });
-  $("end").addEventListener("click", () => { if (heroTurn()) { run({ t: "endTurn", unit: activeUnit(state).id }); selected = null; pending = null; refresh(); maybeFoeTurn(); } });
-  $("wait").addEventListener("click", () => { if (heroTurn()) { run({ t: "wait", unit: activeUnit(state).id }); selected = null; pending = null; refresh(); maybeFoeTurn(); } });
+  const pass = (t_: "endTurn" | "wait") => {
+    if (!heroTurn() || busy || animating()) return;
+    run({ t: t_, unit: activeUnit(state).id }); selected = null; pending = null; tooltip(null); refresh(); maybeFoeTurn();
+  };
+  $("end").addEventListener("click", () => pass("endTurn"));
+  $("wait").addEventListener("click", () => pass("wait"));
+  $("rewind").addEventListener("click", rewind);
+  $("danger").addEventListener("click", () => { dangerAll = !dangerAll; refresh(); });
+  $("flat").addEventListener("click", () => { setFlat(!isFlat()); safeSet(VIEW_KEY, isFlat() ? "flat" : "iso"); tooltip(null); refresh(); });
   $("undo").addEventListener("click", undo);
   $("confirm").addEventListener("click", confirmPending);
   $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
   $("new").addEventListener("click", newBattle);
   $("again").addEventListener("click", newBattle);
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });
-  addEventListener("keydown", (ev) => { if (ev.key === "Escape") { selected = null; pending = null; refresh(); } });
+  addEventListener("keydown", (ev) => { if (ev.key === "Escape") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); } });
   requestAnimationFrame(frame);
   maybeFoeTurn();
   // Small hook for automated browser checks: where a tile is on screen, and the current state.
