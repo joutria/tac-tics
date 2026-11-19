@@ -3,7 +3,7 @@
    the same seed always gives the same map. */
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
 
-export type NodeKind = "battle" | "elite" | "rest" | "rival" | "boss";
+export type NodeKind = "battle" | "elite" | "rest" | "shop" | "rival" | "boss";
 
 export interface RunNode {
   id: number;
@@ -44,6 +44,11 @@ export function generateMap(seed: string | number, layers = MAP_LAYERS, width = 
     if (n.layer === layers - 2) n.kind = "rest";
     else if (n.layer === mid && n.col === byLayer[mid]![0]!.col) n.kind = "rest";
     else if (n.layer >= 2 && chance(0.3)) n.kind = "elite";
+  }
+  // One shop on layer 2 and one on the layer before the last rests, each on a node that is still a plain battle.
+  for (const layer of [2, layers - 3]) {
+    const spots = (byLayer[layer] ?? []).filter((n) => n.kind === "battle");
+    if (spots.length) spots[roll(0, spots.length - 1)]!.kind = "shop";
   }
   // Links: each node goes to the nearest one or two nodes of the next layer; every node gets at least one way in.
   for (let layer = 0; layer < layers - 1; layer++) {

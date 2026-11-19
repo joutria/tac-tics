@@ -1,20 +1,33 @@
 /* A run: one trip through a region's map with the hero, from the first node to the boss.
    The run ends when the hero falls for good (plan doc gap 10) or when the boss is beaten.
 
-   Like a battle, a run is deterministic: the map, every battle's seed and foes, and every rival come from the
-   run seed and what happened in earlier battles. The run save keeps the current battle's own save inside it. */
+   Between battles the hero grows: XP and levels, a perk pick every second level, coins and Savia shards, a
+   choice of 1 of 3 rewards after each win, and a shop (gaps 12 to 14).
+
+   Like a battle, a run is deterministic: the map, every battle's seed and foes, every reward and every rival come
+   from the run seed and what happened before. The run save keeps the current battle's own save inside it. */
+import { ITEMS, PERKS, REWARD, SHOP, type Rarity } from "../data/gear";
 import { ARENAS, BOSS, DEPTH_HP, DEPTH_STAT, HERO, SPECIES, type Species } from "../data/region";
-import { rngInt, seedFrom } from "../engine/rng";
+import { rngInt, rngNext, seedFrom } from "../engine/rng";
 import type { BattleSave } from "../engine/save";
 import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
+import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
 import { aheadOf, choices, generateMap, placeRival, type RunMap, type RunNode } from "./map";
 import { activeRivals, afterBattle, rivalSpec, type Rival } from "./rivals";
 
-export const RUN_VERSION = 1;
+export const RUN_VERSION = 2;
 /** Share of max HP a rest node gives back. */
 export const REST_HEAL = 0.4;
 /** Share of max HP the hero gets back after winning a battle. */
 export const AFTER_WIN_HEAL = 0.3;
+
+export type RewardOption = { t: "item"; id: string } | { t: "coins"; n: number } | { t: "heal"; n: number } | { t: "shards"; n: number };
+
+/** Something the player has to answer before moving on: a reward, a perk, or a shop to browse. */
+export type Offer =
+  | { kind: "reward"; options: RewardOption[] }
+  | { kind: "perk"; options: string[] }
+  | { kind: "shop"; stock: string[] };
 
 export interface RunState {
   version: number;
@@ -26,17 +39,30 @@ export interface RunState {
   path: number[];
   /** The hero's HP between battles (a battle starts with it; the revive scars last one battle only). */
   heroHp: number;
+  hero: HeroProgress;
+  coins: number;
+  shards: number;
   rivals: Rival[];
+  /** Answered first to last before the map opens again. */
+  offers: Offer[];
   /** The battle being fought, if any. */
   battle?: BattleSave & { node: number };
+  /** What the last battle gave, for the screen. */
+  spoils?: { coins: number; xp: number; shards: number; levels: number };
   over: null | "won" | "lost";
 }
 
 export function newRun(seed: string): RunState {
-  return { version: RUN_VERSION, seed, map: generateMap(seed), at: null, path: [], heroHp: HERO.hp, rivals: [], over: null };
+  return {
+    version: RUN_VERSION, seed, map: generateMap(seed), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
+    coins: 0, shards: 0, rivals: [], offers: [], over: null,
+  };
 }
 
-export const nextNodes = (run: RunState): RunNode[] => (run.over ? [] : choices(run.map, run.at));
+export const heroOf = (run: RunState) => heroSpec(HERO, run.hero);
+export const heroMaxHp = (run: RunState) => heroOf(run).hp;
+
+export const nextNodes = (run: RunState): RunNode[] => (run.over || run.offers.length ? [] : choices(run.map, run.at));
 
 /** Which arena a node uses: picked from the seed so revisiting the save gives the same one. */
 function arenaFor(run: RunState, node: RunNode) {
@@ -61,7 +87,7 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   let count: number; [count, rng] = rngInt(rng, 2, node.layer < 2 ? 2 : 3);
   if (node.kind === "elite") count = 4;
   if (node.kind === "boss") count = 3;
-  const units: UnitSpec[] = [{ ...structuredClone(HERO), pos: { ...arena.hero }, hpNow: run.heroHp }];
+  const units: UnitSpec[] = [{ ...heroOf(run), pos: { ...arena.hero }, hpNow: run.heroHp }];
   for (let i = 0; i < count; i++) {
     const pos = arena.foes[i]!;
     const id = `n${node.id}-${i}`;
@@ -78,13 +104,15 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   return { seed: `${run.seed}:battle:${node.id}`, map: arena.map, units };
 }
 
-/** Starts the battle on a node the player can go to. */
+/** Goes to a node the player can go to: rests heal, shops open, battles start. */
 export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): RunState {
   if (!nextNodes(run).some((n) => n.id === nodeId)) throw new Error(`node ${nodeId} is not open`);
   const next = structuredClone(run);
   const node = next.map.nodes[nodeId]!;
-  if (node.kind === "rest") {
-    next.heroHp = Math.min(HERO.hp, next.heroHp + Math.round(HERO.hp * REST_HEAL));
+  delete next.spoils;
+  if (node.kind === "rest" || node.kind === "shop") {
+    if (node.kind === "rest") next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * REST_HEAL));
+    else next.offers.push({ kind: "shop", stock: shopStock(next, nodeId) });
     next.at = nodeId; next.path.push(nodeId);
     return next;
   }
@@ -92,7 +120,7 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
   return next;
 }
 
-/** Closes the current battle: HP carries on, rivals learn or are settled, new rivals take a node ahead. */
+/** Closes the current battle: spoils, HP, rivals, then the perk picks and the reward to choose. */
 export function finishBattle(run: RunState, end: BattleState): RunState {
   const b = run.battle;
   if (!b || !end.winner) throw new Error("no finished battle");
@@ -101,18 +129,136 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
   next.rivals = afterBattle(next.rivals, b.setup, b.commands, end);
   const hero = end.units.find((u) => u.team === "heroes")!;
   if (end.winner === "foes" || hero.life !== "up") { next.over = "lost"; next.heroHp = 0; return next; }
-  // Catching your breath after a win gives a little back.
-  next.heroHp = Math.min(HERO.hp, hero.hp + Math.round(HERO.hp * AFTER_WIN_HEAL));
+  const node = next.map.nodes[b.node]!;
   next.at = b.node; next.path.push(b.node);
+
+  // Spoils: every foe put down (not the ones that got away), scaled by depth and the kind of node.
+  const beaten = end.units.filter((u) => u.team === "foes" && (u.life === "dead" || u.life === "downed"));
+  const mult = (1 + REWARD.perLayer * node.layer) * (node.kind === "boss" ? REWARD.bossMult : node.kind === "elite" ? REWARD.eliteMult : node.kind === "rival" ? REWARD.rivalMult : 1);
+  const coins = Math.round(beaten.length * REWARD.coinsPerFoe * mult);
+  const xp = Math.round(beaten.length * REWARD.xpPerFoe * mult);
+  const shards = node.kind === "boss" ? REWARD.bossShards : node.kind === "elite" ? REWARD.eliteShards
+    : node.kind === "rival" && beaten.some((u) => u.rival) ? REWARD.rivalShards : 0;
+  next.coins += coins; next.shards += shards;
+  const before = heroMaxHp(next);
+  const grown = gainXp(next.hero, xp, `${next.seed}:${b.node}`);
+  next.hero = grown.progress;
+  next.spoils = { coins, xp, shards, levels: grown.levels };
+  // Catching your breath after a win gives a little back; levels raise max HP and current HP alike.
+  const max = heroMaxHp(next);
+  next.heroHp = Math.min(max, hero.hp + (max - before) + Math.round(max * AFTER_WIN_HEAL));
+  for (const pair of grown.perkChoices) next.offers.push({ kind: "perk", options: pair });
+
   // Rivals wait on a node ahead. One that got away again, or whose node the party can no longer reach,
   // moves to a new one; a new rival takes its first.
   const ahead = aheadOf(next.map, next.at);
   for (const r of activeRivals(next.rivals)) {
-    const node = next.map.nodes.find((n) => n.rival === r.id);
-    if (node && ahead.has(node.id)) continue;
-    if (node) { node.rival = undefined; if (node.id !== b.node) node.kind = "battle"; }
+    const at = next.map.nodes.find((n) => n.rival === r.id);
+    if (at && ahead.has(at.id)) continue;
+    if (at) { at.rival = undefined; if (at.id !== b.node) at.kind = "battle"; }
     placeRival(next.map, next.at, r.id, `${next.seed}:${next.path.length}`);
   }
-  if (next.map.nodes[b.node]!.kind === "boss") next.over = "won";
+  if (node.kind === "boss") { next.over = "won"; next.offers = []; return next; }
+  next.offers.push({ kind: "reward", options: rewardOptions(next, node) });
+  return next;
+}
+
+/** Items the hero does not own yet, of a rarity. */
+const unowned = (run: RunState, rarity: Rarity) =>
+  Object.values(ITEMS).filter((it) => it.rarity === rarity && !run.hero.bag.includes(it.id) && !Object.values(run.hero.gear).includes(it.id)).map((it) => it.id);
+
+/** 1 of 3 after a win: an item (rarer deeper in, and after hard fights), then coins, then a heal or shards. */
+function rewardOptions(run: RunState, node: RunNode): RewardOption[] {
+  let rng = seedFrom(`${run.seed}:reward:${node.id}`);
+  const roll = () => { let v: number; [v, rng] = rngNext(rng); return v; };
+  const tough = node.kind !== "battle";
+  const rarity: Rarity = roll() < (tough ? 0.25 : 0.05) + node.layer * 0.04 ? "epic" : roll() < (tough ? 0.6 : 0.3) + node.layer * 0.05 ? "rare" : "common";
+  const options: RewardOption[] = [];
+  const pool = unowned(run, rarity).length ? unowned(run, rarity) : unowned(run, "common");
+  if (pool.length) options.push({ t: "item", id: pool[Math.floor(roll() * pool.length)]! });
+  options.push({ t: "coins", n: Math.round(REWARD.purse * (1 + REWARD.perLayer * node.layer)) });
+  options.push(roll() < 0.25 ? { t: "shards", n: 1 } : { t: "heal", n: Math.round(heroMaxHp(run) * REWARD.patchUp) });
+  return options;
+}
+
+function shopStock(run: RunState, nodeId: number): string[] {
+  let rng = seedFrom(`${run.seed}:shop:${nodeId}`);
+  const pool = [...unowned(run, "common"), ...unowned(run, "rare"), ...unowned(run, "epic")];
+  const stock: string[] = [];
+  while (stock.length < SHOP.stock && pool.length) {
+    let i: number; [i, rng] = rngInt(rng, 0, pool.length - 1);
+    stock.push(pool.splice(i, 1)[0]!);
+  }
+  return stock;
+}
+
+/** Epic items cost Savia shards; the rest cost coins. */
+export const priceOf = (itemId: string) => ({ amount: ITEMS[itemId]!.price, currency: ITEMS[itemId]!.rarity === "epic" ? "shards" as const : "coins" as const });
+
+/** Answers the first offer: picks a reward or a perk by its index. */
+export function choose(run: RunState, index: number): RunState {
+  const offer = run.offers[0];
+  if (!offer || offer.kind === "shop") throw new Error("nothing to choose");
+  const next = structuredClone(run);
+  next.offers.shift();
+  if (offer.kind === "perk") {
+    const id = offer.options[index];
+    if (!id || !PERKS[id]) throw new Error("no such perk");
+    const before = heroMaxHp(next);
+    next.hero.perks.push(id);
+    next.heroHp += heroMaxHp(next) - before;
+    return next;
+  }
+  const r = offer.options[index];
+  if (!r) throw new Error("no such reward");
+  if (r.t === "item") gainItem(next, r.id);
+  if (r.t === "coins") next.coins += r.n;
+  if (r.t === "shards") next.shards += r.n;
+  if (r.t === "heal") next.heroHp = Math.min(heroMaxHp(next), next.heroHp + r.n);
+  return next;
+}
+
+function gainItem(run: RunState, id: string) {
+  const before = heroMaxHp(run);
+  run.hero = take(run.hero, id);
+  run.heroHp = Math.max(1, Math.min(heroMaxHp(run), run.heroHp + heroMaxHp(run) - before));
+}
+
+/** Shop: buys one item in stock, if the purse allows. */
+export function buy(run: RunState, itemId: string): RunState {
+  const offer = run.offers[0];
+  if (offer?.kind !== "shop" || !offer.stock.includes(itemId)) throw new Error("not for sale here");
+  const { amount, currency } = priceOf(itemId);
+  if (run[currency] < amount) throw new Error(`not enough ${currency}`);
+  const next = structuredClone(run);
+  next[currency] -= amount;
+  (next.offers[0] as { stock: string[] }).stock = offer.stock.filter((x) => x !== itemId);
+  gainItem(next, itemId);
+  return next;
+}
+
+/** Shop: a healer patches the hero up for coins. */
+export function shopHeal(run: RunState): RunState {
+  if (run.offers[0]?.kind !== "shop") throw new Error("no shop here");
+  if (run.coins < SHOP.healPrice) throw new Error("not enough coins");
+  const next = structuredClone(run);
+  next.coins -= SHOP.healPrice;
+  next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * SHOP.heal));
+  return next;
+}
+
+export function leaveShop(run: RunState): RunState {
+  if (run.offers[0]?.kind !== "shop") throw new Error("no shop here");
+  const next = structuredClone(run);
+  next.offers.shift();
+  return next;
+}
+
+/** Wears an item from the bag (any time on the map). */
+export function wear(run: RunState, itemId: string): RunState {
+  const next = structuredClone(run);
+  const before = heroMaxHp(next);
+  next.hero = equip(next.hero, itemId);
+  next.heroHp = Math.max(1, Math.min(heroMaxHp(next), next.heroHp + heroMaxHp(next) - before));
   return next;
 }

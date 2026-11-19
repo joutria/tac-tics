@@ -11,7 +11,7 @@ import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { enterNode, finishBattle, newRun, RUN_VERSION, type RunState } from "./run/run";
+import { buy, choose, enterNode, finishBattle, leaveShop, newRun, RUN_VERSION, shopHeal, wear, type RunState } from "./run/run";
 import { renderRunMap } from "./ui/runmap";
 import { BattleSave, replay } from "./engine/save";
 import {
@@ -82,6 +82,7 @@ function resetView() { selected = null; pending = null; inspect = null; motions.
 /* ---------- the run: map screen, entering nodes, closing battles ---------- */
 
 let journey: RunState;
+let gearOpen = false;
 /** Map screen or battle screen. */
 let onMap = true;
 
@@ -97,8 +98,18 @@ function showMap() {
   resetView();
   $("runmap").style.display = "flex";
   $("overlay").style.display = "none";
-  renderRunMap($("runmap"), journey, lang, pickNode);
+  const update = (next: RunState) => { journey = next; showMap(); };
+  const safely = (f: () => RunState) => { try { update(f()); } catch (e) { toast(t(lang, "tooPoor")); console.warn(e); } };
+  renderRunMap($("runmap"), journey, lang, {
+    pick: pickNode,
+    choose: (i) => update(choose(journey, i)),
+    buy: (id) => safely(() => buy(journey, id)),
+    heal: () => safely(() => shopHeal(journey)),
+    leave: () => update(leaveShop(journey)),
+    wear: (id) => { journey = wear(journey, id); showMap(); },
+  }, gearOpen, () => { gearOpen = false; showMap(); });
   $<HTMLButtonElement>("newRun").textContent = t(lang, "newRun");
+  $("gearBtn").textContent = `🎒 ${t(lang, "gear")}`;
   $("mapLang").textContent = lang === "es" ? "English" : "Español";
   document.documentElement.lang = lang;
 }
@@ -138,7 +149,8 @@ function afterBattleButton() {
   if (journey.over) { startRun(); return; }
   if (!journey.battle || !state.winner) return;
   journey = finishBattle(journey, state);
-  if (journey.over) { showMap(); return; }
+  const sp = journey.spoils;
+  if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : ""), 2600);
   showMap();
 }
 
@@ -689,6 +701,7 @@ async function start() {
   $("confirm").addEventListener("click", confirmPending);
   $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
   $("again").addEventListener("click", afterBattleButton);
+  $("gearBtn").addEventListener("click", () => { gearOpen = !gearOpen; showMap(); });
   $("newRun").addEventListener("click", () => { if (journey.over || confirmNewRun()) startRun(); });
   $("mapLang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); showMap(); });
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });

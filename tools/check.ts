@@ -8,6 +8,7 @@ import { TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
 import { ARENAS } from "../src/data/region";
+import { ITEMS, PERKS } from "../src/data/gear";
 import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
 
 const problems: string[] = [];
@@ -55,6 +56,18 @@ for (const m of [MEADOW]) {
     if (!ELEMENTS[u.element]) fail(`unit ${u.id} has unknown element ${u.element}`);
     if (!existsSync(`public/art/creatures/${u.look}.png`)) fail(`unit ${u.id}: missing art public/art/creatures/${u.look}.png`);
   }
+}
+
+// Items and perks: names in both languages, taught abilities exist, prices positive.
+for (const [id, it] of Object.entries(ITEMS)) {
+  if (it.id !== id) fail(`item ${id} has id ${it.id}`);
+  if (!it.name.es || !it.name.en) fail(`item ${id}: name missing in a language`);
+  if (it.teaches && !ABILITIES[it.teaches]) fail(`item ${id} teaches unknown ability ${it.teaches}`);
+  if (it.price <= 0) fail(`item ${id}: price must be positive`);
+}
+for (const [id, p] of Object.entries(PERKS)) {
+  if (p.id !== id) fail(`perk ${id} has id ${p.id}`);
+  if (!p.name.es || !p.name.en || !p.desc.es || !p.desc.en) fail(`perk ${id}: text missing in a language`);
 }
 
 // Region arenas: the party and up to four foes start on tiles they can stand on, all different.

@@ -48,7 +48,16 @@
   #runHint { color: var(--quiet); font-size: 13px; text-align: center; }
   #runSvg { flex: 1; width: 100%; min-height: 0; display: flex; justify-content: center; }
   #runSvg svg { height: 100%; max-width: 100%; }
-  #runmap .row { display: flex; gap: 8px; }
+  #runmap .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  #runPanel { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(15, 16, 24, 0.94); padding: 16px; overflow-y: auto; }
+  #runPanel .spoils { margin: 0; color: var(--quiet); }
+  #runPanel h2 { margin: 0; font-size: 20px; color: var(--accent); text-align: center; }
+  #runPanel .cards { display: flex; flex-direction: column; gap: 10px; width: min(420px, 100%); }
+  #runPanel .card { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px 12px; }
+  #runPanel .card small { color: var(--quiet); font-size: 11px; }
+  #runPanel .card em { color: var(--accent); font-style: normal; font-size: 12px; }
+  #runPanel .card.worn { border-color: var(--accent); }
+  .r-common { color: var(--ink); } .r-rare { color: #7fc4ff; } .r-epic { color: #d9a0ff; }
   .link { stroke: #4a4d66; stroke-width: 3; }
   .link.taken { stroke: var(--accent); }
   .node circle { fill: #2a2c3d; stroke: #5a5e80; stroke-width: 2; }
@@ -93,7 +102,8 @@
     <div id="runHead"></div>
     <div id="runSvg"></div>
     <div id="runHint"></div>
-    <div class="row"><button id="mapLang"></button><button id="newRun"></button></div>
+    <div class="row"><button id="gearBtn"></button><button id="mapLang"></button><button id="newRun"></button></div>
+    <div id="runPanel"></div>
   </div>
   <div id="toast"></div>
   <script type="module" src="/src/main.ts"></script>
