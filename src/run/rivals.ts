@@ -34,7 +34,7 @@ export interface Rival {
   /** Its spec when it became a rival (position is set by each battle). */
   base: UnitSpec;
   epithet: number;
-  cause: { kind: "escaped" | "felled"; hero: string };
+  cause: { kind: "escaped" | "felled" | "betrayed"; hero: string };
   level: number;
   /** Battles fought against the party since it became a rival. */
   meetings: number;
@@ -119,6 +119,16 @@ export function afterBattle(rivals: Rival[], setup: BattleSetup, commands: Comma
     out.push(fresh);
   }
   return out;
+}
+
+/** A companion who turned on the party: a rival from now on, with what it saw of the party's style. */
+export function rivalFromCompanion(spec: UnitSpec, heroName: string, style: Style, seed: string): Rival {
+  const [epithet] = rngInt(seedFrom(`${seed}:turned:${spec.id}`), 0, EPITHETS.length - 1);
+  const base: UnitSpec = { ...structuredClone(spec), team: "foes", marked: true, ai: "skirmisher" };
+  delete base.hpNow; delete base.refuses;
+  const r: Rival = { id: spec.id, base, epithet, cause: { kind: "betrayed", hero: heroName }, level: 1, meetings: 0, memory: [style], counters: [] };
+  r.counters.push(pickCounter(r, style));
+  return r;
 }
 
 export const activeRivals = (rivals: Rival[]) => rivals.filter((r) => !r.settled);

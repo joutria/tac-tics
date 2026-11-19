@@ -2,7 +2,9 @@
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
 import { ABILITIES } from "./data/abilities";
 import { elementMultiplier, ELEMENTS } from "./data/elements";
+import { COMPANIONS } from "./data/companions";
 import { MEADOW } from "./data/maps/meadow";
+import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
@@ -221,6 +223,11 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       floaters.push({ pos: { ...u.pos }, text: t(lang, ev.state === "flee" ? "fleeing" : "retreating"), color: "#ffc85a", born: now + 400 });
       continue;
     }
+    if (ev.e === "refused") {
+      const u = unitById(state, ev.unit);
+      toast(t(lang, "refused", { name: u.name }), 2600);
+      continue;
+    }
     if (ev.e === "escaped") {
       const u = unitById(state, ev.unit);
       floaters.push({ pos: { ...u.pos }, text: t(lang, "escapedTag"), color: "#ffc85a", born: now });
@@ -412,7 +419,7 @@ function refresh() {
   $("cancel").textContent = t(lang, "cancel");
   $("act").style.bottom = `${$("bottom").getBoundingClientRect().height + 10}px`;
   $("hint").textContent = !mine ? t(lang, "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
-  const lost = state.winner === "foes" || state.units.some((x) => x.team === "heroes" && x.life !== "up");
+  const lost = state.winner === "foes" || state.units.some((x) => x.id === HERO.id && x.life !== "up");
   const boss = journey.battle && journey.map.nodes[journey.battle.node]!.kind === "boss";
   $("again").textContent = t(lang, lost ? "newRun" : boss ? "regionCleared" : "toMap");
   const over = $("overlay");
@@ -443,6 +450,13 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   if (target.escape === "retreat") lines.push(`<b class="esc">${t(lang, "retreating")}</b> · ${t(lang, "retreatInfo")}`);
   else if (target.escape === "flee") lines.push(`<b class="esc">${t(lang, "fleeing")}</b> · ${t(lang, "fleeInfo")}`);
   if (target.escape !== "none" && target.life === "up" && isBorder(state, target.pos)) lines.push(`<b class="down">${t(lang, "leavesNext")}</b>`);
+  // Companion lines the player has heard about: striking a fleeing foe crosses one.
+  if (target.team === "foes" && target.escape === "flee") {
+    for (const m of journey.party) {
+      const c = COMPANIONS[m.id]!;
+      if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
+    }
+  }
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
@@ -635,7 +649,7 @@ async function start() {
   const base = import.meta.env.BASE_URL;
   const tiles = ["top-grass", "top-dirt", "top-water", "top-rock", "top-tree", "side-left", "side-right", "obj-rock", "obj-tree"];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
-  for (const u of TEST_UNITS) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
+  for (const u of [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec)]) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);
   setFlat(safeGet(VIEW_KEY) === "flat");
   // Until a battle starts (the map screen comes first), the battle screen holds the test fight, never shown.

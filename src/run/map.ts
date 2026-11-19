@@ -3,7 +3,7 @@
    the same seed always gives the same map. */
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
 
-export type NodeKind = "battle" | "elite" | "rest" | "shop" | "rival" | "boss";
+export type NodeKind = "battle" | "elite" | "rest" | "shop" | "recruit" | "rival" | "boss";
 
 export interface RunNode {
   id: number;
@@ -13,6 +13,8 @@ export interface RunNode {
   kind: NodeKind;
   /** Nodes in the next layer this one leads to. */
   next: number[];
+  /** Conversation that can recruit a companion (data/companions.ts TALKS), for kind "recruit". */
+  recruit?: string;
   /** Rival waiting here (its id), for kind "rival". */
   rival?: string;
 }
@@ -45,6 +47,9 @@ export function generateMap(seed: string | number, layers = MAP_LAYERS, width = 
     else if (n.layer === mid && n.col === byLayer[mid]![0]!.col) n.kind = "rest";
     else if (n.layer >= 2 && chance(0.3)) n.kind = "elite";
   }
+  // The first recruit waits on layer 1, so a companion can join early on most paths.
+  const meet = byLayer[1]!.filter((n) => n.kind === "battle");
+  if (meet.length) { const n = meet[roll(0, meet.length - 1)]!; n.kind = "recruit"; n.recruit = "remanso.meet"; }
   // One shop on layer 2 and one on the layer before the last rests, each on a node that is still a plain battle.
   for (const layer of [2, layers - 3]) {
     const spots = (byLayer[layer] ?? []).filter((n) => n.kind === "battle");

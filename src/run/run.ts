@@ -13,9 +13,12 @@ import type { BattleSave } from "../engine/save";
 import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
 import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
 import { aheadOf, choices, generateMap, placeRival, type RunMap, type RunNode } from "./map";
-import { activeRivals, afterBattle, rivalSpec, type Rival } from "./rivals";
+import { COMPANIONS, TALKS } from "../data/companions";
+import type { Line } from "../data/rivals";
+import { memberSpec, newMember, react, readDeeds, type Member } from "./party";
+import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, type Rival } from "./rivals";
 
-export const RUN_VERSION = 2;
+export const RUN_VERSION = 3;
 /** Share of max HP a rest node gives back. */
 export const REST_HEAL = 0.4;
 /** Share of max HP the hero gets back after winning a battle. */
@@ -27,7 +30,9 @@ export type RewardOption = { t: "item"; id: string } | { t: "coins"; n: number }
 export type Offer =
   | { kind: "reward"; options: RewardOption[] }
   | { kind: "perk"; options: string[] }
-  | { kind: "shop"; stock: string[] };
+  | { kind: "shop"; stock: string[] }
+  /** A conversation (data/companions.ts TALKS); after a choice, its reply shows until the player moves on. */
+  | { kind: "talk"; id: string; reply?: Line };
 
 export interface RunState {
   version: number;
@@ -43,6 +48,10 @@ export interface RunState {
   coins: number;
   shards: number;
   rivals: Rival[];
+  /** Companions met this run, including those who left, fell or turned. */
+  party: Member[];
+  /** What companions said after the last battle or rest. */
+  remarks: Line[];
   /** Answered first to last before the map opens again. */
   offers: Offer[];
   /** The battle being fought, if any. */
@@ -55,11 +64,14 @@ export interface RunState {
 export function newRun(seed: string): RunState {
   return {
     version: RUN_VERSION, seed, map: generateMap(seed), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
-    coins: 0, shards: 0, rivals: [], offers: [], over: null,
+    coins: 0, shards: 0, rivals: [], party: [], remarks: [], offers: [], over: null,
   };
 }
 
 export const heroOf = (run: RunState) => heroSpec(HERO, run.hero);
+/** Companions who fight in the next battle. */
+export const fielded = (run: RunState) => run.party.filter((m) => m.status === "with" || m.status === "leaving");
+export const memberMaxHp = (run: RunState, m: Member) => memberSpec(m, run.hero.level, { x: 0, y: 0 }).hp;
 export const heroMaxHp = (run: RunState) => heroOf(run).hp;
 
 export const nextNodes = (run: RunState): RunNode[] => (run.over || run.offers.length ? [] : choices(run.map, run.at));
@@ -83,11 +95,12 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   const arena = arenaFor(run, node);
   let rng = seedFrom(`${run.seed}:foes:${node.id}`);
   const pick = () => { let i: number; [i, rng] = rngInt(rng, 0, SPECIES.length - 1); return SPECIES[i]!; };
-  // The first two layers stay at two foes while the party finds its feet.
-  let count: number; [count, rng] = rngInt(rng, 2, node.layer < 2 ? 2 : 3);
+  // The first layer is a 1-or-2 foe warm-up, the next stays at two while the party finds its feet.
+  let count: number; [count, rng] = rngInt(rng, node.layer === 0 ? 1 : 2, node.layer < 2 ? 2 : 3);
   if (node.kind === "elite") count = 4;
   if (node.kind === "boss") count = 3;
   const units: UnitSpec[] = [{ ...heroOf(run), pos: { ...arena.hero }, hpNow: run.heroHp }];
+  fielded(run).forEach((m, i) => { if (arena.allies[i]) units.push(memberSpec(m, run.hero.level, arena.allies[i]!)); });
   for (let i = 0; i < count; i++) {
     const pos = arena.foes[i]!;
     const id = `n${node.id}-${i}`;
@@ -110,9 +123,20 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
   const next = structuredClone(run);
   const node = next.map.nodes[nodeId]!;
   delete next.spoils;
-  if (node.kind === "rest" || node.kind === "shop") {
-    if (node.kind === "rest") next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * REST_HEAL));
-    else next.offers.push({ kind: "shop", stock: shopStock(next, nodeId) });
+  next.remarks = [];
+  if (node.kind === "rest" || node.kind === "shop" || node.kind === "recruit") {
+    if (node.kind === "rest") {
+      next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * REST_HEAL));
+      for (const m of next.party) {
+        // Companions who have had enough leave at a rest, taking their things.
+        if (m.status === "leaving") { m.status = "left"; continue; }
+        if (m.status === "with") m.hp = Math.min(memberMaxHp(next, m), m.hp + Math.round(memberMaxHp(next, m) * REST_HEAL));
+      }
+    } else if (node.kind === "shop") next.offers.push({ kind: "shop", stock: shopStock(next, nodeId) });
+    else if (node.recruit) {
+      const talk = TALKS[node.recruit]!;
+      if (COMPANIONS[talk.companion] && !next.party.some((m) => m.id === talk.companion)) next.offers.push({ kind: "talk", id: node.recruit });
+    }
     next.at = nodeId; next.path.push(nodeId);
     return next;
   }
@@ -131,6 +155,24 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
   if (end.winner === "foes" || hero.life !== "up") { next.over = "lost"; next.heroHp = 0; return next; }
   const node = next.map.nodes[b.node]!;
   next.at = b.node; next.path.push(b.node);
+
+  // Companions: the fallen are lost for the run; the rest carry their HP and react to what they saw.
+  const deeds = readDeeds(b.setup, b.commands);
+  next.remarks = [];
+  for (const m of fielded(next)) {
+    const u = end.units.find((x) => x.id === m.id);
+    if (!u) continue;
+    if (u.life === "dead") { m.status = "fallen"; continue; }
+    const max = memberMaxHp(next, m);
+    m.hp = Math.min(max, Math.max(1, u.hp) + Math.round(max * AFTER_WIN_HEAL));
+    const { member, remarks } = react(m, deeds);
+    Object.assign(m, member);
+    next.remarks.push(...remarks);
+    if (m.status === "turned") {
+      const spec = memberSpec(m, next.hero.level, u.pos);
+      next.rivals.push(rivalFromCompanion(spec, HERO.name, readStyle(b.setup, b.commands), `${next.seed}:${b.node}`));
+    }
+  }
 
   // Spoils: every foe put down (not the ones that got away), scaled by depth and the kind of node.
   const beaten = end.units.filter((u) => u.team === "foes" && (u.life === "dead" || u.life === "downed"));
@@ -200,6 +242,16 @@ export function choose(run: RunState, index: number): RunState {
   const offer = run.offers[0];
   if (!offer || offer.kind === "shop") throw new Error("nothing to choose");
   const next = structuredClone(run);
+  if (offer.kind === "talk") {
+    // First answer: the choice and its reply; second answer (index ignored): close the conversation.
+    if (offer.reply) { next.offers.shift(); return next; }
+    const talk = TALKS[offer.id]!;
+    const pick = talk.choices[index];
+    if (!pick) throw new Error("no such choice");
+    (next.offers[0] as { reply?: Line }).reply = pick.reply;
+    if (pick.joins) next.party.push(newMember(talk.companion, pick.approval, !!pick.reveals));
+    return next;
+  }
   next.offers.shift();
   if (offer.kind === "perk") {
     const id = offer.options[index];

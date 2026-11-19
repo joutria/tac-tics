@@ -48,6 +48,8 @@ export interface UnitSpec {
   marked?: boolean;
   /** A rival from an earlier battle (see src/run/rivals.ts). Only the screen reads it. */
   rival?: boolean;
+  /** A companion's refusal: with low approval, it will not strike a fleeing foe. */
+  refuses?: "fleeing";
   /** HP it starts the battle with, if lower than full (a run carries the hero's HP between battles). */
   hpNow?: number;
   /** A rival's learned habit: it goes for units that can heal first. */
@@ -118,7 +120,8 @@ export type BattleEvent =
   | { e: "turnStarted"; unit: string; round: number }
   | { e: "died"; unit: string }
   | { e: "escapeState"; unit: string; state: EscapeState }
-  | { e: "escaped"; unit: string };
+  | { e: "escaped"; unit: string }
+  | { e: "refused"; unit: string; target: Pos };
 
 export type Result =
   | { ok: true; state: BattleState; events: BattleEvent[] }
@@ -255,6 +258,14 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       const problem = castProblem(s, actor, cmd.ability, cmd.target);
       if (problem) return { ok: false, error: problem };
       const ab = ABILITIES[cmd.ability]!;
+      // A companion who has fallen out with the player will not strike a fleeing foe: the order is refused and
+      // the rest of their turn is lost (plan doc, "Companion values").
+      const victim = unitAt(s, cmd.target);
+      if (actor.refuses === "fleeing" && ab.damage && victim && isFoe(actor, victim) && victim.escape === "flee") {
+        const r = applyCommand(prev, { t: "endTurn", unit: actor.id });
+        if (!r.ok) return r;
+        return { ok: true, state: r.state, events: [{ e: "refused", unit: actor.id, target: cmd.target }, ...r.events] };
+      }
       if (!samePos(cmd.target, actor.pos)) actor.facing = facingOf(actor.pos, cmd.target);
       const hits = resolveCast(s, actor, ab, cmd.target);
       actor.ap -= ab.ap;

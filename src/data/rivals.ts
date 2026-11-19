@@ -16,9 +16,10 @@ export const EPITHETS: Line[] = [
 ];
 
 /** Why it is a rival, shown under its name. */
-export const TITLES: Record<"escaped" | "felled", Line> = {
+export const TITLES: Record<"escaped" | "felled" | "betrayed", Line> = {
   escaped: { es: "Huyó de {hero} y no lo olvida", en: "Fled from {hero} and never forgot" },
   felled: { es: "Derribó a {hero}", en: "Felled {hero}" },
+  betrayed: { es: "Viajó con {hero} y no le perdonó", en: "Travelled with {hero} and never forgave them" },
 };
 
 /** What it says when it shows up again, by the counter it brought this time. */

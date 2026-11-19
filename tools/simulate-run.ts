@@ -13,7 +13,8 @@ for (let i = 1; i <= runs; i++) {
   while (!run.over) {
     run = answerOffers(run);
     const open = nextNodes(run);
-    const pick = run.heroHp < heroMaxHp(run) / 2 ? open.find((n) => n.kind === "rest") ?? open[0]! : open.find((n) => n.kind !== "rest") ?? open[0]!;
+    const pick = open.find((n) => n.kind === "recruit")
+      ?? (run.heroHp < heroMaxHp(run) / 2 ? open.find((n) => n.kind === "rest") ?? open[0]! : open.find((n) => n.kind !== "rest") ?? open[0]!);
     if (pick.kind === "rival") rivalsMet++;
     run = enterNode(run, pick.id, "en");
     if (!run.battle) continue;
@@ -45,12 +46,12 @@ console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
 function answerOffers(run: RunState): RunState {
   while (run.offers.length) {
     const o = run.offers[0]!;
-    if (o.kind === "perk") run = choose(run, 0);
+    if (o.kind === "perk" || o.kind === "talk") run = choose(run, 0);
     else if (o.kind === "reward") {
       const hurt = run.heroHp < heroMaxHp(run) * 0.4;
       const i = hurt ? o.options.findIndex((r) => r.t === "heal") : o.options.findIndex((r) => r.t === "item");
       run = choose(run, Math.max(0, i));
-    } else {
+    } else if (o.kind === "shop") {
       if (run.heroHp < heroMaxHp(run) * 0.6) try { run = shopHeal(run); } catch { /* too poor */ }
       for (const id of o.stock) { const p = priceOf(id); if (run[p.currency] >= p.amount) run = buy(run, id); }
       run = leaveShop(run);

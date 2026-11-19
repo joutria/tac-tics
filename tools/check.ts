@@ -9,6 +9,7 @@ import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
 import { ARENAS } from "../src/data/region";
 import { ITEMS, PERKS } from "../src/data/gear";
+import { COMPANIONS, TALKS } from "../src/data/companions";
 import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
 
 const problems: string[] = [];
@@ -70,10 +71,27 @@ for (const [id, p] of Object.entries(PERKS)) {
   if (!p.name.es || !p.name.en || !p.desc.es || !p.desc.en) fail(`perk ${id}: text missing in a language`);
 }
 
+// Companions and talks: every line in both languages, abilities and art exist, talks name a real companion.
+const lineOk = (where: string, l: { es: string; en: string }) => { if (!l.es || !l.en) fail(`${where}: empty in a language`); };
+for (const [id, c] of Object.entries(COMPANIONS)) {
+  if (c.id !== id || c.spec.id !== id) fail(`companion ${id}: ids do not match`);
+  for (const a of c.spec.abilities) if (!ABILITIES[a]) fail(`companion ${id} has unknown ability ${a}`);
+  if (!existsSync(`public/art/creatures/${c.spec.look}.png`)) fail(`companion ${id}: missing art ${c.spec.look}.png`);
+  for (const [k, l] of Object.entries(c.remarks)) lineOk(`companion ${id} remark ${k}`, l!);
+  for (const [k, l] of Object.entries(c.escalation)) lineOk(`companion ${id} escalation ${k}`, l);
+  lineOk(`companion ${id} warning`, c.forbiddenWarning);
+}
+for (const [id, talk] of Object.entries(TALKS)) {
+  if (!COMPANIONS[talk.companion]) fail(`talk ${id}: unknown companion ${talk.companion}`);
+  talk.lines.forEach((l, i) => lineOk(`talk ${id} line ${i}`, l));
+  talk.choices.forEach((c, i) => { lineOk(`talk ${id} choice ${i}`, c.text); lineOk(`talk ${id} reply ${i}`, c.reply); });
+}
+
 // Region arenas: the party and up to four foes start on tiles they can stand on, all different.
 for (const a of ARENAS) {
   if (a.map.tiles.length !== a.map.w * a.map.h) fail(`map ${a.map.id}: tile count does not match its size`);
-  const spots = [a.hero, ...a.foes];
+  const spots = [a.hero, ...a.allies, ...a.foes];
+  if (a.allies.length < 3) fail(`arena ${a.map.id}: needs 3 ally spots (a field of 4)`);
   if (a.foes.length < 4) fail(`arena ${a.map.id}: needs 4 foe spots (elites field 4)`);
   for (const p of spots) {
     const tile = tileAt(a.map, p);

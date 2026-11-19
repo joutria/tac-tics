@@ -50,6 +50,9 @@
   #runSvg svg { height: 100%; max-width: 100%; }
   #runmap .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
   #runPanel { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(15, 16, 24, 0.94); padding: 16px; overflow-y: auto; }
+  #runPanel .say { margin: 0; line-height: 1.45; }
+  #runPanel .say.reply { color: var(--accent); }
+  #runHint { white-space: pre-line; }
   #runPanel .spoils { margin: 0; color: var(--quiet); }
   #runPanel h2 { margin: 0; font-size: 20px; color: var(--accent); text-align: center; }
   #runPanel .cards { display: flex; flex-direction: column; gap: 10px; width: min(420px, 100%); }

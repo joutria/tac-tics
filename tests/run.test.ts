@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { HERO } from "../src/data/region";
-import { createBattle, type BattleState } from "../src/engine/state";
+import { applyCommand, createBattle, type BattleState, type Command, type UnitSpec } from "../src/engine/state";
+import { parseMap } from "../src/engine/grid";
+import { APPROVAL, COMPANIONS } from "../src/data/companions";
+import { memberSpec, newMember, react, readDeeds } from "../src/run/party";
 import { aheadOf, generateMap, MAP_LAYERS } from "../src/run/map";
 import { ITEMS, PERKS, SHOP, xpToNext } from "../src/data/gear";
 import { gainXp, heroSpec, newProgress } from "../src/run/hero";
@@ -149,5 +152,77 @@ describe("growth and economy", () => {
     run = wear(leaveShop(run), "sunlance");
     expect(run.hero.gear.weapon).toBe("sunlance");
     expect(run.hero.bag).toEqual(["ashStaff"]);
+  });
+});
+
+describe("companions", () => {
+  const flat = parseMap("flat", Array.from({ length: 7 }, () => Array(7).fill("g0").join(" ")));
+  const mk = (o: Partial<UnitSpec> & Pick<UnitSpec, "id" | "team" | "pos">): UnitSpec => ({
+    name: o.id, element: "neutral", look: "lumo", hp: 40, ap: 6, mp: 3, speed: 50, jump: 1, str: 0, mag: 0, agi: 10, res: {}, abilities: ["ray"], ...o,
+  });
+
+  it("recruits through a conversation, with the forbidden line revealed", () => {
+    let run = newRun("c1");
+    const node = run.map.nodes.find((n) => n.kind === "recruit")!;
+    expect(node.layer).toBe(1);
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))!.id };
+    run = enterNode(run, node.id, "en");
+    expect(run.offers[0]).toEqual({ kind: "talk", id: "remanso.meet" });
+    run = choose(run, 0);
+    expect(run.party).toHaveLength(1);
+    expect(run.party[0]!.known).toBe(true);
+    expect(run.party[0]!.approval).toBe(APPROVAL.start + 10);
+    run = choose(run, 0); // close the conversation
+    expect(run.offers).toHaveLength(0);
+    // The next battle fields Remanso next to the hero.
+    run = enterNode(run, nextNodes(run).find((n) => n.kind !== "rest" && n.kind !== "shop")!.id, "en");
+    expect(run.battle!.setup.units.some((u) => u.id === "remanso")).toBe(true);
+  });
+
+  it("reads deeds from the log: killing a fleeing foe is forbidden, helping up is liked", () => {
+    const s = createBattle({ seed: 1, map: flat, units: [
+      mk({ id: "h", team: "heroes", pos: { x: 3, y: 5 }, speed: 90, mag: 300 }),
+      mk({ id: "f", team: "foes", pos: { x: 3, y: 2 }, speed: 10, marked: true }),
+      mk({ id: "g", team: "foes", pos: { x: 6, y: 6 }, speed: 10 }),
+    ] });
+    const setup = { seed: 1, map: flat, units: s.units.map((u) => ({ ...u })) as UnitSpec[] };
+    // f starts nearly dead, so it flees once round 3 comes.
+    setup.units.find((u) => u.id === "f")!.hpNow = 1;
+    const log: Command[] = [];
+    let t = createBattle(setup);
+    while (t.units.find((u) => u.id === "f")!.escape !== "flee") { const c = { t: "endTurn" as const, unit: t.active }; log.push(c); const r = applyCommand(t, c); if (!r.ok) throw new Error(r.error); t = r.state; }
+    while (t.active !== "h") { const c = { t: "endTurn" as const, unit: t.active }; log.push(c); const r = applyCommand(t, c); if (!r.ok) throw new Error(r.error); t = r.state; }
+    log.push({ t: "cast", unit: "h", ability: "ray", target: t.units.find((u) => u.id === "f")!.pos });
+    const deeds = readDeeds(setup, log);
+    expect(deeds.killFleeing).toBe(1);
+    const m = newMember("remanso", 0, false);
+    const { member, remarks } = react(m, deeds);
+    expect(member.approval).toBe(m.approval + COMPANIONS.remanso!.reacts.killFleeing!);
+    expect(member.known).toBe(true); // learned by their first protest
+    expect(remarks.length).toBeGreaterThan(0);
+  });
+
+  it("escalates: refuses orders under -30, leaves at a rest under -60, turns on you after a forbidden deed at the bottom", () => {
+    const none = { helpUp: 0, heal: 0, finishDowned: 0, killFleeing: 0, letEscape: 0 };
+    const low = { ...newMember("remanso", 0, true), approval: -40 };
+    expect(memberSpec(low, 1, { x: 0, y: 0 }).refuses).toBe("fleeing");
+    expect(react(low, none).member.status).toBe("with");
+    const lower = react({ ...low, approval: -61 }, none).member;
+    expect(lower.status).toBe("leaving");
+    const turned = react({ ...low, approval: -50 }, { ...none, killFleeing: 1 }).member;
+    expect(turned.status).toBe("turned");
+    expect(react({ ...low, approval: 40 }, { ...none, helpUp: 9 }).member.approval).toBe(40 + COMPANIONS.remanso!.likeCapPerBattle);
+  });
+
+  it("a companion who will not strike the fleeing loses the turn instead", () => {
+    const s = createBattle({ seed: 1, map: flat, units: [
+      mk({ id: "r", team: "heroes", pos: { x: 3, y: 5 }, speed: 90, refuses: "fleeing" }),
+      mk({ id: "f", team: "foes", pos: { x: 3, y: 2 }, speed: 10 }),
+    ] });
+    s.units.find((u) => u.id === "f")!.escape = "flee";
+    const r = applyCommand(s, { t: "cast", unit: "r", ability: "ray", target: { x: 3, y: 2 } });
+    expect(r.ok && r.events[0]).toEqual({ e: "refused", unit: "r", target: { x: 3, y: 2 } });
+    expect(r.ok && r.state.turns).toBe(s.turns + 1); // the turn ended
+    expect(r.ok && r.state.units.find((u) => u.id === "f")!.hp).toBe(40);
   });
 });

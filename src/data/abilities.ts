@@ -41,6 +41,7 @@ export const ABILITIES: Record<string, Ability> = {
   flare: { id: "flare", element: "light", ap: 4, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 5, max: 7, stat: "mag" } },
   prism: { id: "prism", element: "neutral", ap: 3, range: [1, 6], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 0, max: 20, stat: "mag" } },
   blink: { id: "blink", element: "light", ap: 2, range: [1, 3], los: false, target: "emptyTile", area: "single", cooldown: 3, perTurn: 1, teleport: true },
+  mend: { id: "mend", element: "water", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 1, perTurn: 1, heal: { min: 7, max: 9 } },
   glow: { id: "glow", element: "light", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 6, max: 8 } },
 
   // Chisporro: fire caster that keeps its distance.

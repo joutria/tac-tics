@@ -6,9 +6,11 @@ import { ITEMS, PERKS, SHOP, xpToNext, type Mods } from "../data/gear";
 import { abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
-import { heroMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
+import { APPROVAL, COMPANIONS, TALKS } from "../data/companions";
+import { fielded, heroMaxHp, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
+import type { Member } from "../run/party";
 
-export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", rival: "★", boss: "♛" };
+export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", boss: "♛" };
 
 const SVG = "http://www.w3.org/2000/svg";
 const el = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>) => {
@@ -16,6 +18,13 @@ const el = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, 
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
   return e;
 };
+
+export function moodOf(m: Member, lang: Lang): string {
+  if (m.status === "leaving") return t(lang, "mood.leaving");
+  if (m.approval < APPROVAL.refuses) return t(lang, "mood.refuses");
+  if (m.approval < APPROVAL.cold) return t(lang, "mood.cold");
+  return t(lang, m.approval >= 25 ? "mood.warm" : "mood.ok");
+}
 
 /** What the map screen can ask the game to do. */
 export interface MapActions {
@@ -67,7 +76,15 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
   const spoils = document.createElement("p"); spoils.className = "spoils";
   if (sp && offer && offer.kind !== "shop") spoils.textContent = t(lang, "spoils", { c: sp.coins, x: sp.xp })
     + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: run.hero.level }) : "");
-  if (offer?.kind === "perk") {
+  if (offer?.kind === "talk") {
+    const talk = TALKS[offer.id]!;
+    title.textContent = COMPANIONS[talk.companion]!.spec.name;
+    for (const l of talk.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
+    if (offer.reply) {
+      const p = document.createElement("p"); p.className = "say reply"; p.textContent = offer.reply[lang]; list.append(p);
+      foot.append(button(t(lang, "goOn"), () => act.choose(0), "primary"));
+    } else talk.choices.forEach((c, i) => list.append(button(`<span>${html(c.text[lang])}</span>`, () => act.choose(i))));
+  } else if (offer?.kind === "perk") {
     title.textContent = t(lang, "pickPerk");
     offer.options.forEach((id, i) => list.append(button(`<b>${html(PERKS[id]!.name[lang])}</b><span>${html(PERKS[id]!.desc[lang])}</span>`, () => act.choose(i))));
   } else if (offer?.kind === "reward") {
@@ -85,6 +102,11 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     foot.append(button(t(lang, "leave"), act.leave, "primary"));
   } else {
     title.textContent = t(lang, "gear");
+    for (const m of fielded(run)) {
+      const p = document.createElement("p"); p.className = "say";
+      p.textContent = `${COMPANIONS[m.id]!.spec.name} · ${t(lang, "hp")} ${m.hp}/${memberMaxHp(run, m)} · ${t(lang, "approval", { n: m.approval })} · ${moodOf(m, lang)}`;
+      list.append(p);
+    }
     for (const slot of ["weapon", "armour", "charm"] as const) {
       const id = run.hero.gear[slot];
       if (id) list.append(button(itemCard(id, lang, `<em>${t(lang, "worn")}</em>`), () => {}, "card worn"));
@@ -113,8 +135,11 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
     `<b>${t(lang, "regionTown")}</b> · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
     + `${t(lang, "level", { n: lv })} · ${t(lang, "xpBar", { a: run.hero.xp, b: xpToNext(lv) })} · ${t(lang, "hp")} ${run.heroHp}/${heroMaxHp(run)} · 🪙 ${run.coins} · ◆ ${run.shards}`;
   const waiting = nextNodes(run).flatMap((n) => run.rivals.filter((r) => r.id === n.rival && !r.settled)).map((r) => rivalName(r, lang));
+  const party = fielded(run).map((m) => `${COMPANIONS[m.id]!.spec.name} ${m.hp}/${memberMaxHp(run, m)} (${moodOf(m, lang)})`);
+  if (party.length) root.querySelector("#runHead")!.innerHTML += `<br>${t(lang, "party")}: ${html(party.join(", "))}`;
+  const said = run.remarks.map((l) => l[lang]).join("\n");
   root.querySelector("#runHint")!.textContent = run.over === "won" ? t(lang, "runWon") : run.over === "lost" ? t(lang, "runLost")
-    : waiting.length ? `${t(lang, "rivalsAhead", { names: waiting.join(", ") })} ${t(lang, "runHint")}` : t(lang, "runHint");
+    : [said, waiting.length ? t(lang, "rivalsAhead", { names: waiting.join(", ") }) : "", t(lang, "runHint")].filter(Boolean).join("\n");
 
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": t(lang, "regionTown") });
   // Links first, so nodes sit on top. Links on the path taken are bright.
