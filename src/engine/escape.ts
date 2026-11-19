@@ -1,6 +1,8 @@
 /* Escapes (M2). A Savia-marked foe that is losing can try to leave the battle through the edge of the map; one
    that makes it out becomes a rival (see the plan doc, "Rivals"). Nothing here happens before round 3.
 
+   A foe leaves on the turn after it reaches an edge tile, so the player always gets one turn to stop it.
+
    Tactical retreat: the foe has downed or killed one of the players' party and is under 50% HP. It moves 1 MP
    slower but takes 30% less damage while it backs off to the edge.
    Flee: under 5% HP. It gains 2 MP and runs for the edge, but takes 25% more damage, and every adjacent enemy

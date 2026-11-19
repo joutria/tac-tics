@@ -359,6 +359,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   lines.push(left > 0 ? t(lang, "revivesLeft", { n: left }) : `<span class="down">${t(lang, "lastFall")}</span>`);
   if (target.escape === "retreat") lines.push(`<b class="esc">${t(lang, "retreating")}</b> · ${t(lang, "retreatInfo")}`);
   else if (target.escape === "flee") lines.push(`<b class="esc">${t(lang, "fleeing")}</b> · ${t(lang, "fleeInfo")}`);
+  if (target.escape !== "none" && target.life === "up" && isBorder(state, target.pos)) lines.push(`<b class="down">${t(lang, "leavesNext")}</b>`);
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;

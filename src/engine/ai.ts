@@ -8,6 +8,7 @@ import { ABILITIES, type Ability } from "../data/abilities";
 import { abilityAvailable, areaTiles, damagePreview, maxRange, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
 import { reachable } from "./movement";
+import { isBorder } from "./escape";
 import { hasLineOfSight } from "./sight";
 import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, roundOf, unitAt, type AiKind, type Unit } from "./state";
 
@@ -203,6 +204,8 @@ function escapeTurn(start: BattleState, run: (c: Command) => boolean, now: () =>
   const s = now();
   if (s.winner || s.active !== id) return;
   const me = activeUnit(s);
+  // Reached the edge last turn: leave now.
+  if (!me.moved && isBorder(s, me.pos)) { run({ t: "escape", unit: id }); return; }
   const edge = (p: Pos) => Math.min(p.x, p.y, s.map.w - 1 - p.x, s.map.h - 1 - p.y);
   let best: { p: Pos; d: number; cost: number } = { p: me.pos, d: edge(me.pos), cost: 0 };
   for (const r of reachable(s.map, me.pos, moveRules(s, me)).values()) {
@@ -210,7 +213,6 @@ function escapeTurn(start: BattleState, run: (c: Command) => boolean, now: () =>
     if (d < best.d || (d === best.d && r.cost < best.cost)) best = { p, d, cost: r.cost };
   }
   if (!samePos(best.p, me.pos)) run({ t: "move", unit: id, to: best.p });
-  if (best.d === 0) run({ t: "escape", unit: id });
 }
 
 /** Plays the active unit's whole turn and returns the commands, ending with endTurn (or escape). */

@@ -311,17 +311,25 @@ describe("escapes", () => {
     expect(applyCommand(s, { t: "escape", unit: "f" }).ok).toBe(false); // not escaping yet
     unitById(s, "f").escape = "flee";
     expect(applyCommand(s, { t: "escape", unit: "f" }).ok).toBe(false); // not on the edge
-    s = play(s, [{ t: "move", unit: "f", to: { x: 3, y: 0 } }, { t: "escape", unit: "f" }]);
+    s = play(s, [{ t: "move", unit: "f", to: { x: 3, y: 0 } }]);
+    expect(applyCommand(s, { t: "escape", unit: "f" }).ok).toBe(false); // reached the edge this turn: one more turn
+    s = play(s, [{ t: "endTurn", unit: "f" }]);
+    while (activeUnit(s).id !== "f") s = pass(s);
+    s = play(s, [{ t: "escape", unit: "f" }]);
     expect(unitById(s, "f").life).toBe("escaped");
     expect(unitAt(s, { x: 3, y: 0 })).toBeUndefined();
     expect(s.winner).toBe("heroes");
   });
 
-  it("the AI runs a fleeing foe to the edge and out", () => {
+  it("the AI runs a fleeing foe to the edge, then out on its next turn", () => {
     let s = field({ pos: { x: 3, y: 2 } });
     while (activeUnit(s).id !== "f") s = pass(s);
     unitById(s, "f").escape = "flee";
     unitById(s, "f").mp = turnMp(unitById(s, "f"));
+    s = play(s, planTurn(s));
+    expect(unitById(s, "f").pos.y).toBe(0);
+    expect(unitById(s, "f").life).toBe("up");
+    while (activeUnit(s).id !== "f") s = pass(s);
     const cmds = planTurn(s);
     expect(cmds.at(-1)).toEqual({ t: "escape", unit: "f" });
     expect(unitById(play(s, cmds), "f").life).toBe("escaped");

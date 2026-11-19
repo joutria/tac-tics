@@ -278,7 +278,8 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
     }
     case "escape": {
       if (actor.escape === "none") return { ok: false, error: "only a retreating or fleeing unit can escape" };
-      if (!isBorder(s, actor.pos)) return { ok: false, error: "escape from a tile on the edge of the map" };
+      // It has to reach the edge first and leave on a later turn, which gives the player one turn to stop it.
+      if (!isBorder(s, actor.pos) || actor.moved) return { ok: false, error: "escape from a tile on the edge of the map, at the start of a turn" };
       actor.life = "escaped";
       events.push({ e: "escaped", unit: actor.id });
       advance(s, events);
