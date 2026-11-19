@@ -1,21 +1,30 @@
 /* Battle state and the commands that change it.
    Every change to a battle goes through `applyCommand`. It never mutates its input and uses only the seeded
    random number stored in the state, so the same setup + the same command list always gives the same battle.
-   That is what saves (quit and resume anywhere) and co-op (players send commands) are built on. */
+   That is what saves (quit and resume anywhere) and co-op (players send commands) are built on.
+
+   Turn order is a timeline: each unit has a time (ct) for its next turn; the lowest goes next. A full turn
+   pushes a unit's time back by its delay (faster units, shorter delay). A turn that spends no AP (only moving,
+   or nothing) costs 70% of the delay, so it comes back sooner. Wait passes the turn to act right after the next
+   character. */
+import { ABILITIES } from "../data/abilities";
 import type { Element } from "../data/elements";
-import { GridMap, Pos, samePos, tileAt, TERRAIN } from "./grid";
-import { pathTo } from "./movement";
+import { abilityAvailable, castProblem, resolveCast, type Hit } from "./combat";
+import { GridMap, NEIGHBOURS, Pos, samePos, tileAt, TERRAIN } from "./grid";
+import { routeTo } from "./movement";
 import { rngNext, seedFrom } from "./rng";
 
 export type Team = "heroes" | "foes";
 export type Facing = "N" | "E" | "S" | "W";
+export type AiKind = "caster" | "bruiser" | "skirmisher";
+export type Life = "up" | "downed" | "dead";
 
 export interface UnitSpec {
   id: string;
   name: string;
   team: Team;
   element: Element;
-  /** Sprite or portrait key for the renderer. */
+  /** Sprite key for the renderer. */
   look: string;
   pos: Pos;
   hp: number;
@@ -23,6 +32,15 @@ export interface UnitSpec {
   mp: number;
   speed: number;
   jump: number;
+  str: number;
+  mag: number;
+  /** Agility: escapes Lock and pins slower foes. */
+  agi: number;
+  /** Resistance in % per element. */
+  res: Partial<Record<Element, number>>;
+  abilities: string[];
+  /** How a computer-controlled unit plays. */
+  ai?: AiKind;
 }
 
 export interface Unit extends UnitSpec {
@@ -30,6 +48,19 @@ export interface Unit extends UnitSpec {
   maxAp: number;
   maxMp: number;
   facing: Facing;
+  life: Life;
+  /** Own turns left before a downed unit dies. */
+  downedTurns: number;
+  /** Turns of cooldown left per ability (counts down at the end of the unit's own turns). */
+  cooldowns: Record<string, number>;
+  usedThisTurn: Record<string, number>;
+  rooted: boolean;
+  /** Timeline position of the next turn; ties go to the lower `seq`. */
+  ct: number;
+  seq: number;
+  waited: boolean;
+  spentAp: boolean;
+  moved: boolean;
 }
 
 export interface BattleSetup {
@@ -39,53 +70,137 @@ export interface BattleSetup {
 }
 
 export interface BattleState {
-  version: 1;
+  version: 2;
   rng: number;
   map: GridMap;
   units: Unit[];
-  /** Unit ids in initiative order. */
-  order: string[];
-  /** Index into `order` of the unit whose turn it is. */
-  turn: number;
-  round: number;
+  /** Timeline time of the current turn. */
+  clock: number;
+  seqCounter: number;
+  active: string;
+  /** Turns taken so far, all units together. */
+  turns: number;
   winner: Team | null;
+  /** What the players have been doing, so foes can adapt within the fight. */
+  habits: { ranged: number; melee: number; elements: Partial<Record<Element, number>> };
 }
 
 export type Command =
   | { t: "move"; unit: string; to: Pos }
-  | { t: "face"; unit: string; dir: Facing }
+  | { t: "cast"; unit: string; ability: string; target: Pos }
+  | { t: "wait"; unit: string }
   | { t: "endTurn"; unit: string };
 
 export type BattleEvent =
   | { e: "moved"; unit: string; path: Pos[] }
-  | { e: "faced"; unit: string; dir: Facing }
-  | { e: "turnStarted"; unit: string; round: number };
+  | { e: "cast"; unit: string; ability: string; target: Pos; hits: Hit[] }
+  | { e: "waited"; unit: string }
+  | { e: "turnStarted"; unit: string; round: number }
+  | { e: "died"; unit: string };
 
 export type Result =
   | { ok: true; state: BattleState; events: BattleEvent[] }
   | { ok: false; error: string };
+
+/** Ticks between two full turns: speed 50 acts every 100 ticks. */
+export const delayFor = (speed: number) => Math.round((100 * 50) / Math.max(1, speed));
+export const MOVE_ONLY_FACTOR = 0.7;
+export const roundOf = (s: BattleState) => Math.floor(s.clock / 100) + 1;
+
+export const unitById = (s: BattleState, id: string) => s.units.find((u) => u.id === id)!;
+export const activeUnit = (s: BattleState): Unit => unitById(s, s.active);
+/** The unit on a tile, standing or downed (bodies block the tile). */
+export const unitAt = (s: BattleState, p: Pos) => s.units.find((u) => u.life !== "dead" && samePos(u.pos, p));
+export const isFoe = (a: Unit, b: Unit) => a.team !== b.team;
+
+export function lockAt(s: BattleState, mover: Unit, p: Pos): number {
+  let n = 0;
+  for (const d of NEIGHBOURS) {
+    const u = unitAt(s, { x: p.x + d.x, y: p.y + d.y });
+    if (u && u.life === "up" && isFoe(u, mover) && u.agi >= mover.agi) n++;
+  }
+  return n;
+}
+
+export function moveRules(s: BattleState, u: Unit) {
+  return {
+    mp: u.mp, jump: u.jump,
+    blocked: (p: Pos) => { const o = unitAt(s, p); return !!o && o.id !== u.id; },
+    lockAt: (p: Pos) => lockAt(s, u, p),
+  };
+}
 
 export function createBattle(setup: BattleSetup): BattleState {
   const ids = new Set<string>();
   for (const u of setup.units) {
     if (ids.has(u.id)) throw new Error(`duplicate unit id ${u.id}`);
     ids.add(u.id);
+    for (const a of u.abilities) if (!ABILITIES[a]) throw new Error(`unit ${u.id} has unknown ability ${a}`);
     const tile = tileAt(setup.map, u.pos);
     if (!tile || !TERRAIN[tile.terrain].walkable) throw new Error(`unit ${u.id} starts on a tile it cannot stand on`);
   }
   let rng = seedFrom(setup.seed);
-  const units: Unit[] = setup.units.map((u) => ({
-    ...structuredClone(u), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
-  }));
-  // Initiative: higher speed first; ties broken by a seeded roll so they differ per run but replay the same.
   const rolls = new Map<string, number>();
-  for (const u of units) { const [v, next] = rngNext(rng); rolls.set(u.id, v); rng = next; }
-  const order = [...units].sort((a, b) => b.speed - a.speed || rolls.get(b.id)! - rolls.get(a.id)!).map((u) => u.id);
-  return { version: 1, rng, map: structuredClone(setup.map), units, order, turn: 0, round: 1, winner: null };
+  for (const u of setup.units) { const [v, next] = rngNext(rng); rolls.set(u.id, v); rng = next; }
+  // First turns: half a delay in, so faster units start first; equal speeds are ordered by a seeded roll.
+  const order = [...setup.units].sort((a, b) => b.speed - a.speed || rolls.get(b.id)! - rolls.get(a.id)!);
+  const units: Unit[] = order.map((u, i) => ({
+    ...structuredClone(u), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
+    life: "up", downedTurns: 0, cooldowns: {}, usedThisTurn: {}, rooted: false,
+    ct: Math.round(delayFor(u.speed) / 2), seq: i, waited: false, spentAp: false, moved: false,
+  }));
+  const s: BattleState = {
+    version: 2, rng, map: structuredClone(setup.map), units, clock: 0, seqCounter: units.length,
+    active: "", turns: 0, winner: null, habits: { ranged: 0, melee: 0, elements: {} },
+  };
+  advance(s, []);
+  return s;
 }
 
-export const activeUnit = (s: BattleState): Unit => s.units.find((u) => u.id === s.order[s.turn])!;
-export const unitAt = (s: BattleState, p: Pos) => s.units.find((u) => u.hp > 0 && samePos(u.pos, p));
+/** The order of the next `count` turns, for the turn bar. */
+export function upcomingTurns(s: BattleState, count: number): string[] {
+  const sim = s.units.filter((u) => u.life !== "dead").map((u) => ({ id: u.id, ct: u.ct, seq: u.seq, d: delayFor(u.speed) }));
+  const out: string[] = [];
+  let seq = s.seqCounter;
+  while (out.length < count && sim.length) {
+    sim.sort((a, b) => a.ct - b.ct || a.seq - b.seq);
+    const n = sim[0]!;
+    out.push(n.id);
+    n.ct += n.d; n.seq = ++seq;
+  }
+  return out;
+}
+
+function nextInLine(s: BattleState, exclude?: string): Unit | undefined {
+  return s.units.filter((u) => u.life !== "dead" && u.id !== exclude).sort((a, b) => a.ct - b.ct || a.seq - b.seq)[0];
+}
+
+/** Starts the next turn. Downed units spend their turns counting down instead of acting. */
+function advance(s: BattleState, events: BattleEvent[]) {
+  for (let guard = 0; guard < 1000 && !s.winner; guard++) {
+    const u = nextInLine(s);
+    if (!u) return;
+    s.clock = u.ct;
+    s.active = u.id;
+    if (u.life === "downed") {
+      u.downedTurns -= 1;
+      if (u.downedTurns <= 0) { u.life = "dead"; events.push({ e: "died", unit: u.id }); s.winner = winnerOf(s); continue; }
+      u.ct += delayFor(u.speed); u.seq = ++s.seqCounter;
+      continue;
+    }
+    if (!u.waited) {
+      u.ap = u.maxAp;
+      u.mp = u.rooted ? 0 : u.maxMp;
+      u.rooted = false;
+      u.usedThisTurn = {};
+      u.spentAp = false;
+      u.moved = false;
+    }
+    s.turns += 1;
+    events.push({ e: "turnStarted", unit: u.id, round: roundOf(s) });
+    return;
+  }
+}
 
 function facingOf(from: Pos, to: Pos): Facing {
   const dx = to.x - from.x, dy = to.y - from.y;
@@ -102,34 +217,57 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
 
   switch (cmd.t) {
     case "move": {
-      const path = pathTo(s.map, actor.pos, cmd.to, {
-        mp: actor.mp, jump: actor.jump, blocked: (p) => !!unitAt(s, p) && !samePos(p, actor.pos),
-      });
-      if (!path || path.length === 0) return { ok: false, error: "cannot reach that tile" };
-      const last = path[path.length - 1]!, before = path[path.length - 2] ?? actor.pos;
+      const route = routeTo(s.map, actor.pos, cmd.to, moveRules(s, actor));
+      if (!route) return { ok: false, error: "cannot reach that tile" };
+      const last = route.path[route.path.length - 1]!, before = route.path[route.path.length - 2] ?? actor.pos;
       actor.facing = facingOf(before, last);
       actor.pos = { ...last };
-      actor.mp -= path.length;
-      events.push({ e: "moved", unit: actor.id, path });
+      actor.mp -= route.cost;
+      actor.moved = true;
+      events.push({ e: "moved", unit: actor.id, path: route.path });
       break;
     }
-    case "face": {
-      actor.facing = cmd.dir;
-      events.push({ e: "faced", unit: actor.id, dir: cmd.dir });
+    case "cast": {
+      const problem = castProblem(s, actor, cmd.ability, cmd.target);
+      if (problem) return { ok: false, error: problem };
+      const ab = ABILITIES[cmd.ability]!;
+      if (!samePos(cmd.target, actor.pos)) actor.facing = facingOf(actor.pos, cmd.target);
+      const hits = resolveCast(s, actor, ab, cmd.target);
+      actor.ap -= ab.ap;
+      actor.spentAp = true;
+      actor.usedThisTurn[ab.id] = (actor.usedThisTurn[ab.id] ?? 0) + 1;
+      if (ab.cooldown > 0) actor.cooldowns[ab.id] = ab.cooldown + 1;
+      if (actor.team === "heroes" && (ab.damage || ab.root || ab.push)) {
+        const dist = Math.abs(cmd.target.x - actor.pos.x) + Math.abs(cmd.target.y - actor.pos.y);
+        if (dist <= 1) s.habits.melee++; else s.habits.ranged++;
+        s.habits.elements[ab.element] = (s.habits.elements[ab.element] ?? 0) + 1;
+      }
+      events.push({ e: "cast", unit: actor.id, ability: ab.id, target: cmd.target, hits });
+      for (const h of hits) if (h.died) events.push({ e: "died", unit: h.unit });
+      s.winner = winnerOf(s);
+      break;
+    }
+    case "wait": {
+      if (actor.spentAp || actor.moved || actor.waited) return { ok: false, error: "can only wait before moving or acting, once per turn" };
+      const next = nextInLine(s, actor.id);
+      if (!next) return { ok: false, error: "nobody to wait for" };
+      actor.ct = next.ct;
+      actor.seq = ++s.seqCounter;
+      actor.waited = true;
+      events.push({ e: "waited", unit: actor.id });
+      advance(s, events);
       break;
     }
     case "endTurn": {
-      const alive = (id: string) => s.units.some((u) => u.id === id && u.hp > 0);
-      let next = s.turn;
-      do {
-        next = (next + 1) % s.order.length;
-        if (next === 0) s.round += 1;
-      } while (!alive(s.order[next]!) && next !== s.turn);
-      s.turn = next;
-      const u = activeUnit(s);
-      u.ap = u.maxAp;
-      u.mp = u.maxMp;
-      events.push({ e: "turnStarted", unit: u.id, round: s.round });
+      const delay = delayFor(actor.speed);
+      actor.ct += actor.spentAp ? delay : Math.round(delay * MOVE_ONLY_FACTOR);
+      actor.seq = ++s.seqCounter;
+      actor.waited = false;
+      for (const k of Object.keys(actor.cooldowns)) {
+        actor.cooldowns[k] = Math.max(0, actor.cooldowns[k]! - 1);
+        if (!actor.cooldowns[k]) delete actor.cooldowns[k];
+      }
+      advance(s, events);
       break;
     }
   }
@@ -137,10 +275,11 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
   return { ok: true, state: s, events };
 }
 
+export { abilityAvailable };
+
 function winnerOf(s: BattleState): Team | null {
-  const heroes = s.units.some((u) => u.team === "heroes" && u.hp > 0);
-  const foes = s.units.some((u) => u.team === "foes" && u.hp > 0);
-  if (heroes && !foes) return "heroes";
-  if (foes && !heroes) return "foes";
+  const standing = (t: Team) => s.units.some((u) => u.team === t && u.life === "up");
+  if (!standing("heroes")) return "foes";
+  if (!standing("foes")) return "heroes";
   return null;
 }

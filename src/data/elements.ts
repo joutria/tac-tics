@@ -1,6 +1,6 @@
 /* The element wheel, ported from Evolvlings (rpg/data-cards.js TYPES).
    12 elements in 4 circles of 3: in each circle every element beats the next one. Each element also has an
-   opposite. Star stays neutral. This table is the only place an element is defined; BEATS and OPPOSITE are derived. */
+   opposite. Star and Neutral sit outside the wheel. This table is the only place an element is defined; BEATS and OPPOSITE are derived. */
 
 export const ELEMENTS = {
   fire:   { icon: "🔥", circle: "sol",   col: "#d9542c", opp: "water",  es: "Fuego",    en: "Fire" },
@@ -16,6 +16,7 @@ export const ELEMENTS = {
   mush:   { icon: "🍄", circle: "frost", col: "#b0603c", opp: "plant",  es: "Seta",     en: "Mushroom" },
   dream:  { icon: "💤", circle: "frost", col: "#8a78d4", opp: "music",  es: "Sueño",    en: "Dream" },
   star:   { icon: "✦",  circle: null,    col: "#e0b84a", opp: null,     es: "Estrella", en: "Star" },
+  neutral:{ icon: "◇",  circle: null,    col: "#b8b4a8", opp: null,     es: "Neutro",   en: "Neutral" },
 } as const;
 
 export type Element = keyof typeof ELEMENTS;
@@ -32,7 +33,7 @@ for (const c of CIRCLES) {
 
 /** Damage multiplier of an attack of element `atk` on a target of element `def` (same numbers as Evolvlings). */
 export function elementMultiplier(atk: Element, def: Element): number {
-  if (atk === "star" || def === "star") return 1;
+  if (!ELEMENTS[atk].circle || !ELEMENTS[def].circle) return 1;
   if (BEATS[atk] === def) return 1.5;
   if (BEATS[def] === atk) return 0.75;
   if (ELEMENTS[atk].opp === def) return 1.25;
