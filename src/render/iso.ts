@@ -90,7 +90,7 @@ export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: numbe
   return near?.p ?? null;
 }
 
-export type Mark = "move" | "range" | "target" | "area" | "chosen";
+export type Mark = "move" | "range" | "blocked" | "target" | "area" | "chosen";
 export interface Floater { pos: Pos; text: string; color: string; born: number }
 
 /** A unit on its way somewhere. The rules already put it at the end; this only draws the trip.
@@ -143,6 +143,7 @@ const MARK_STYLE: Record<Mark, [string, string]> = {
   move: ["rgba(70, 150, 255, 0.5)", "rgba(200, 230, 255, 1)"],
   range: ["rgba(255, 120, 100, 0.24)", "rgba(255, 170, 150, 0.6)"],
   target: ["rgba(255, 90, 70, 0.45)", "rgba(255, 210, 200, 0.95)"],
+  blocked: ["rgba(40, 40, 52, 0.55)", "rgba(150, 150, 165, 0.7)"], // in range, but something stands in the way
   area: ["rgba(255, 170, 60, 0.5)", "rgba(255, 230, 160, 1)"],
   chosen: ["rgba(255, 216, 107, 0.6)", "rgba(255, 255, 255, 1)"],
 };

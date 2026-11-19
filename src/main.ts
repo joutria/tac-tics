@@ -6,7 +6,7 @@ import { MEADOW } from "./data/maps/meadow";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
-import { manhattan, Pos } from "./engine/grid";
+import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { BattleSave, fromJSON, replay, SAVE_VERSION, toJSON } from "./engine/save";
 import {
@@ -167,7 +167,8 @@ function marks(): Map<string, Mark> {
   for (let y = 0; y < state.map.h; y++) for (let x = 0; x < state.map.w; x++) {
     const p = { x, y }, d = manhattan(u.pos, p);
     if (d < ab.range[0] || d > maxRange(state, ab, u.pos, p)) continue;
-    out.set(`${x},${y}`, castProblem(state, u, selected, p) ? "range" : "target");
+    const why = castProblem(state, u, selected, p);
+    out.set(`${x},${y}`, !why ? "target" : why === "no line of sight" || TERRAIN[tileAt(state.map, p)!.terrain].blocksSight ? "blocked" : "range");
   }
   const focus = pending ?? hover;
   if (focus && out.get(`${focus.x},${focus.y}`) === "target") for (const p of areaTiles(ab, focus)) out.set(`${p.x},${p.y}`, "area");
@@ -331,6 +332,7 @@ function actionAt(p: Pos): { cmd: Command } | { why: string } | null {
   const u = activeUnit(state);
   if (selected) {
     const why = castProblem(state, u, selected, p);
+    if (why === "no line of sight") return { why: t(lang, "noSight") };
     return why ? { why } : { cmd: { t: "cast", unit: u.id, ability: selected, target: p } };
   }
   if (p.x === u.pos.x && p.y === u.pos.y) return null;
