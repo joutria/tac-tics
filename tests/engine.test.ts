@@ -10,6 +10,7 @@ import { canStep, reachable } from "../src/engine/movement";
 import { rngNext, seedFrom } from "../src/engine/rng";
 import { fromJSON, replay, toJSON } from "../src/engine/save";
 import { hasLineOfSight } from "../src/engine/sight";
+import { abilityReaches, dangerZone, nextTurnSpots } from "../src/engine/threat";
 import { activeUnit, applyCommand, BattleSetup, BattleState, Command, createBattle, delayFor, UnitSpec, unitById, upcomingTurns } from "../src/engine/state";
 
 const setup: BattleSetup = { seed: "test-seed", map: MEADOW, units: TEST_UNITS };
@@ -195,5 +196,33 @@ describe("saves", () => {
     }
     const loaded = fromJSON(toJSON({ version: 2, setup, commands: cmds }));
     expect(replay(loaded.setup, loaded.commands)).toEqual(live);
+  });
+});
+
+describe("danger zone", () => {
+  it("matches the real cast rules: every tile in the zone can be hit from some spot the foe can reach", () => {
+    const s = createBattle({ seed: 1, map: MEADOW, units: TEST_UNITS });
+    for (const f of s.units.filter((u) => u.team === "foes")) {
+      const zone = dangerZone(s, f);
+      expect(zone.size).toBeGreaterThan(0);
+      const spots = nextTurnSpots(s, f);
+      for (const [k, ids] of zone) {
+        const [x, y] = k.split(",").map(Number);
+        for (const id of ids) {
+          const ab = ABILITIES[id]!;
+          expect(spots.some((from) => abilityReaches(s, ab, from, { x: x!, y: y! }, f.id))).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("leaves out abilities still on cooldown next turn", () => {
+    const s = createBattle({ seed: 1, map: MEADOW, units: TEST_UNITS });
+    const f = s.units.find((u) => u.id === "foe2")!;
+    const all = new Set([...dangerZone(s, f).values()].flat());
+    expect(all.has("snare")).toBe(true);
+    f.cooldowns.snare = 2;
+    const after = new Set([...dangerZone(s, f).values()].flat());
+    expect(after.has("snare")).toBe(false);
   });
 });
