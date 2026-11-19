@@ -13,11 +13,14 @@ import { abilityAvailable, castProblem, resolveCast, type Hit } from "./combat";
 import { GridMap, NEIGHBOURS, Pos, samePos, tileAt, TERRAIN } from "./grid";
 import { routeTo } from "./movement";
 import { rngNext, seedFrom } from "./rng";
+import { escapeStateFor, FLEE_LOCK, isBorder, turnMp, type EscapeState } from "./escape";
 
 export type Team = "heroes" | "foes";
 export type Facing = "N" | "E" | "S" | "W";
 export type AiKind = "caster" | "bruiser" | "skirmisher";
-export type Life = "up" | "downed" | "dead";
+export type Life = "up" | "downed" | "dead" | "escaped";
+/** Still on the battlefield (standing or downed). */
+export const onMap = (u: { life: Life }) => u.life === "up" || u.life === "downed";
 
 export interface UnitSpec {
   id: string;
@@ -41,6 +44,16 @@ export interface UnitSpec {
   abilities: string[];
   /** How a computer-controlled unit plays. */
   ai?: AiKind;
+  /** Savia-marked: may retreat or flee, and becomes a rival if it gets away. */
+  marked?: boolean;
+  /** A rival from an earlier battle (see src/run/rivals.ts). Only the screen reads it. */
+  rival?: boolean;
+  /** A companion's refusal: with low approval, it will not strike a fleeing foe. */
+  refuses?: "fleeing";
+  /** HP it starts the battle with, if lower than full (a run carries the hero's HP between battles). */
+  hpNow?: number;
+  /** A rival's learned habit: it goes for units that can heal first. */
+  hunts?: "healer";
 }
 
 export interface Unit extends UnitSpec {
@@ -55,6 +68,9 @@ export interface Unit extends UnitSpec {
   baseHp: number;
   /** Times this unit has been helped up this battle. After the last one allowed, its next fall is for good. */
   revives: number;
+  /** Enemies this unit has downed or killed this battle (a retreat needs at least one). */
+  downs: number;
+  escape: EscapeState;
   /** Turns of cooldown left per ability (counts down at the end of the unit's own turns). */
   cooldowns: Record<string, number>;
   usedThisTurn: Record<string, number>;
@@ -93,14 +109,19 @@ export type Command =
   | { t: "move"; unit: string; to: Pos }
   | { t: "cast"; unit: string; ability: string; target: Pos }
   | { t: "wait"; unit: string }
-  | { t: "endTurn"; unit: string };
+  | { t: "endTurn"; unit: string }
+  /** A retreating or fleeing unit on the edge of the map leaves the battle. */
+  | { t: "escape"; unit: string };
 
 export type BattleEvent =
   | { e: "moved"; unit: string; path: Pos[] }
   | { e: "cast"; unit: string; ability: string; target: Pos; hits: Hit[] }
   | { e: "waited"; unit: string }
   | { e: "turnStarted"; unit: string; round: number }
-  | { e: "died"; unit: string };
+  | { e: "died"; unit: string }
+  | { e: "escapeState"; unit: string; state: EscapeState }
+  | { e: "escaped"; unit: string }
+  | { e: "refused"; unit: string; target: Pos };
 
 export type Result =
   | { ok: true; state: BattleState; events: BattleEvent[] }
@@ -114,14 +135,16 @@ export const roundOf = (s: BattleState) => Math.floor(s.clock / 100) + 1;
 export const unitById = (s: BattleState, id: string) => s.units.find((u) => u.id === id)!;
 export const activeUnit = (s: BattleState): Unit => unitById(s, s.active);
 /** The unit on a tile, standing or downed (bodies block the tile). */
-export const unitAt = (s: BattleState, p: Pos) => s.units.find((u) => u.life !== "dead" && samePos(u.pos, p));
+export const unitAt = (s: BattleState, p: Pos) => s.units.find((u) => onMap(u) && samePos(u.pos, p));
 export const isFoe = (a: Unit, b: Unit) => a.team !== b.team;
 
 export function lockAt(s: BattleState, mover: Unit, p: Pos): number {
   let n = 0;
   for (const d of NEIGHBOURS) {
     const u = unitAt(s, { x: p.x + d.x, y: p.y + d.y });
-    if (u && u.life === "up" && isFoe(u, mover) && u.agi >= mover.agi) n++;
+    if (!u || u.life !== "up" || !isFoe(u, mover)) continue;
+    // A fleeing unit is pinned by every adjacent enemy, hard; otherwise only by enemies at least as agile.
+    if (mover.escape === "flee") n += FLEE_LOCK; else if (u.agi >= mover.agi) n++;
   }
   return n;
 }
@@ -149,8 +172,8 @@ export function createBattle(setup: BattleSetup): BattleState {
   // First turns: half a delay in, so faster units start first; equal speeds are ordered by a seeded roll.
   const order = [...setup.units].sort((a, b) => b.speed - a.speed || rolls.get(b.id)! - rolls.get(a.id)!);
   const units: Unit[] = order.map((u, i) => ({
-    ...structuredClone(u), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
-    life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, cooldowns: {}, usedThisTurn: {}, rooted: false,
+    ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
+    life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, downs: 0, escape: "none", cooldowns: {}, usedThisTurn: {}, rooted: false,
     ct: Math.round(delayFor(u.speed) / 2), seq: i, waited: false, spentAp: false, moved: false,
   }));
   const s: BattleState = {
@@ -163,7 +186,7 @@ export function createBattle(setup: BattleSetup): BattleState {
 
 /** The order of the next `count` turns, for the turn bar. */
 export function upcomingTurns(s: BattleState, count: number): string[] {
-  const sim = s.units.filter((u) => u.life !== "dead").map((u) => ({ id: u.id, ct: u.ct, seq: u.seq, d: delayFor(u.speed) }));
+  const sim = s.units.filter(onMap).map((u) => ({ id: u.id, ct: u.ct, seq: u.seq, d: delayFor(u.speed) }));
   const out: string[] = [];
   let seq = s.seqCounter;
   while (out.length < count && sim.length) {
@@ -176,7 +199,7 @@ export function upcomingTurns(s: BattleState, count: number): string[] {
 }
 
 function nextInLine(s: BattleState, exclude?: string): Unit | undefined {
-  return s.units.filter((u) => u.life !== "dead" && u.id !== exclude).sort((a, b) => a.ct - b.ct || a.seq - b.seq)[0];
+  return s.units.filter((u) => onMap(u) && u.id !== exclude).sort((a, b) => a.ct - b.ct || a.seq - b.seq)[0];
 }
 
 /** Starts the next turn. Downed units spend their turns counting down instead of acting. */
@@ -194,7 +217,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
     }
     if (!u.waited) {
       u.ap = u.maxAp;
-      u.mp = u.rooted ? 0 : u.maxMp;
+      u.mp = turnMp(u);
       u.rooted = false;
       u.usedThisTurn = {};
       u.spentAp = false;
@@ -235,6 +258,14 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       const problem = castProblem(s, actor, cmd.ability, cmd.target);
       if (problem) return { ok: false, error: problem };
       const ab = ABILITIES[cmd.ability]!;
+      // A companion who has fallen out with the player will not strike a fleeing foe: the order is refused and
+      // the rest of their turn is lost (plan doc, "Companion values").
+      const victim = unitAt(s, cmd.target);
+      if (actor.refuses === "fleeing" && ab.damage && victim && isFoe(actor, victim) && victim.escape === "flee") {
+        const r = applyCommand(prev, { t: "endTurn", unit: actor.id });
+        if (!r.ok) return r;
+        return { ok: true, state: r.state, events: [{ e: "refused", unit: actor.id, target: cmd.target }, ...r.events] };
+      }
       if (!samePos(cmd.target, actor.pos)) actor.facing = facingOf(actor.pos, cmd.target);
       const hits = resolveCast(s, actor, ab, cmd.target);
       actor.ap -= ab.ap;
@@ -262,6 +293,15 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       advance(s, events);
       break;
     }
+    case "escape": {
+      if (actor.escape === "none") return { ok: false, error: "only a retreating or fleeing unit can escape" };
+      // It has to reach the edge first and leave on a later turn, which gives the player one turn to stop it.
+      if (!isBorder(s, actor.pos) || actor.moved) return { ok: false, error: "escape from a tile on the edge of the map, at the start of a turn" };
+      actor.life = "escaped";
+      events.push({ e: "escaped", unit: actor.id });
+      advance(s, events);
+      break;
+    }
     case "endTurn": {
       const delay = delayFor(actor.speed);
       actor.ct += actor.spentAp ? delay : Math.round(delay * MOVE_ONLY_FACTOR);
@@ -275,11 +315,23 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       break;
     }
   }
+  updateEscapes(s, events);
   s.winner = winnerOf(s);
   return { ok: true, state: s, events };
 }
 
 export { abilityAvailable };
+
+/** After every command: marked foes that crossed a line change state (and the screen is told). */
+function updateEscapes(s: BattleState, events: BattleEvent[]) {
+  const round = roundOf(s);
+  for (const u of s.units) {
+    const next = escapeStateFor(s, u, round);
+    if (next === u.escape) continue;
+    u.escape = next;
+    events.push({ e: "escapeState", unit: u.id, state: next });
+  }
+}
 
 function winnerOf(s: BattleState): Team | null {
   const standing = (t: Team) => s.units.some((u) => u.team === t && u.life === "up");

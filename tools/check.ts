@@ -7,6 +7,10 @@ import { TEST_UNITS } from "../src/data/units";
 import { TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
+import { ARENAS } from "../src/data/region";
+import { ITEMS, PERKS } from "../src/data/gear";
+import { COMPANIONS, TALKS } from "../src/data/companions";
+import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
 
 const problems: string[] = [];
 const fail = (msg: string) => problems.push(msg);
@@ -16,6 +20,13 @@ const es = Object.keys(TEXT.es), en = Object.keys(TEXT.en);
 for (const k of es) if (!en.includes(k)) fail(`text "${k}" is missing in English`);
 for (const k of en) if (!es.includes(k)) fail(`text "${k}" is missing in Spanish`);
 for (const [lang, table] of Object.entries(TEXT)) for (const [k, v] of Object.entries(table)) if (!v) fail(`text "${k}" is empty in ${lang}`);
+
+// Rival lines: filled in both languages, and placeholders match.
+for (const [where, line] of [...EPITHETS.map((l, i) => [`epithet ${i}`, l] as const), ...Object.entries(TITLES), ...Object.entries(TAUNTS)]) {
+  if (!line.es || !line.en) fail(`rival ${where}: empty in a language`);
+  const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join();
+  if (vars(line.es) !== vars(line.en)) fail(`rival ${where}: placeholders differ between languages`);
+}
 
 // Abilities: every one has a name and description in both languages, sane numbers, and every unit's exist.
 for (const [id, ab] of Object.entries(ABILITIES)) {
@@ -46,6 +57,47 @@ for (const m of [MEADOW]) {
     if (!ELEMENTS[u.element]) fail(`unit ${u.id} has unknown element ${u.element}`);
     if (!existsSync(`public/art/creatures/${u.look}.png`)) fail(`unit ${u.id}: missing art public/art/creatures/${u.look}.png`);
   }
+}
+
+// Items and perks: names in both languages, taught abilities exist, prices positive.
+for (const [id, it] of Object.entries(ITEMS)) {
+  if (it.id !== id) fail(`item ${id} has id ${it.id}`);
+  if (!it.name.es || !it.name.en) fail(`item ${id}: name missing in a language`);
+  if (it.teaches && !ABILITIES[it.teaches]) fail(`item ${id} teaches unknown ability ${it.teaches}`);
+  if (it.price <= 0) fail(`item ${id}: price must be positive`);
+}
+for (const [id, p] of Object.entries(PERKS)) {
+  if (p.id !== id) fail(`perk ${id} has id ${p.id}`);
+  if (!p.name.es || !p.name.en || !p.desc.es || !p.desc.en) fail(`perk ${id}: text missing in a language`);
+}
+
+// Companions and talks: every line in both languages, abilities and art exist, talks name a real companion.
+const lineOk = (where: string, l: { es: string; en: string }) => { if (!l.es || !l.en) fail(`${where}: empty in a language`); };
+for (const [id, c] of Object.entries(COMPANIONS)) {
+  if (c.id !== id || c.spec.id !== id) fail(`companion ${id}: ids do not match`);
+  for (const a of c.spec.abilities) if (!ABILITIES[a]) fail(`companion ${id} has unknown ability ${a}`);
+  if (!existsSync(`public/art/creatures/${c.spec.look}.png`)) fail(`companion ${id}: missing art ${c.spec.look}.png`);
+  for (const [k, l] of Object.entries(c.remarks)) lineOk(`companion ${id} remark ${k}`, l!);
+  for (const [k, l] of Object.entries(c.escalation)) lineOk(`companion ${id} escalation ${k}`, l);
+  lineOk(`companion ${id} warning`, c.forbiddenWarning);
+}
+for (const [id, talk] of Object.entries(TALKS)) {
+  if (!COMPANIONS[talk.companion]) fail(`talk ${id}: unknown companion ${talk.companion}`);
+  talk.lines.forEach((l, i) => lineOk(`talk ${id} line ${i}`, l));
+  talk.choices.forEach((c, i) => { lineOk(`talk ${id} choice ${i}`, c.text); lineOk(`talk ${id} reply ${i}`, c.reply); });
+}
+
+// Region arenas: the party and up to four foes start on tiles they can stand on, all different.
+for (const a of ARENAS) {
+  if (a.map.tiles.length !== a.map.w * a.map.h) fail(`map ${a.map.id}: tile count does not match its size`);
+  const spots = [a.hero, ...a.allies, ...a.foes];
+  if (a.allies.length < 3) fail(`arena ${a.map.id}: needs 3 ally spots (a field of 4)`);
+  if (a.foes.length < 4) fail(`arena ${a.map.id}: needs 4 foe spots (elites field 4)`);
+  for (const p of spots) {
+    const tile = tileAt(a.map, p);
+    if (!tile || !TERRAIN[tile.terrain].walkable) fail(`arena ${a.map.id}: start ${p.x},${p.y} is not walkable`);
+  }
+  if (new Set(spots.map((p) => `${p.x},${p.y}`)).size !== spots.length) fail(`arena ${a.map.id}: two starts share a tile`);
 }
 
 // Isometric tiles the renderer needs.

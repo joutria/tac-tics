@@ -8,8 +8,9 @@ import { ABILITIES, type Ability } from "../data/abilities";
 import { abilityAvailable, areaTiles, damagePreview, maxRange, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
 import { reachable } from "./movement";
+import { isBorder } from "./escape";
 import { hasLineOfSight } from "./sight";
-import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, roundOf, unitAt, type AiKind, type Unit } from "./state";
+import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, onMap, roundOf, unitAt, type AiKind, type Unit } from "./state";
 
 interface Weights {
   /** How much a point of expected incoming damage hurts a standing spot. */
@@ -110,7 +111,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
       const dmg = avg(damagePreview(s, u, o, ab, from));
       if (enemy) {
         if (o.life === "downed") v += dmg > 0 ? 45 : 0;
-        else v += Math.min(dmg, o.hp) + (dmg >= o.hp ? 25 : 0) + (1 - o.hp / o.maxHp) * 8;
+        else v += Math.min(dmg, o.hp) + (dmg >= o.hp ? 25 : 0) + (1 - o.hp / o.maxHp) * 8 + (u.hunts === "healer" && isHealer(o) ? 12 : 0);
       } else v -= dmg * 1.5 + (o.id === u.id ? 0 : 5);
     }
     if (ab.heal && !enemy && o.life === "up") v += Math.min(avg(ab.heal), o.maxHp - o.hp);
@@ -121,11 +122,13 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
   return v;
 }
 
+const isHealer = (o: Unit) => o.abilities.some((id) => !!ABILITIES[id]?.heal);
+
 function candidateTargets(s: BattleState, ab: Ability): Pos[] {
   if (ab.teleport) return [];
   const spots = new Map<string, Pos>();
   for (const o of s.units) {
-    if (o.life === "dead") continue;
+    if (!onMap(o)) continue;
     spots.set(key(o.pos), o.pos);
     if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }
@@ -192,12 +195,39 @@ export function bestStep(s: BattleState): Plan {
   return plan;
 }
 
-/** Plays the active unit's whole turn and returns the commands, ending with endTurn. */
+/** A retreating or fleeing unit heads for the nearest edge and leaves if it can reach it this turn.
+    A retreating one still takes a shot first if it can do so without moving. */
+function escapeTurn(start: BattleState, run: (c: Command) => boolean, now: () => BattleState) {
+  const u = activeUnit(start), id = u.id;
+  if (u.escape === "retreat") {
+    const shot = bestStep(start);
+    if (!shot.moveTo && shot.ability && shot.target) run({ t: "cast", unit: id, ability: shot.ability, target: shot.target });
+  }
+  const s = now();
+  if (s.winner || s.active !== id) return;
+  const me = activeUnit(s);
+  // Reached the edge last turn: leave now.
+  if (!me.moved && isBorder(s, me.pos)) { run({ t: "escape", unit: id }); return; }
+  const edge = (p: Pos) => Math.min(p.x, p.y, s.map.w - 1 - p.x, s.map.h - 1 - p.y);
+  let best: { p: Pos; d: number; cost: number } = { p: me.pos, d: edge(me.pos), cost: 0 };
+  for (const r of reachable(s.map, me.pos, moveRules(s, me)).values()) {
+    const p = r.path[r.path.length - 1]!, d = edge(p);
+    if (d < best.d || (d === best.d && r.cost < best.cost)) best = { p, d, cost: r.cost };
+  }
+  if (!samePos(best.p, me.pos)) run({ t: "move", unit: id, to: best.p });
+}
+
+/** Plays the active unit's whole turn and returns the commands, ending with endTurn (or escape). */
 export function planTurn(start: BattleState): Command[] {
   const cmds: Command[] = [];
   let s = start;
   const id = activeUnit(s).id;
   const run = (c: Command) => { const r = applyCommand(s, c); if (r.ok) { s = r.state; cmds.push(c); return true; } return false; };
+  if (activeUnit(s).escape !== "none") {
+    escapeTurn(s, run, () => s);
+    if (!s.winner && s.active === id) run({ t: "endTurn", unit: id });
+    return cmds;
+  }
   for (let i = 0; i < 8 && !s.winner && s.active === id; i++) {
     const plan = bestStep(s);
     if (plan.moveTo) run({ t: "move", unit: id, to: plan.moveTo });

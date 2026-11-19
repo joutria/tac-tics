@@ -12,6 +12,7 @@ import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
 import { inside, manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
 import { rngInt, rngNext } from "./rng";
+import { takenFactor } from "./escape";
 import { hasLineOfSight } from "./sight";
 import { isFoe, unitAt, type BattleState, type Unit } from "./state";
 
@@ -97,7 +98,7 @@ export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Abi
   const up = (tileAt(s.map, from)?.h ?? 0) - (tileAt(s.map, target.pos)?.h ?? 0);
   const height = 1 + Math.min(0.3, Math.max(0, up) * 0.1);
   const res = (target.res[ab.element] ?? 0) / 100;
-  return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res);
+  return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res) * takenFactor(target);
 }
 
 /** Where the attack lands relative to the way the target faces. */
@@ -147,6 +148,7 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
     }
     if (ab.root && u.life === "up") { u.rooted = true; hit.rooted = true; }
     if (ab.push && u.life === "up") push(s, u, from, ab.push, hit);
+    if ((hit.downed || hit.died) && isFoe(caster, u)) caster.downs += 1;
     hits.push(hit);
   }
   return hits;

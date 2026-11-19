@@ -1,22 +1,29 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
 import { ABILITIES } from "./data/abilities";
-import { elementMultiplier } from "./data/elements";
+import { elementMultiplier, ELEMENTS } from "./data/elements";
+import { COMPANIONS } from "./data/companions";
 import { MEADOW } from "./data/maps/meadow";
+import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
 import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
-import { BattleSave, fromJSON, replay, SAVE_VERSION, toJSON } from "./engine/save";
+import { isBorder, turnMp, wavering } from "./engine/escape";
+import { rivalTaunt, rivalTitle } from "./run/rivals";
+import { buy, choose, enterNode, finishBattle, leaveShop, newRun, RUN_VERSION, shopHeal, wear, type RunState } from "./run/run";
+import { renderRunMap } from "./ui/runmap";
+import { BattleSave, replay } from "./engine/save";
 import {
-  activeUnit, applyCommand, BattleEvent, BattleSetup, BattleState, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
+  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, setFlat, tileCenter, TW, View } from "./render/iso";
 
-const SAVE_KEY = "tac-tics.save.v2";
+/** The run save: the run, with the battle being fought inside it. */
+const RUN_KEY = "tac-tics.run.v1";
 const LANG_KEY = "tac-tics.lang";
 const VIEW_KEY = "tac-tics.view";
 const REWINDS_PER_BATTLE = 1;
@@ -74,27 +81,99 @@ function rebuild(commands: Command[]) {
 
 function resetView() { selected = null; pending = null; inspect = null; motions.clear(); animUntil = 0; tooltip(null); }
 
-function newBattle() {
-  const setup: BattleSetup = { seed: Date.now(), map: MEADOW, units: TEST_UNITS };
-  save = { version: SAVE_VERSION, setup, commands: [], rewindsUsed: 0 };
-  rebuild([]);
+/* ---------- the run: map screen, entering nodes, closing battles ---------- */
+
+let journey: RunState;
+let gearOpen = false;
+/** Map screen or battle screen. */
+let onMap = true;
+
+function startRun() {
+  journey = newRun(`${Date.now()}`);
+  showMap();
+}
+
+function showMap() {
+  onMap = true; busy = false;
+  journey.battle = undefined;
+  persist();
   resetView();
-  persist(); refresh(); followHero(); maybeFoeTurn();
+  $("runmap").style.display = "flex";
+  $("overlay").style.display = "none";
+  const update = (next: RunState) => { journey = next; showMap(); };
+  const safely = (f: () => RunState) => { try { update(f()); } catch (e) { toast(t(lang, "tooPoor")); console.warn(e); } };
+  renderRunMap($("runmap"), journey, lang, {
+    pick: pickNode,
+    choose: (i) => update(choose(journey, i)),
+    buy: (id) => safely(() => buy(journey, id)),
+    heal: () => safely(() => shopHeal(journey)),
+    leave: () => update(leaveShop(journey)),
+    wear: (id) => { journey = wear(journey, id); showMap(); },
+  }, gearOpen, () => { gearOpen = false; showMap(); });
+  $<HTMLButtonElement>("newRun").textContent = t(lang, "newRun");
+  $("gearBtn").textContent = `🎒 ${t(lang, "gear")}`;
+  $("mapLang").textContent = lang === "es" ? "English" : "Español";
+  document.documentElement.lang = lang;
+}
+
+let newRunArmed = 0;
+/** Starting over throws the current run away: the button has to be pressed twice. */
+function confirmNewRun(): boolean {
+  if (performance.now() < newRunArmed) return true;
+  newRunArmed = performance.now() + 3000;
+  toast(t(lang, "newRunAgain"));
+  return false;
+}
+
+function pickNode(id: number) {
+  const kind = journey.map.nodes[id]!.kind;
+  const before = journey.heroHp;
+  journey = enterNode(journey, id, lang);
+  if (!journey.battle) { toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
+  startBattle(kind === "rival" || kind === "boss");
+}
+
+/** Shows the battle in `journey.battle` (new or loaded). */
+function startBattle(announce: boolean) {
+  onMap = false;
+  $("runmap").style.display = "none";
+  save = journey.battle!;
+  rebuild(save.commands);
+  resetView();
+  persist(); refresh(); followHero();
+  const rivals = journey.rivals.filter((r) => !r.settled && save.setup.units.some((u) => u.id === r.id));
+  if (announce && rivals.length && !save.commands.length) toast(rivals.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
+  maybeFoeTurn();
+}
+
+/** The overlay's button after a battle: back to the map, or a new run when this one is over. */
+function afterBattleButton() {
+  if (journey.over) { startRun(); return; }
+  if (!journey.battle || !state.winner) return;
+  journey = finishBattle(journey, state);
+  const sp = journey.spoils;
+  if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : ""), 2600);
+  showMap();
 }
 
 function loadOrNew() {
-  const text = safeGet(SAVE_KEY);
+  const text = safeGet(RUN_KEY);
   if (text) {
     try {
-      save = fromJSON(text); rebuild(save.commands);
-      toast(t(lang, "resume"));
+      const saved = JSON.parse(text) as RunState;
+      if (saved.version !== RUN_VERSION) throw new Error(`unknown run version ${saved.version}`);
+      journey = saved;
+      if (journey.battle) { startBattle(false); toast(t(lang, "resume")); } else showMap();
       return;
-    } catch (e) { console.warn("save ignored:", e); }
+    } catch (e) { console.warn("run save ignored:", e); }
   }
-  newBattle();
+  startRun();
 }
 
-function persist() { safeSet(SAVE_KEY, toJSON(save)); }
+function persist() {
+  if (!onMap && journey.battle) journey.battle = { ...save, node: journey.battle.node };
+  safeSet(RUN_KEY, JSON.stringify(journey));
+}
 
 function run(cmd: Command): boolean {
   const before = state.active;
@@ -139,6 +218,22 @@ function animate(events: BattleEvent[], was: Map<string, Pos>) {
 function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
   const now = performance.now();
   for (const ev of events) {
+    if (ev.e === "escapeState" && ev.state !== "none") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: t(lang, ev.state === "flee" ? "fleeing" : "retreating"), color: "#ffc85a", born: now + 400 });
+      continue;
+    }
+    if (ev.e === "refused") {
+      const u = unitById(state, ev.unit);
+      toast(t(lang, "refused", { name: u.name }), 2600);
+      continue;
+    }
+    if (ev.e === "escaped") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: t(lang, "escapedTag"), color: "#ffc85a", born: now });
+      toast(t(lang, "escapedToast", { name: u.name }));
+      continue;
+    }
     if (ev.e !== "cast") continue;
     for (const h of ev.hits) {
       const u = unitById(state, h.unit);
@@ -159,7 +254,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
 }
 
 async function maybeFoeTurn() {
-  if (busy) return;
+  if (busy || onMap) return;
   busy = true; pending = null; tooltip(null); refresh();
   while (!state.winner && activeUnit(state).team === "foes") {
     for (const c of planTurn(state)) {
@@ -263,6 +358,7 @@ function marks(): Map<string, Mark> {
 /* ---------- HUD ---------- */
 
 function refresh() {
+  if (onMap) return;
   const u = activeUnit(state);
   $("turn").textContent = `${t(lang, "round", { n: roundOf(state) })} · ${t(lang, "turnOf", { name: u.name })}`;
   $("stats").textContent = `${t(lang, "hp")} ${u.hp}/${u.maxHp} · ${t(lang, "ap")} ${u.ap}/${u.maxAp} · ${t(lang, "mp")} ${u.mp}/${u.maxMp}`;
@@ -314,7 +410,6 @@ function refresh() {
   $("wait").textContent = t(lang, "wait");
   $("wait").title = t(lang, "waitHint");
   $("undo").textContent = t(lang, "undo");
-  $("new").textContent = t(lang, "newBattle");
   $("rotate").textContent = `⟳ ${t(lang, "rotate")}`;
   $("lang").textContent = lang === "es" ? "English" : "Español";
   const confirm = $<HTMLButtonElement>("confirm");
@@ -324,10 +419,14 @@ function refresh() {
   $("cancel").textContent = t(lang, "cancel");
   $("act").style.bottom = `${$("bottom").getBoundingClientRect().height + 10}px`;
   $("hint").textContent = !mine ? t(lang, "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
-  $("again").textContent = t(lang, "playAgain");
+  const lost = state.winner === "foes" || state.units.some((x) => x.id === HERO.id && x.life !== "up");
+  const boss = journey.battle && journey.map.nodes[journey.battle.node]!.kind === "boss";
+  $("again").textContent = t(lang, lost ? "newRun" : boss ? "regionCleared" : "toMap");
   const over = $("overlay");
-  over.style.display = state.winner ? "flex" : "none";
-  $("result").textContent = state.winner === "heroes" ? t(lang, "victory") : t(lang, "defeat");
+  over.style.display = state.winner && !onMap ? "flex" : "none";
+  $("result").textContent = state.winner === "heroes" && !lost ? t(lang, "victory") : t(lang, "defeat");
+  const escaped = state.units.filter((x) => x.team === "foes" && x.life === "escaped").length;
+  $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", lost ? t(lang, "runLost") : ""].filter(Boolean).join(" ");
   document.documentElement.lang = lang;
   layout();
 }
@@ -341,8 +440,24 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   if (!at || !target) { tip.style.display = "none"; return; }
   const hover = at;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
+  const rival = target.rival ? journey.rivals.find((r) => r.id === target.id && !r.settled) : undefined;
+  if (rival) {
+    lines.push(`<span class="rival">★ ${t(lang, "rival", { n: rival.level })} · ${rivalTitle(rival, lang)}</span>`);
+    lines.push(rival.counters.map((c) => t(lang, `counter.${c.kind}` as TextKey, { element: c.element ? ELEMENTS[c.element][lang] : "" })).join(" · "));
+  }
   const left = MAX_REVIVES - target.revives;
   lines.push(left > 0 ? t(lang, "revivesLeft", { n: left }) : `<span class="down">${t(lang, "lastFall")}</span>`);
+  if (target.escape === "retreat") lines.push(`<b class="esc">${t(lang, "retreating")}</b> · ${t(lang, "retreatInfo")}`);
+  else if (target.escape === "flee") lines.push(`<b class="esc">${t(lang, "fleeing")}</b> · ${t(lang, "fleeInfo")}`);
+  if (target.escape !== "none" && target.life === "up" && isBorder(state, target.pos)) lines.push(`<b class="down">${t(lang, "leavesNext")}</b>`);
+  // Companion lines the player has heard about: striking a fleeing foe crosses one.
+  if (target.team === "foes" && target.escape === "flee") {
+    for (const m of journey.party) {
+      const c = COMPANIONS[m.id]!;
+      if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
+    }
+  }
+  if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
     if (ab.damage && target.team !== u.team) {
@@ -361,9 +476,9 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
     } else if (ab.heal) lines.push(`${abilityName(lang, selected)}: <b>+${ab.heal.min}–${ab.heal.max}</b>`);
   } else if (!selected && target.team === "foes") {
     // Foe info: its abilities, which are ready, and which could reach the hero next turn.
-    const hero = state.units.find((h) => h.team === "heroes" && h.life !== "dead");
+    const hero = state.units.find((h) => h.team === "heroes" && (h.life === "up" || h.life === "downed"));
     const zone = hero ? dangerZone(state, target).get(`${hero.pos.x},${hero.pos.y}`) ?? [] : [];
-    lines.push(`${t(lang, "ap")} ${target.maxAp} · ${t(lang, "mp")} ${target.maxMp}`);
+    lines.push(`${t(lang, "ap")} ${target.maxAp} · ${t(lang, "mp")} ${turnMp(target)}`);
     for (const id of target.abilities) {
       const ab = ABILITIES[id]!;
       const cd = target.cooldowns[id];
@@ -383,9 +498,9 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
 }
 
 let toastTimer = 0;
-function toast(msg: string) {
+function toast(msg: string, ms = 1600) {
   const el = $("toast"); el.textContent = msg; el.classList.add("show");
-  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => el.classList.remove("show"), 1600);
+  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => el.classList.remove("show"), ms);
 }
 
 /* ---------- view: fit, zoom, pan, rotate ---------- */
@@ -498,14 +613,34 @@ function previewHit() {
   return { unit: target.id, ...damagePreview(state, u, target, ab) };
 }
 
+/** For each foe backing off or running: the way it would take to the nearest edge tile. */
+let escapeCache: { s: BattleState; paths: Pos[][] } | null = null;
+function escapePaths(): Pos[][] {
+  if (escapeCache?.s === state) return escapeCache.paths;
+  const paths: Pos[][] = [];
+  for (const u of state.units) {
+    if (u.team !== "foes" || u.life !== "up" || u.escape === "none") continue;
+    let best: { cost: number; path: Pos[] } | null = null;
+    for (const [k, r] of reachable(state.map, u.pos, { ...moveRules(state, u), mp: 99 })) {
+      const [x, y] = k.split(",").map(Number);
+      if (isBorder(state, { x: x!, y: y! }) && (!best || r.cost < best.cost)) best = r;
+    }
+    if (best && best.path.length) paths.push([{ ...u.pos }, ...best.path]);
+  }
+  escapeCache = { s: state, paths };
+  return paths;
+}
+
 function frame(time: number) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#1d1f2b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (onMap) { requestAnimationFrame(frame); return; }
   const moving = time < animUntil;
   if (focus && time > focus.until) focus = null;
   drawBattle(ctx, state, images, view, {
     marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions,
     danger: dangerTiles(), preview: moving ? undefined : previewHit(), focus: focus?.id,
+    escapePaths: moving ? undefined : escapePaths(),
   });
   requestAnimationFrame(frame);
 }
@@ -514,9 +649,11 @@ async function start() {
   const base = import.meta.env.BASE_URL;
   const tiles = ["top-grass", "top-dirt", "top-water", "top-rock", "top-tree", "side-left", "side-right", "obj-rock", "obj-tree"];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
-  for (const u of TEST_UNITS) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
+  for (const u of [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec)]) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);
   setFlat(safeGet(VIEW_KEY) === "flat");
+  // Until a battle starts (the map screen comes first), the battle screen holds the test fight, never shown.
+  state = createBattle({ seed: 0, map: MEADOW, units: TEST_UNITS });
   loadOrNew();
   refresh();
   followHero();
@@ -577,8 +714,10 @@ async function start() {
   $("undo").addEventListener("click", undo);
   $("confirm").addEventListener("click", confirmPending);
   $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
-  $("new").addEventListener("click", newBattle);
-  $("again").addEventListener("click", newBattle);
+  $("again").addEventListener("click", afterBattleButton);
+  $("gearBtn").addEventListener("click", () => { gearOpen = !gearOpen; showMap(); });
+  $("newRun").addEventListener("click", () => { if (journey.over || confirmNewRun()) startRun(); });
+  $("mapLang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); showMap(); });
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });
   addEventListener("keydown", (ev) => { if (ev.key === "Escape") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); } });
   requestAnimationFrame(frame);
@@ -586,6 +725,8 @@ async function start() {
   // Small hook for automated browser checks: where a tile is on screen, and the current state.
   Object.assign(window, { __tactics: {
     state: () => state,
+    run: () => journey,
+    pickNode: (id: number) => pickNode(id),
     marks: () => [...marks().entries()],
     select: (id: string | null) => { selected = id; refresh(); },
     pick: (x: number, y: number) => toMap({ clientX: x, clientY: y }),

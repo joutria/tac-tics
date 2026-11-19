@@ -4,6 +4,7 @@
 import { ABILITIES, type Ability } from "../data/abilities";
 import { maxRange } from "./combat";
 import { inside, manhattan, Pos, samePos } from "./grid";
+import { turnMp } from "./escape";
 import { reachable } from "./movement";
 import { hasLineOfSight } from "./sight";
 import { BattleState, moveRules, unitAt, type Unit } from "./state";
@@ -15,13 +16,14 @@ export function readyAttacks(u: Unit): Ability[] {
   return u.abilities.map((id) => ABILITIES[id]!).filter((ab) => !!ab.damage && !u.cooldowns[ab.id] && ab.ap <= u.maxAp);
 }
 
-/** Tiles the unit can stand on next turn: full MP (none if it is rooted), walking around other units. */
+/** Tiles the unit can stand on next turn, its own tile included: the MP its next turn starts with (none if it is
+    rooted, more or less when it is escaping), walking around other units. */
 export function nextTurnSpots(s: BattleState, u: Unit): Pos[] {
-  const mp = u.rooted ? 0 : u.maxMp;
-  return [...reachable(s.map, u.pos, { ...moveRules(s, u), mp }).keys()].map((k) => {
+  const walk = [...reachable(s.map, u.pos, { ...moveRules(s, u), mp: turnMp(u) }).keys()].map((k) => {
     const [x, y] = k.split(",").map(Number);
     return { x: x!, y: y! };
   });
+  return [{ ...u.pos }, ...walk];
 }
 
 /** Can `ab` cast from `from` reach `to`, with range, height and line of sight? Units other than `ignore` and the
