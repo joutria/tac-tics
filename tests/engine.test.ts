@@ -424,3 +424,16 @@ describe("rivals", () => {
     expect(cast && cast.t === "cast" && cast.target).toEqual({ x: 4, y: 3 });
   });
 });
+
+describe("point-blank", () => {
+  it("the hero can Ray an adjacent foe, and Flare next to itself spares the caster", () => {
+    let s = createBattle({ seed: 4, map: flat(), units: [
+      unit({ id: "h", team: "heroes", pos: { x: 2, y: 2 }, speed: 90, abilities: ["ray", "flare"] }),
+      unit({ id: "f", team: "foes", pos: { x: 2, y: 3 }, speed: 10 }),
+    ] });
+    expect(castProblem(s, unitById(s, "h"), "ray", { x: 2, y: 3 })).toBeNull();
+    s = play(s, [{ t: "cast", unit: "h", ability: "flare", target: { x: 2, y: 3 } }]);
+    expect(unitById(s, "h").hp).toBe(40);
+    expect(unitById(s, "f").hp).toBeLessThan(40);
+  });
+});

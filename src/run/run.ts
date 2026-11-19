@@ -20,7 +20,9 @@ import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, ty
 
 export const RUN_VERSION = 3;
 /** Share of max HP a rest node gives back. */
-export const REST_HEAL = 0.4;
+export const REST_HEAL = 0.5;
+/** Foes in a plain battle per layer (min, max), before companions add one each. */
+export const FOES_BY_LAYER: [number, number][] = [[1, 1], [1, 2], [2, 2], [2, 2], [2, 3], [2, 3], [2, 3]];
 /** Share of max HP the hero gets back after winning a battle. */
 export const AFTER_WIN_HEAL = 0.3;
 
@@ -95,10 +97,13 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   const arena = arenaFor(run, node);
   let rng = seedFrom(`${run.seed}:foes:${node.id}`);
   const pick = () => { let i: number; [i, rng] = rngInt(rng, 0, SPECIES.length - 1); return SPECIES[i]!; };
-  // The first layer is a 1-or-2 foe warm-up, the next stays at two while the party finds its feet.
-  let count: number; [count, rng] = rngInt(rng, node.layer === 0 ? 1 : 2, node.layer < 2 ? 2 : 3);
-  if (node.kind === "elite") count = 4;
-  if (node.kind === "boss") count = 3;
+  // Foes per fight: one to start, two through the middle, up to three late, plus one more for each companion
+  // fighting beside the hero, so the party is never simply outnumbered and never simply outnumbers.
+  const [lo, hi] = FOES_BY_LAYER[Math.min(node.layer, FOES_BY_LAYER.length - 1)]!;
+  let count: number; [count, rng] = rngInt(rng, lo, hi);
+  if (node.kind === "elite") count = hi + 1;
+  if (node.kind === "boss") count = 2;
+  count = Math.min(4, count + fielded(run).length);
   const units: UnitSpec[] = [{ ...heroOf(run), pos: { ...arena.hero }, hpNow: run.heroHp }];
   fielded(run).forEach((m, i) => { if (arena.allies[i]) units.push(memberSpec(m, run.hero.level, arena.allies[i]!)); });
   for (let i = 0; i < count; i++) {

@@ -22,6 +22,6 @@ export const SPECIES: Species[] = TEST_UNITS.filter((u) => u.team === "foes").ma
 export const HERO: UnitSpec = TEST_UNITS.find((u) => u.team === "heroes")!;
 
 /** Per layer of the run map: foes get this much more HP and Str/Mag. */
-export const DEPTH_HP = 0.06, DEPTH_STAT = 2;
+export const DEPTH_HP = 0.04, DEPTH_STAT = 1;
 /** The boss: a species swollen by the Sap. */
-export const BOSS = { species: 1, hp: 1.7, stat: 8, mp: 1, name: { es: "{name} Hinchado de Savia", en: "Sap-Swollen {name}" } };
+export const BOSS = { species: 1, hp: 1.5, stat: 6, mp: 1, name: { es: "{name} Hinchado de Savia", en: "Sap-Swollen {name}" } };

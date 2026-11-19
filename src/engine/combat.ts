@@ -7,7 +7,7 @@
             x element wheel  (1.5 strong, 0.75 weak, 1.25 opposite)
             x critical       (5% chance, x1.5)
             x (1 - resistance % of the target to that element)
-   rounded down. Attacks always hit. Area attacks hit everyone in the area, allies included. */
+   rounded down. Attacks always hit. Area attacks hit everyone in the area, allies included, but not the caster. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
 import { inside, manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
@@ -125,7 +125,8 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
   if (ab.teleport) { caster.pos = { ...target }; return hits; }
   for (const p of areaTiles(ab, target)) {
     const u = unitAt(s, p);
-    if (!u) continue;
+    // An area attack hits allies caught in it, but never the one who casts it (so it can be used point-blank).
+    if (!u || (u.id === caster.id && ab.damage)) continue;
     const hit: Hit = { unit: u.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false };
     if (ab.revive && u.life === "downed") {
       // Each revive leaves a scar: max HP drops by a quarter of the starting max, and the unit stands with a
