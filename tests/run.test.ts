@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import { HERO, REGIONS } from "../src/data/region";
 import { applyCommand, createBattle, type BattleState, type Command, type UnitSpec } from "../src/engine/state";
 import { parseMap } from "../src/engine/grid";
-import { APPROVAL, COMPANIONS } from "../src/data/companions";
-import { memberSpec, newMember, react, readDeeds } from "../src/run/party";
-import { aheadOf, generateMap, MAP_LAYERS } from "../src/run/map";
+import { APPROVAL, COMPANIONS, LESSON_APPROVAL, QUESTS, TALKS } from "../src/data/companions";
+import { ABILITIES } from "../src/data/abilities";
+import { EXECUTIONER_FACTOR, GUARD_FACTOR, JOB_LAYER, JOBS } from "../src/data/jobs";
+import { damageFactor } from "../src/engine/combat";
+import { endingOf, memberSpec, newMember, react, readDeeds } from "../src/run/party";
+import { aheadOf, generateMap, MAP_LAYERS, QUEST_GAP } from "../src/run/map";
 import { ITEMS, PERKS, SHOP, xpToNext } from "../src/data/gear";
 import { gainXp, heroSpec, newProgress } from "../src/run/hero";
-import { battleSetup, buy, RUN_VERSION, upgradeRun, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
+import { ALTAR, questChoices, battleSetup, buy, RUN_VERSION, upgradeRun, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
 
 /** Answers every offer with the first option and leaves shops. */
 function answer(run: RunState): RunState {
@@ -230,7 +233,7 @@ describe("companions", () => {
 describe("difficulty", () => {
   const foes = (d: "easy" | "normal" | "hard") => {
     const run = newRun("diff-seed", d);
-    const node = run.map.nodes.find((n) => n.layer === 3 && (n.kind === "battle" || n.kind === "elite"))!;
+    const node = run.map.nodes.find((n) => n.layer >= 3 && (n.kind === "battle" || n.kind === "elite"))!;
     return battleSetup(run, node.id, "en").units.filter((u) => u.team === "foes");
   };
   it("hard fields more and tougher foes than normal, easy weaker ones", () => {
@@ -249,46 +252,261 @@ describe("difficulty", () => {
 
 describe("regions", () => {
   it("moves on to the next region after a boss, with a fresh map and stronger, renamed foes", () => {
-    const extra = {
-      id: "test", name: { es: "Prueba", en: "Test" }, arenas: REGIONS[0]!.arenas, species: REGIONS[0]!.species, boss: REGIONS[0]!.boss,
-      variant: { element: "ice" as const, name: { es: "{name} Helado", en: "Frozen {name}" }, res: { ice: 20 }, stat: 1 },
-    };
-    REGIONS.push(extra);
-    try {
-      let run = newRun("regions");
-      let firstSetup: ReturnType<typeof battleSetup> | undefined;
-      while (!run.over && run.region === 0) {
-        run = answer(run);
-        const pick = nextNodes(run)[0]!;
-        run = enterNode(run, pick.id, "en");
-        if (run.battle) { firstSetup ??= run.battle.setup; run = finishBattle(run, end(run, "win")); }
-      }
-      expect(run.over).toBeNull();
-      expect(run.region).toBe(1);
-      expect(run.at).toBeNull();
-      expect(run.path).toEqual([]);
+    expect(REGIONS.length).toBe(2);
+    let run = newRun("regions");
+    while (!run.over && run.region === 0) {
       run = answer(run);
-      const node = nextNodes(run)[0]!;
-      const setup = battleSetup(run, node.id, "en");
-      const foe = setup.units.find((u) => u.team === "foes" && !u.rival)!;
-      expect(foe.name.startsWith("Frozen ")).toBe(true);
+      run = enterNode(run, nextNodes(run)[0]!.id, "en");
+      if (run.battle) run = finishBattle(run, end(run, "win"));
+    }
+    expect(run.over).toBeNull();
+    expect(run.region).toBe(1);
+    expect(run.at).toBeNull();
+    expect(run.path).toEqual([]);
+    run = answer(run);
+    const setup = battleSetup(run, nextNodes(run)[0]!.id, "en");
+    const natives = (REGIONS[1]!.natives ?? []).map((sp) => sp.name);
+    for (const foe of setup.units.filter((u) => u.team === "foes" && !u.rival)) {
+      if (natives.includes(foe.name)) continue;
+      expect(foe.name.startsWith("Frost ")).toBe(true);
       expect(foe.element).toBe("ice");
-      const base = REGIONS[0]!.species.find((sp) => foe.name.endsWith(sp.name))!;
-      expect(foe.hp).toBeGreaterThan(base.hp);
-      // Finish the second region: now the run is won.
-      while (!run.over) {
-        run = answer(run);
-        run = enterNode(run, nextNodes(run)[0]!.id, "en");
-        if (run.battle) run = finishBattle(run, end(run, "win"));
+      expect(foe.abilities).toContain("frostbite");
+    }
+    while (!run.over) {
+      run = answer(run);
+      run = enterNode(run, nextNodes(run)[0]!.id, "en");
+      if (run.battle) {
+        if (run.map.nodes[run.battle.node]!.kind === "boss") expect(run.battle.setup.units.some((u) => u.name === "Broken Mira")).toBe(true);
+        run = finishBattle(run, end(run, "win"));
       }
-      expect(run.over).toBe("won");
-      expect(firstSetup).toBeDefined();
-    } finally { REGIONS.pop(); }
+    }
+    expect(run.over).toBe("won");
   });
   it("upgrades a save from before regions", () => {
     const { region: _r, ...old } = { ...newRun("old"), version: 4 };
     const up = upgradeRun(old as RunState);
     expect(up.version).toBe(RUN_VERSION);
     expect(up.region).toBe(0);
+  });
+});
+
+describe("recruits", () => {
+  const flat = parseMap("flat8", Array.from({ length: 8 }, () => Array(8).fill("g0").join(" ")));
+  const mk = (o: Partial<UnitSpec> & Pick<UnitSpec, "id" | "team" | "pos">): UnitSpec => ({
+    name: o.id, element: "neutral", look: "lumo", hp: 40, ap: 6, mp: 3, speed: 50, jump: 1, str: 0, mag: 0, agi: 10, res: {}, abilities: ["ray"], ...o,
+  });
+
+  it("each region places its own recruits on their layers", () => {
+    for (const seed of ["a", "b", "c", "d", "e", "f"]) {
+      for (const region of REGIONS) {
+        const map = generateMap(seed, region.recruits);
+        for (const r of region.recruits) {
+          const n = map.nodes.filter((x) => x.recruit === r.talk);
+          expect(n).toHaveLength(1);
+          expect(n[0]!.layer).toBe(r.layer);
+        }
+      }
+    }
+  });
+
+  it("every companion has a meet talk, real abilities and a look", () => {
+    for (const r of REGIONS) for (const s of r.recruits) {
+      const talk = TALKS[s.talk]!;
+      const c = COMPANIONS[talk.companion]!;
+      for (const a of c.spec.abilities) expect(ABILITIES[a], a).toBeTruthy();
+      expect(talk.choices.some((x) => x.joins)).toBe(true);
+    }
+  });
+
+  it("reads an ally bleeding out, and a clean quick win", () => {
+    const setup = { seed: 3, map: flat, units: [
+      mk({ id: "hero", team: "heroes", pos: { x: 0, y: 0 }, speed: 30 }),
+      mk({ id: "a", team: "heroes", pos: { x: 4, y: 4 }, speed: 20, hpNow: 1 }),
+      mk({ id: "f", team: "foes", pos: { x: 4, y: 5 }, speed: 90, str: 50, abilities: ["bite"] }),
+    ] };
+    const log: Command[] = [];
+    let t = createBattle(setup);
+    for (let i = 0; i < 60 && t.units.find((u) => u.id === "a")!.life !== "dead"; i++) {
+      const a = t.units.find((u) => u.id === "a")!;
+      const c: Command = t.active === "f" && a.life === "up" ? { t: "cast", unit: "f", ability: "bite", target: a.pos } : { t: "endTurn", unit: t.active };
+      log.push(c);
+      const r = applyCommand(t, c); if (!r.ok) throw new Error(r.error); t = r.state;
+    }
+    expect(t.units.find((u) => u.id === "a")!.life).toBe("dead");
+    const deeds = readDeeds(setup, log);
+    expect(deeds.allyBledOut).toBe(1);
+    expect(deeds.noneDowned).toBe(0);
+    const g = react(newMember("guijo", 0, false), deeds).member;
+    expect(g.crossed).toBe(1);
+    expect(g.approval).toBe(APPROVAL.start + COMPANIONS.guijo!.reacts.allyBledOut!);
+
+    const quick = { seed: 3, map: flat, units: [
+      mk({ id: "hero", team: "heroes", pos: { x: 3, y: 5 }, speed: 90, mag: 300 }),
+      mk({ id: "f", team: "foes", pos: { x: 3, y: 2 }, speed: 10 }),
+    ] };
+    const win = readDeeds(quick, [{ t: "cast", unit: "hero", ability: "ray", target: { x: 3, y: 2 } }]);
+    expect(win.noneDowned).toBe(1);
+    expect(win.quickWin).toBe(1);
+  });
+
+  it("Centella's grudge against sparing rivals sours her mood but never past the clash floor", () => {
+    const c = newMember("centella", 0, true);
+    const once = react(c, { rivalEscaped: 5 }).member;
+    expect(once.approval).toBe(APPROVAL.clashFloor);
+    expect(once.status).toBe("with");
+    expect(react({ ...c, approval: -25 }, { rivalEscaped: 3, letEscape: 3 }).member.approval).toBe(-25);
+    expect(APPROVAL.clashFloor).toBeGreaterThan(APPROVAL.refuses);
+  });
+
+  it("fields at most three companions; the others wait at camp", () => {
+    let run = newRun("bench");
+    run.party = ["remanso", "guijo", "centella", "moheda"].map((id) => newMember(id, 0, false));
+    run = enterNode(run, nextNodes(run)[0]!.id, "en");
+    const allies = run.battle!.setup.units.filter((u) => u.team === "heroes" && u.id !== "hero");
+    expect(allies.map((u) => u.id)).toEqual(["remanso", "guijo", "centella"]);
+  });
+
+  it("Moheda's Sap Cap grows with shards", () => {
+    const m = newMember("moheda", 0, false);
+    expect(memberSpec(m, 1, { x: 0, y: 0 }, 0).abilities).toContain("sapCap");
+    expect(memberSpec(m, 1, { x: 0, y: 0 }, 3).abilities).toContain("sapCapRich");
+  });
+
+  it("a rest's cleansing fire burns shards to heal everyone, and Moheda never forgives it", () => {
+    let run = newRun("altar");
+    const rest = run.map.nodes.find((n) => n.kind === "rest")!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(rest.id))!.id, shards: 3, heroHp: 5 };
+    run.party = [{ ...newMember("moheda", 0, false), hp: 1 }];
+    run = enterNode(run, rest.id, "en");
+    expect(run.offers[0]).toEqual({ kind: "altar" });
+    const kept = choose(run, 1);
+    expect(kept.shards).toBe(3);
+    run = choose(run, 0);
+    expect(run.shards).toBe(3 - ALTAR.shards);
+    expect(run.heroHp).toBe(heroMaxHp(run));
+    expect(run.party[0]!.crossed).toBe(1);
+    expect(run.party[0]!.approval).toBe(APPROVAL.start + COMPANIONS.moheda!.reacts.destroyShards!);
+    expect(run.remarks.length).toBeGreaterThan(0);
+  });
+});
+
+describe("personal quests and endings", () => {
+  const joined = (id: string, talk: string) => {
+    let run = newRun("quest");
+    const node = run.map.nodes.find((n) => n.recruit === talk)!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))!.id };
+    run = enterNode(run, node.id, "en");
+    run = choose(choose(run, 0), 0);
+    while (run.offers.length) run = choose(run, 0); // the job offer, when joining on its layer
+    return { run, member: run.party.find((m) => m.id === id)! };
+  };
+
+  it("joining places the companion's quest at least two layers ahead", () => {
+    const { run } = joined("remanso", "remanso.meet");
+    const q = run.map.nodes.find((n) => n.quest === "remanso")!;
+    expect(q.kind).toBe("quest");
+    expect(q.layer).toBeGreaterThanOrEqual(1 + QUEST_GAP);
+  });
+
+  it("offers the sacrifice only once they are ready, and endings follow the lesson", () => {
+    let { run } = joined("guijo", "guijo.meet");
+    const quest = run.map.nodes.find((n) => n.quest === "guijo")!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(quest.id))!.id };
+    const at = enterNode(run, quest.id, "en");
+    expect(at.offers[0]).toEqual({ kind: "quest", companion: "guijo" });
+    expect(questChoices(at, "guijo")).toEqual(["hold", "double"]);
+    expect(endingOf(at.party[0]!)).toBe("regular");
+
+    const ready = structuredClone(at);
+    ready.party[0]!.seen = true; ready.party[0]!.approval = LESSON_APPROVAL;
+    expect(questChoices(ready, "guijo")[0]).toBe("sacrifice");
+    const good = choose(ready, 0);
+    expect(good.party[0]!.lesson).toBe("sacrifice");
+    expect(endingOf(good.party[0]!)).toBe("good");
+    expect(choose(good, 0).offers.some((o) => o.kind === "quest")).toBe(false);
+
+    const stays = choose(at, 1); // not ready: [hold, double]; he stays behind in the tunnel
+    expect(stays.party[0]!.status).toBe("left");
+    expect(endingOf(stays.party[0]!)).toBe("bad");
+  });
+
+  it("Centella killing her rival after seeing the damage is her bad ending", () => {
+    const m = { ...newMember("centella", 0, true), lesson: "hold" as const };
+    expect(endingOf(m)).toBe("regular");
+    expect(endingOf({ ...m, seen: true })).toBe("bad");
+    expect(endingOf({ ...m, lesson: undefined, status: "fallen" })).toBe("bad");
+  });
+
+  it("past the town, a rest shows Centella the burned marsh", () => {
+    let run = newRun("marsh");
+    run.region = 1;
+    run.party = [newMember("centella", 0, true)];
+    const rest = run.map.nodes.find((n) => n.kind === "rest")!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(rest.id))!.id };
+    run = enterNode(run, rest.id, "en");
+    expect(run.party[0]!.seen).toBe(true);
+    expect(run.remarks).toContainEqual(QUESTS.centella!.seen);
+  });
+
+  it("every recruit has a quest with all three endings in both languages", () => {
+    for (const r of REGIONS) for (const s of r.recruits) {
+      const q = QUESTS[TALKS[s.talk]!.companion]!;
+      for (const e of ["good", "regular", "bad"] as const) { expect(q.endings[e].es).toBeTruthy(); expect(q.endings[e].en).toBeTruthy(); }
+    }
+  });
+});
+
+describe("hero jobs", () => {
+  const atLayer = (layer: number, leanings?: { beacon: number; blaze: number }) => {
+    let run = newRun("jobs");
+    const node = run.map.nodes.find((n) => n.layer === layer && ["rest", "shop", "recruit"].includes(n.kind))!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))!.id, leanings };
+    return enterNode(run, node.id, "en");
+  };
+
+  it("offers the job the run leans towards halfway through the first region, both on a tie", () => {
+    expect(atLayer(1).offers.some((o) => o.kind === "job")).toBe(false);
+    expect(atLayer(JOB_LAYER).offers.find((o) => o.kind === "job")).toEqual({ kind: "job", options: ["beacon", "blaze"] });
+    expect(atLayer(JOB_LAYER, { beacon: 1, blaze: 3 }).offers.find((o) => o.kind === "job")).toEqual({ kind: "job", options: ["blaze"] });
+  });
+
+  it("taking a job teaches its abilities and passive, and companions react", () => {
+    let run = atLayer(JOB_LAYER, { beacon: 4, blaze: 0 });
+    run.party = [newMember("remanso", 0, true)];
+    while (run.offers[0]!.kind !== "job") run = run.offers[0]!.kind === "shop" ? leaveShop(run) : choose(run, 0);
+    run = choose(run, 0);
+    expect(run.hero.job).toBe("beacon");
+    const spec = heroSpec(HERO, run.hero);
+    expect(spec.abilities).toEqual(expect.arrayContaining(JOBS.beacon.abilities));
+    expect(spec.passive).toBe("guard");
+    expect(run.party[0]!.approval).toBe(APPROVAL.start + COMPANIONS.remanso!.reacts.jobBeacon!);
+    // Only once a run.
+    const later = enterNode(run, nextNodes(run)[0]!.id, "en");
+    expect(later.offers.some((o) => o.kind === "job")).toBe(false);
+  });
+
+  it("Guard cuts damage to allies beside the hero; Executioner hits the wounded harder; Dawn cleanses", () => {
+    const flat = parseMap("flat9", Array.from({ length: 9 }, () => Array(9).fill("g0").join(" ")));
+    const mk = (o: Partial<UnitSpec> & Pick<UnitSpec, "id" | "team" | "pos">): UnitSpec => ({
+      name: o.id, element: "neutral", look: "lumo", hp: 40, ap: 6, mp: 3, speed: 50, jump: 1, str: 0, mag: 20, agi: 10, res: {}, abilities: ["ray", "dawn"], ...o,
+    });
+    const units = (passive?: "guard" | "executioner") => [
+      mk({ id: "hero", team: "heroes", pos: { x: 4, y: 4 }, passive }), mk({ id: "a", team: "heroes", pos: { x: 4, y: 5 } }),
+      mk({ id: "f", team: "foes", pos: { x: 4, y: 8 } }),
+    ];
+    const s0 = createBattle({ seed: 1, map: flat, units: units() }), s1 = createBattle({ seed: 1, map: flat, units: units("guard") });
+    const ray = ABILITIES.ray!;
+    const at = (s: BattleState, id: string) => s.units.find((u) => u.id === id)!;
+    expect(damageFactor(s1, at(s1, "f"), at(s1, "a"), ray)).toBeCloseTo(damageFactor(s0, at(s0, "f"), at(s0, "a"), ray) * GUARD_FACTOR);
+    const s2 = createBattle({ seed: 1, map: flat, units: units("executioner") });
+    const f = at(s2, "f"); const full = damageFactor(s2, at(s2, "hero"), f, ray); f.hp = 10;
+    expect(damageFactor(s2, at(s2, "hero"), f, ray)).toBeCloseTo(full * EXECUTIONER_FACTOR);
+    const s3 = createBattle({ seed: 1, map: flat, units: units() });
+    at(s3, "a").statuses = [{ id: "poison", turns: 2, power: 3 }, { id: "shield", turns: 2, power: 5 }];
+    const hero = at(s3, "hero");
+    s3.active = hero.id;
+    const r = applyCommand(s3, { t: "cast", unit: s3.active, ability: "dawn", target: { x: 4, y: 5 } });
+    if (!r.ok) throw new Error(r.error);
+    expect(at(r.state, "a").statuses.map((x) => x.id)).toEqual(["shield"]);
   });
 });

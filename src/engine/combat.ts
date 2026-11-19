@@ -14,7 +14,8 @@ import { elementMultiplier } from "../data/elements";
 import { inside, manhattan, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor } from "./escape";
-import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
+import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
+import { EXECUTIONER_FACTOR, GUARD_FACTOR } from "../data/jobs";
 import { hasLineOfSight } from "./sight";
 import { chainBolt, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
 import { isFoe, unitAt, type BattleState, type Unit } from "./state";
@@ -109,7 +110,17 @@ export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Abi
   const height = 1 + Math.min(0.3, Math.max(0, up) * 0.1);
   const res = (target.res[ab.element] ?? 0) / 100;
   const weak = statusOf(caster, "weaken") ? WEAKEN_FACTOR : 1;
-  return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res) * takenFactor(target) * weak;
+  return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res) * takenFactor(target) * weak
+    * passiveFactor(s, caster, target);
+}
+
+/** Job passives: Executioner hits foes under half HP harder; Guard shields the allies standing next to it. */
+function passiveFactor(s: BattleState, caster: Unit, target: Unit): number {
+  let f = caster.passive === "executioner" && target.hp < target.maxHp / 2 ? EXECUTIONER_FACTOR : 1;
+  const guarded = s.units.some((g) => g.passive === "guard" && g.id !== target.id && g.life === "up" && !isFoe(g, target)
+    && Math.abs(g.pos.x - target.pos.x) + Math.abs(g.pos.y - target.pos.y) === 1);
+  if (guarded) f *= GUARD_FACTOR;
+  return f;
 }
 
 /** Where the attack lands relative to the way the target faces. */
@@ -141,7 +152,7 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
     touchTile(s, ab, from, p, fx, ground, hurtByTerrain);
     const u = unitAt(s, p);
     // An area attack hits allies caught in it, but never the one who casts it (so it can be used point-blank).
-    if (!u || (u.id === caster.id && ab.damage)) continue;
+    if (!u || (u.id === caster.id && ab.damage) || (ab.alliesOnly && isFoe(caster, u))) continue;
     const hit: Hit = { unit: u.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false };
     if (ab.revive && u.life === "downed") {
       // Each revive leaves a scar: max HP drops by a quarter of the starting max, and the unit stands with a
@@ -168,6 +179,11 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
     if (ab.root && u.life === "up") { u.rooted = true; hit.rooted = true; }
     // Water puts out fire, on anyone it touches.
     if (ab.element === "water" && u.life === "up" && statusOf(u, "burn")) { removeStatus(u, "burn"); hit.cleansed = ["burn"]; }
+    if (ab.cleanse && u.life === "up") {
+      const bad = u.statuses.filter((x) => !STATUS[x.id].good).map((x) => x.id);
+      for (const id of bad) removeStatus(u, id);
+      if (bad.length) hit.cleansed = [...(hit.cleansed ?? []), ...bad];
+    }
     if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [ab.status.id];
     if (ab.push && u.life === "up") push(s, u, from, ab.push, hit);
     credit(u, hit);
@@ -215,3 +231,24 @@ function push(s: BattleState, u: Unit, from: Pos, tiles: number, hit: Hit) {
   }
 }
 
+/** Where things end up if `caster` uses `ab` on `target` now: units pushed and crates slid, with the damage a
+    push into something adds, and barrels that would go off. Runs the cast on a copy; push results never depend
+    on the roll, so this is exact for movement. */
+export interface MovePreview { moves: { from: Pos; to: Pos; unit?: string; bump: number }[]; blasts: Pos[] }
+export function previewEffects(s: BattleState, caster: Unit, ab: Ability, target: Pos): MovePreview {
+  const copy = structuredClone(s);
+  const me = copy.units.find((u) => u.id === caster.id)!;
+  const before = new Map(copy.units.map((u) => [u.id, { ...u.pos }]));
+  const fx: TerrainFx[] = [];
+  const hits = resolveCast(copy, me, ab, target, fx);
+  const out: MovePreview = { moves: [], blasts: fx.filter((f) => f.fx === "explode").map((f) => f.at) };
+  if (ab.push) for (const h of hits) {
+    const from = before.get(h.unit)!, to = h.pushedTo ?? from;
+    if (h.unit === caster.id) continue;
+    // A push stopped early by a wall, a unit or a step hurts PUSH_HIT per tile it could not travel.
+    const tiles = Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
+    out.moves.push({ from, to, unit: h.unit, bump: PUSH_HIT * Math.max(0, ab.push - tiles) });
+  }
+  for (const f of fx) if (f.fx === "slide") out.moves.push({ from: f.at, to: f.to, bump: 0 });
+  return out;
+}

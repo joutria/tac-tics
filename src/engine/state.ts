@@ -7,6 +7,7 @@
    pushes a unit's time back by its delay (faster units, shorter delay). A turn that spends no AP (only moving,
    or nothing) costs 70% of the delay, so it comes back sooner. Wait passes the turn to act right after the next
    character. */
+import type { Passive } from "../data/jobs";
 import { ABILITIES } from "../data/abilities";
 import type { Element } from "../data/elements";
 import { abilityAvailable, castProblem, hurt, resolveCast, type Hit } from "./combat";
@@ -52,6 +53,8 @@ export interface UnitSpec {
   rival?: boolean;
   /** A companion's refusal: with low approval, it will not strike a fleeing foe. */
   refuses?: "fleeing";
+  /** A job's passive (data/jobs.ts). */
+  passive?: Passive;
   /** HP it starts the battle with, if lower than full (a run carries the hero's HP between battles). */
   hpNow?: number;
   /** A rival's learned habit: it goes for units that can heal first. */

@@ -33,7 +33,14 @@ export interface Ability {
   revive?: boolean;
   /** Left on every standing unit it hits (see src/engine/status.ts). */
   status?: Status;
+  /** Removes harmful statuses from those it touches. */
+  cleanse?: boolean;
+  /** Its area touches only the caster's side. */
+  alliesOnly?: boolean;
 }
+
+/** Shards the run must hold for Moheda's Sap Cap to grow stronger. */
+export const SAP_RICH = 3;
 
 export const ABILITIES: Record<string, Ability> = {
   // Shared by everyone.
@@ -58,4 +65,35 @@ export const ABILITIES: Record<string, Ability> = {
   // Ajolín: water skirmisher that shoves.
   splash: { id: "splash", element: "water", ap: 3, range: [1, 3], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 5, max: 7, stat: "str" } },
   undertow: { id: "undertow", element: "water", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 3, max: 5, stat: "str" }, push: 2 },
+
+  // Broken Reservoir. Relampín: bolt skirmisher whose sparks run along the water.
+  spark: { id: "spark", element: "bolt", ap: 3, range: [2, 5], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 5, max: 8, stat: "mag" } },
+  jolt: { id: "jolt", element: "bolt", ap: 4, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 3, perTurn: 1, damage: { min: 3, max: 5, stat: "str" }, status: { id: "stun", turns: 1, power: 0 } },
+  // Carámbano: ice bruiser that freezes the water into paths and slows.
+  chill: { id: "chill", element: "ice", ap: 3, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 4, max: 6, stat: "str" }, status: { id: "slow", turns: 2, power: 1 } },
+  freeze: { id: "freeze", element: "ice", ap: 4, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 3, max: 5, stat: "mag" } },
+  // Frost-touched foes of the reservoir learn a cold bite.
+  frostbite: { id: "frostbite", element: "ice", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 4, max: 6, stat: "str" }, status: { id: "slow", turns: 1, power: 1 } },
+  // Broken Mira, the boss: a guardian of the lake, frozen by the Sap.
+  shatter: { id: "shatter", element: "ice", ap: 4, range: [2, 5], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 6, max: 9, stat: "mag" }, status: { id: "slow", turns: 1, power: 1 } },
+  glare: { id: "glare", element: "water", ap: 3, range: [1, 6], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 6, max: 8, stat: "mag" } },
+
+  // Recruits of M3. Guijo: stone protector who holds a spot and shields allies.
+  slam: { id: "slam", element: "stone", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 8, max: 11, stat: "str" } },
+  bulwark: { id: "bulwark", element: "stone", ap: 3, range: [0, 2], los: false, target: "ally", area: "single", cooldown: 2, perTurn: 1, status: { id: "shield", turns: 2, power: 12 } },
+  tremor: { id: "tremor", element: "stone", ap: 4, range: [1, 2], los: false, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 3, max: 5, stat: "str" }, status: { id: "slow", turns: 1, power: 1 } },
+  // Centella reuses the Relampín's spark and jolt, and darts past a foe's Lock.
+  dash: { id: "dash", element: "bolt", ap: 2, range: [1, 3], los: true, target: "emptyTile", area: "single", cooldown: 2, perTurn: 1, teleport: true },
+  // Moheda: weakens foes and keeps the party up over time, with the Savia's help.
+  spores: { id: "spores", element: "mush", ap: 4, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 2, max: 4, stat: "mag" }, status: { id: "poison", turns: 2, power: 3 } },
+  wilt: { id: "wilt", element: "mush", ap: 3, range: [1, 5], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, status: { id: "weaken", turns: 2, power: 0 } },
+  sapCap: { id: "sapCap", element: "mush", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 3, max: 4 }, status: { id: "regen", turns: 3, power: 3 } },
+  // Hero jobs. Beacon: protector at mid range.
+  halo: { id: "halo", element: "light", ap: 4, range: [0, 3], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, heal: { min: 3, max: 5 }, status: { id: "shield", turns: 2, power: 8 } },
+  dawn: { id: "dawn", element: "light", ap: 2, range: [0, 4], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, cleanse: true, heal: { min: 2, max: 3 } },
+  // Blaze: aggressive caster.
+  sear: { id: "sear", element: "light", ap: 4, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 7, max: 9, stat: "mag" }, status: { id: "burn", turns: 2, power: 3 } },
+  dazzle: { id: "dazzle", element: "light", ap: 3, range: [1, 5], los: true, target: "foe", area: "single", cooldown: 4, perTurn: 1, damage: { min: 2, max: 4, stat: "mag" }, status: { id: "stun", turns: 1, power: 0 } },
+  /** Sap Cap when the run holds SAP_RICH shards or more. */
+  sapCapRich: { id: "sapCapRich", element: "mush", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 4, max: 6 }, status: { id: "regen", turns: 3, power: 5 } },
 };
