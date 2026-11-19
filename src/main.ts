@@ -12,6 +12,7 @@ import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
+import { STATUS } from "./engine/status";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
 import { buy, choose, enterNode, finishBattle, leaveShop, newRun, rulesOf, RUN_VERSION, shopHeal, wear, type RunState } from "./run/run";
 import { DIFFICULTY, type Difficulty } from "./data/region";
@@ -261,6 +262,20 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       toast(t(lang, "escapedToast", { name: u.name }));
       continue;
     }
+    if (ev.e === "tick") {
+      const u = unitById(state, ev.unit);
+      const info = STATUS[ev.status];
+      if (ev.damage) floaters.push({ pos: { ...u.pos }, text: `${info.icon} -${ev.damage}`, color: info.colour, born: now });
+      if (ev.heal) floaters.push({ pos: { ...u.pos }, text: `${info.icon} +${ev.heal}`, color: info.colour, born: now });
+      if (ev.downed || ev.died) floaters.push({ pos: { ...u.pos }, text: t(lang, ev.died ? "dead" : "downed"), color: "#ffffff", born: now + 300 });
+      continue;
+    }
+    if (ev.e === "stunned") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: `${STATUS.stun.icon} ${t(lang, "st.stun")}`, color: STATUS.stun.colour, born: now });
+      toast(t(lang, "stunnedToast", { name: u.name }));
+      continue;
+    }
     if (ev.e !== "cast") continue;
     for (const h of ev.hits) {
       const u = unitById(state, h.unit);
@@ -273,6 +288,9 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       if (h.revived) add(t(lang, "revived"), "#7ed957");
       if (h.maxHpLost) add(t(lang, "maxHpDown", { n: h.maxHpLost }), "#c9a0ff", 350);
       if (h.rooted) add(t(lang, "rooted"), "#b9e08a", 250);
+      if (h.shielded) add(`${STATUS.shield.icon} ${h.shielded}`, STATUS.shield.colour, 150);
+      for (const id of h.statuses ?? []) add(`${STATUS[id].icon} ${t(lang, `st.${id}` as TextKey)}`, STATUS[id].colour, 450);
+      for (const id of h.cleansed ?? []) add(`${STATUS[id].icon} ✕`, "#8fd0ff", 450);
       if (h.downed) add(t(lang, "downed"), "#ffffff", 300);
       if (h.died) add(t(lang, "dead"), "#ffffff", 300);
     }
@@ -484,6 +502,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
     }
   }
+  for (const st of target.statuses) lines.push(`<span style="color:${STATUS[st.id].colour}">${STATUS[st.id].icon} ${t(lang, `st.${st.id}` as TextKey)}</span> · ${t(lang, `st.${st.id}.d` as TextKey, { n: st.power })} · ${t(lang, "turnsLeft", { n: st.turns })}`);
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
@@ -511,7 +530,8 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       const cd = target.cooldowns[id];
       const dmg = ab.damage ? ` ${ab.damage.min}–${ab.damage.max}` : "";
       const state_ = cd ? `⏳ ${t(lang, "cooldown", { n: cd })}` : t(lang, "ready");
-      lines.push(`${abilityName(lang, id)}${dmg} · ${ab.range[0]}–${ab.range[1]} · ${state_}${zone.includes(id) ? ` · <b class="down">${t(lang, "reachesYou")}</b>` : ""}`);
+      const leaves = ab.status ? ` · ${STATUS[ab.status.id].icon}` : "";
+      lines.push(`${abilityName(lang, id)}${dmg}${leaves} · ${ab.range[0]}–${ab.range[1]} · ${state_}${zone.includes(id) ? ` · <b class="down">${t(lang, "reachesYou")}</b>` : ""}`);
     }
   }
   tip.innerHTML = lines.join("<br>");

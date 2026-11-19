@@ -10,6 +10,7 @@ import { manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
 import { reachable } from "./movement";
 import { isBorder } from "./escape";
 import { hasLineOfSight } from "./sight";
+import { statusOf, STATUS, type Status } from "./status";
 import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, onMap, roundOf, unitAt, type AiKind, type Unit } from "./state";
 
 interface Weights {
@@ -118,8 +119,24 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (ab.revive && !enemy && o.life === "downed") v += 40;
     if (ab.root && enemy && o.life === "up") v += 6;
     if (ab.push && enemy && o.life === "up") v += 4;
+    if (ab.status && o.life === "up" && (o.id !== u.id || !ab.damage)) v += statusValue(ab.status, o, enemy);
   }
   return v;
+}
+
+/** What leaving a status on `o` is worth, in points of damage. Bad ones help on enemies and hurt on friends. */
+function statusValue(st: Status, o: Unit, enemy: boolean): number {
+  const good = STATUS[st.id].good;
+  if (good === enemy) return enemy ? -st.power : -6; // a buff on a foe, or a debuff on a friend
+  if (statusOf(o, st.id)) return 1; // already has it: refreshing is worth little
+  switch (st.id) {
+    case "burn": case "poison": return Math.min(st.power * st.turns, o.hp) * 0.8;
+    case "stun": return 18;
+    case "slow": return st.power * 3;
+    case "weaken": return 8;
+    case "shield": return o.hp < o.maxHp ? st.power * 0.6 : st.power * 0.3;
+    case "regen": return Math.min(st.power * st.turns, o.maxHp - o.hp + st.power) * 0.6;
+  }
 }
 
 const isHealer = (o: Unit) => o.abilities.some((id) => !!ABILITIES[id]?.heal);

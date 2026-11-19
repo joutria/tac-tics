@@ -7,12 +7,14 @@
             x element wheel  (1.5 strong, 0.75 weak, 1.25 opposite)
             x critical       (5% chance, x1.5)
             x (1 - resistance % of the target to that element)
-   rounded down. Attacks always hit. Area attacks hit everyone in the area, allies included, but not the caster. */
+            x 0.75 if the attacker is Weakened
+   rounded down, then a Shield on the target soaks what it can. Attacks always hit. Area attacks hit everyone in the area, allies included, but not the caster. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
 import { inside, manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor } from "./escape";
+import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
 import { hasLineOfSight } from "./sight";
 import { isFoe, unitAt, type BattleState, type Unit } from "./state";
 
@@ -38,6 +40,11 @@ export interface Hit {
   pushedTo?: Pos;
   /** Max HP the unit lost for good by being helped up. */
   maxHpLost?: number;
+  /** Damage a Shield soaked. */
+  shielded?: number;
+  /** Statuses this hit put on the unit, and ones it washed off. */
+  statuses?: StatusId[];
+  cleansed?: StatusId[];
 }
 
 export const unitAbilities = (u: Unit) => [...u.abilities, "helpUp"];
@@ -98,7 +105,8 @@ export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Abi
   const up = (tileAt(s.map, from)?.h ?? 0) - (tileAt(s.map, target.pos)?.h ?? 0);
   const height = 1 + Math.min(0.3, Math.max(0, up) * 0.1);
   const res = (target.res[ab.element] ?? 0) / 100;
-  return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res) * takenFactor(target);
+  const weak = statusOf(caster, "weaken") ? WEAKEN_FACTOR : 1;
+  return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res) * takenFactor(target) * weak;
 }
 
 /** Where the attack lands relative to the way the target faces. */
@@ -138,16 +146,22 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
     }
     if (ab.heal && u.life === "up") {
       const [roll, rng] = rngInt(s.rng, ab.heal.min, ab.heal.max); s.rng = rng;
-      hit.heal = Math.min(roll, u.maxHp - u.hp); u.hp += hit.heal;
+      const amount = statusOf(u, "poison") ? Math.floor(roll * POISON_HEAL_FACTOR) : roll;
+      hit.heal = Math.min(amount, u.maxHp - u.hp); u.hp += hit.heal;
     }
     if (ab.damage) {
       let [roll, rng] = rngInt(s.rng, ab.damage.min, ab.damage.max); s.rng = rng;
       const [c, rng2] = rngNext(s.rng); s.rng = rng2;
       hit.crit = c < CRIT_CHANCE;
-      hit.damage = Math.max(0, Math.floor(roll * damageFactor(s, caster, u, ab, from) * (hit.crit ? CRIT_MULT : 1)));
+      const raw = Math.max(0, Math.floor(roll * damageFactor(s, caster, u, ab, from) * (hit.crit ? CRIT_MULT : 1)));
+      hit.damage = absorb(u, raw);
+      if (raw > hit.damage) hit.shielded = raw - hit.damage;
       hurt(u, hit.damage, hit);
     }
     if (ab.root && u.life === "up") { u.rooted = true; hit.rooted = true; }
+    // Water puts out fire, on anyone it touches.
+    if (ab.element === "water" && u.life === "up" && statusOf(u, "burn")) { removeStatus(u, "burn"); hit.cleansed = ["burn"]; }
+    if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [ab.status.id];
     if (ab.push && u.life === "up") push(s, u, from, ab.push, hit);
     if ((hit.downed || hit.died) && isFoe(caster, u)) caster.downs += 1;
     hits.push(hit);
@@ -155,7 +169,7 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
   return hits;
 }
 
-function hurt(u: Unit, dmg: number, hit: Hit) {
+export function hurt(u: Unit, dmg: number, hit: Pick<Hit, "downed" | "died">) {
   if (dmg <= 0) return;
   if (u.life === "downed") { u.life = "dead"; hit.died = true; return; }
   u.hp -= dmg;

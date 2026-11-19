@@ -3,6 +3,7 @@
    Range is Manhattan distance. Ranged abilities gain 1 range per level the caster stands above the target and
    lose 1 per level below (never under 1); melee ones (max range 1) ignore height for reach. */
 import type { Element } from "./elements";
+import type { Status } from "../engine/status";
 
 export type Area = "single" | "cross1";
 export type TargetKind = "foe" | "ally" | "downedAlly" | "any" | "emptyTile";
@@ -30,6 +31,8 @@ export interface Ability {
   teleport?: boolean;
   /** Stands a downed ally back up. */
   revive?: boolean;
+  /** Left on every standing unit it hits (see src/engine/status.ts). */
+  status?: Status;
 }
 
 export const ABILITIES: Record<string, Ability> = {
@@ -46,7 +49,7 @@ export const ABILITIES: Record<string, Ability> = {
 
   // Chisporro: fire caster that keeps its distance.
   ember: { id: "ember", element: "fire", ap: 3, range: [2, 6], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 5, max: 8, stat: "mag" } },
-  blaze: { id: "blaze", element: "fire", ap: 4, range: [2, 5], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" } },
+  blaze: { id: "blaze", element: "fire", ap: 4, range: [2, 5], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, status: { id: "burn", turns: 2, power: 3 } },
 
   // Cañín: plant bruiser that closes in and pins.
   bite: { id: "bite", element: "plant", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 8, max: 11, stat: "str" } },

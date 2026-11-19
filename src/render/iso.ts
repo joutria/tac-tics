@@ -1,6 +1,7 @@
 /* Draws the battle in an isometric (diagonal) view on a canvas, and turns a click back into a tile.
    Grid +x runs down-right on screen and +y down-left; each height level lifts a tile by 16 px.
    The view can be turned in 90 degree steps so nothing stays hidden behind a hill or a tree. */
+import { STATUS } from "../engine/status";
 import { GridMap, Pos, tileAt } from "../engine/grid";
 import { MAX_REVIVES } from "../engine/combat";
 import { wavering } from "../engine/escape";
@@ -342,9 +343,12 @@ function drawUnit(
     ctx.fillStyle = "#fff"; ctx.strokeStyle = "#000"; ctx.lineWidth = 3;
     ctx.strokeText(`✚ ${u.downedTurns}`, c.x, c.y - 66); ctx.fillText(`✚ ${u.downedTurns}`, c.x, c.y - 66);
   }
-  if (u.rooted) {
-    ctx.font = "11px system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.fillText("🌿", c.x + 20, c.y - 56);
+  // Rooted and status effects: small icons in a row on the right of the health bar.
+  const icons = [...(u.rooted ? ["🌿"] : []), ...u.statuses.map((x) => STATUS[x.id].icon)];
+  if (icons.length) {
+    ctx.font = "bold 10px system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#fff";
+    icons.forEach((ic, i) => { ctx.strokeText(ic, c.x + 20 + i * 11, c.y - 56); ctx.fillText(ic, c.x + 20 + i * 11, c.y - 56); });
   }
   if (u.rival) {
     // A rival from an earlier battle: a purple star over its head.

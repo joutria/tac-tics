@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ABILITIES } from "../src/data/abilities";
+import { ABILITIES, type Ability } from "../src/data/abilities";
 import { elementMultiplier } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
@@ -435,5 +435,83 @@ describe("point-blank", () => {
     s = play(s, [{ t: "cast", unit: "h", ability: "flare", target: { x: 2, y: 3 } }]);
     expect(unitById(s, "h").hp).toBe(40);
     expect(unitById(s, "f").hp).toBeLessThan(40);
+  });
+});
+
+describe("status effects", () => {
+  // Test-only abilities, one per status.
+  const mk = (id: string, status: Ability["status"], target: Ability["target"] = "foe", damage = true): Ability => ({
+    id, element: "neutral", ap: 2, range: [0, 6], los: false, target, area: "single", cooldown: 0, perTurn: 3,
+    ...(damage ? { damage: { min: 1, max: 1, stat: "mag" as const } } : {}), status,
+  });
+  Object.assign(ABILITIES, {
+    tBurn: mk("tBurn", { id: "burn", turns: 2, power: 5 }),
+    tPoison: mk("tPoison", { id: "poison", turns: 3, power: 4 }),
+    tStun: mk("tStun", { id: "stun", turns: 1, power: 0 }),
+    tSlow: mk("tSlow", { id: "slow", turns: 2, power: 2 }),
+    tWeak: mk("tWeak", { id: "weaken", turns: 2, power: 0 }),
+    tShield: mk("tShield", { id: "shield", turns: 2, power: 10 }, "ally", false),
+    tRegen: mk("tRegen", { id: "regen", turns: 2, power: 6 }, "ally", false),
+    tSplash: { ...mk("tSplash", undefined), element: "water" as const },
+    tHeal: { ...mk("tHeal", undefined, "ally", false), heal: { min: 10, max: 10 } },
+  });
+  const duel = () => createBattle({ seed: 9, map: flat(), units: [
+    unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 60, abilities: Object.keys(ABILITIES).filter((k) => k.startsWith("t")) }),
+    unit({ id: "f", team: "foes", pos: { x: 3, y: 0 }, hp: 100 }),
+  ] });
+  const end = (s: BattleState, id: string) => play(s, [{ t: "endTurn", unit: id }]);
+  const cast = (s: BattleState, ability: string, target = { x: 3, y: 0 }) => play(s, [{ t: "cast", unit: "h", ability, target }]);
+
+  it("burn hurts at the start of the target's turns, then wears off", () => {
+    let s = cast(duel(), "tBurn");
+    const hp = unitById(s, "f").hp;
+    const ticks: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      const r = applyCommand(s, { t: "endTurn", unit: s.active });
+      if (!r.ok) throw new Error(r.error);
+      s = r.state;
+      for (const e of r.events) if (e.e === "tick") ticks.push(e.damage);
+    }
+    expect(ticks).toEqual([5, 5]);
+    expect(unitById(s, "f").hp).toBe(hp - 10);
+    expect(unitById(s, "f").statuses).toEqual([]);
+  });
+  it("water puts out a burn", () => {
+    const s = cast(cast(duel(), "tBurn"), "tSplash");
+    expect(unitById(s, "f").statuses).toEqual([]);
+  });
+  it("poison halves healing", () => {
+    let s = duel();
+    const h = s.units.find((u) => u.id === "h")!;
+    h.hp = 20; h.statuses.push({ id: "poison", turns: 2, power: 1 });
+    s = cast(s, "tHeal", { x: 0, y: 0 });
+    expect(unitById(s, "h").hp).toBe(25);
+  });
+  it("stun skips one turn and cannot chain", () => {
+    let s = cast(duel(), "tStun");
+    const r = applyCommand(s, { t: "endTurn", unit: "h" });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.events.some((e) => e.e === "stunned" && e.unit === "f")).toBe(true);
+    expect(r.state.active).toBe("h");
+    s = cast(r.state, "tStun");
+    expect(unitById(s, "f").statuses.some((x) => x.id === "stun")).toBe(false);
+  });
+  it("slow takes MP and weaken cuts damage", () => {
+    let s = cast(cast(duel(), "tSlow"), "tWeak");
+    s = end(s, "h");
+    expect(unitById(s, "f").mp).toBe(1);
+    const f = unitById(s, "f"), h = unitById(s, "h");
+    expect(damageFactor(s, f, h, ABILITIES.ray!)).toBeCloseTo(damageFactor(s, { ...f, statuses: [] }, h, ABILITIES.ray!) * 0.75);
+  });
+  it("shield soaks damage and regen heals", () => {
+    let s = duel();
+    s.units.find((u) => u.id === "h")!.hp = 20;
+    s = cast(cast(s, "tShield", { x: 0, y: 0 }), "tRegen", { x: 0, y: 0 });
+    s = end(s, "h");
+    const before = unitById(s, "h").hp;
+    s = play(s, [{ t: "cast", unit: "f", ability: "ray", target: { x: 0, y: 0 } }]);
+    expect(unitById(s, "h").hp).toBe(before);
+    s = end(s, "f");
+    expect(unitById(s, "h").hp).toBe(before + 6);
   });
 });
