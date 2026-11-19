@@ -1,7 +1,7 @@
 /* Line of sight between two tiles, with heights. The eye sits one level above the tile it stands on.
    A tile in between blocks the line when its top (height + obstacle) rises above the line at that point,
    or when a unit stands on it and the line passes through the unit's body. */
-import { GridMap, Pos, TERRAIN, samePos, tileAt } from "./grid";
+import { GridMap, Pos, sightBlock, samePos, tileAt } from "./grid";
 
 const EYE = 1;
 
@@ -28,8 +28,7 @@ export function hasLineOfSight(m: GridMap, a: Pos, b: Pos, occupied: (p: Pos) =>
     const tile = tileAt(m, p)!;
     const t = Math.hypot(p.x - a.x, p.y - a.y) / dist;
     const lineH = from + (to - from) * t;
-    const info = TERRAIN[tile.terrain];
-    let top = tile.h + (info.blocksSight ? info.sightHeight : 0);
+    let top = tile.h + sightBlock(tile);
     if (occupied(p)) top = Math.max(top, tile.h + EYE);
     if (top >= lineH) return false;
   }

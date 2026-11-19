@@ -7,24 +7,26 @@
    Like a battle, a run is deterministic: the map, every battle's seed and foes, every reward and every rival come
    from the run seed and what happened before. The run save keeps the current battle's own save inside it. */
 import { ITEMS, PERKS, REWARD, SHOP, type Rarity } from "../data/gear";
-import { ARENAS, BOSS, DEPTH_HP, DEPTH_STAT, DIFFICULTY, HERO, SPECIES, type Difficulty, type Species } from "../data/region";
+import { DEPTH_HP, DEPTH_STAT, DIFFICULTY, HERO, REGIONS, regionalSpecies, type Difficulty, type Region, type Species } from "../data/region";
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
 import type { BattleSave } from "../engine/save";
 import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
 import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
-import { aheadOf, choices, generateMap, placeRival, type RunMap, type RunNode } from "./map";
+import { aheadOf, choices, generateMap, MAP_LAYERS, placeRival, type RunMap, type RunNode } from "./map";
 import { COMPANIONS, TALKS } from "../data/companions";
 import type { Line } from "../data/rivals";
 import { memberSpec, newMember, react, readDeeds, type Member } from "./party";
 import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, type Rival } from "./rivals";
 
-export const RUN_VERSION = 4;
+export const RUN_VERSION = 5;
 /** Share of max HP a rest node gives back. */
 export const REST_HEAL = 0.5;
 /** Foes in a plain battle per layer (min, max), before companions add one each. */
 export const FOES_BY_LAYER: [number, number][] = [[1, 1], [1, 2], [2, 2], [2, 2], [2, 3], [2, 3], [2, 3]];
 /** Share of max HP the hero gets back after winning a battle. */
 export const AFTER_WIN_HEAL = 0.3;
+/** Share of max HP everyone gets back when a run moves on to the next region. */
+export const REGION_REST = 0.5;
 
 export type RewardOption = { t: "item"; id: string } | { t: "coins"; n: number } | { t: "heal"; n: number } | { t: "shards"; n: number };
 
@@ -40,6 +42,8 @@ export interface RunState {
   version: number;
   seed: string;
   difficulty: Difficulty;
+  /** Index into REGIONS of the region being crossed; `map` is its node map. */
+  region: number;
   map: RunMap;
   /** Last node finished; null before the first one. */
   at: number | null;
@@ -66,9 +70,22 @@ export interface RunState {
 
 export function newRun(seed: string, difficulty: Difficulty = "normal"): RunState {
   return {
-    version: RUN_VERSION, seed, difficulty, map: generateMap(seed), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
+    version: RUN_VERSION, seed, difficulty, region: 0, map: generateMap(regionSeed(seed, 0)), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
     coins: 0, shards: 0, rivals: [], party: [], remarks: [], offers: [], over: null,
   };
+}
+
+/** The first region keeps the plain seed, so runs started before regions existed keep their maps. */
+const regionSeed = (seed: string, region: number) => (region ? `${seed}:region:${region}` : seed);
+export const regionOf = (run: RunState): Region => REGIONS[run.region ?? 0]!;
+export const isLastRegion = (run: RunState) => (run.region ?? 0) >= REGIONS.length - 1;
+/** How deep a node is for scaling foes and rewards: later regions continue where the earlier ones ended. */
+export const depthOf = (run: RunState, node: RunNode) => node.layer + (run.region ?? 0) * MAP_LAYERS;
+
+/** A save from before regions existed: it was in the first one. */
+export function upgradeRun(saved: RunState): RunState {
+  if (saved.version === 4) return { ...saved, version: RUN_VERSION, region: 0 };
+  return saved;
 }
 
 export const heroOf = (run: RunState) => heroSpec(HERO, run.hero);
@@ -81,8 +98,9 @@ export const nextNodes = (run: RunState): RunNode[] => (run.over || run.offers.l
 
 /** Which arena a node uses: picked from the seed so revisiting the save gives the same one. */
 function arenaFor(run: RunState, node: RunNode) {
-  const [i] = rngInt(seedFrom(`${run.seed}:arena:${node.id}`), 0, ARENAS.length - 1);
-  return ARENAS[i]!;
+  const arenas = regionOf(run).arenas;
+  const [i] = rngInt(seedFrom(`${regionSeed(run.seed, run.region ?? 0)}:arena:${node.id}`), 0, arenas.length - 1);
+  return arenas[i]!;
 }
 
 export const rulesOf = (run: RunState) => DIFFICULTY[run.difficulty ?? "normal"];
@@ -100,8 +118,10 @@ function foeSpec(run: RunState, sp: Species, id: string, pos: UnitSpec["pos"], l
 export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): BattleSetup {
   const node = run.map.nodes[nodeId]!;
   const arena = arenaFor(run, node);
-  let rng = seedFrom(`${run.seed}:foes:${node.id}`);
-  const pick = () => { let i: number; [i, rng] = rngInt(rng, 0, SPECIES.length - 1); return SPECIES[i]!; };
+  const region = regionOf(run), species = regionalSpecies(region, lang), depth = depthOf(run, node);
+  const rs = regionSeed(run.seed, run.region ?? 0);
+  let rng = seedFrom(`${rs}:foes:${node.id}`);
+  const pick = () => { let i: number; [i, rng] = rngInt(rng, 0, species.length - 1); return species[i]!; };
   // Foes per fight: one to start, two through the middle, up to three late, plus one more for each companion
   // fighting beside the hero, so the party is never simply outnumbered and never simply outnumbers.
   const [lo, hi] = FOES_BY_LAYER[Math.min(node.layer, FOES_BY_LAYER.length - 1)]!;
@@ -114,18 +134,18 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   fielded(run).forEach((m, i) => { if (arena.allies[i]) units.push(memberSpec(m, run.hero.level, arena.allies[i]!)); });
   for (let i = 0; i < count; i++) {
     const pos = arena.foes[i]!;
-    const id = `n${node.id}-${i}`;
+    const id = run.region ? `r${run.region}n${node.id}-${i}` : `n${node.id}-${i}`;
     const rival = i === 0 && node.rival ? run.rivals.find((r) => r.id === node.rival && !r.settled) : undefined;
     if (rival) { units.push({ ...rivalSpec(rival, lang, pos) }); continue; }
     if (node.kind === "boss" && i === 0) {
-      const sp = SPECIES[BOSS.species]!;
-      const f = foeSpec(run, sp, id, pos, node.layer);
-      units.push({ ...f, name: BOSS.name[lang].replace("{name}", sp.name), hp: Math.round(f.hp * BOSS.hp), str: f.str + BOSS.stat, mag: f.mag + BOSS.stat, mp: f.mp + BOSS.mp });
+      const boss = region.boss, sp = species[boss.species]!;
+      const f = foeSpec(run, sp, id, pos, depth);
+      units.push({ ...f, name: boss.name[lang].replace("{name}", sp.name), hp: Math.round(f.hp * boss.hp), str: f.str + boss.stat, mag: f.mag + boss.stat, mp: f.mp + boss.mp });
       continue;
     }
-    units.push(foeSpec(run, pick(), id, pos, node.layer));
+    units.push(foeSpec(run, pick(), id, pos, depth));
   }
-  return { seed: `${run.seed}:battle:${node.id}`, map: arena.map, units };
+  return { seed: `${rs}:battle:${node.id}`, map: arena.map, units };
 }
 
 /** Goes to a node the player can go to: rests heal, shops open, battles start. */
@@ -187,7 +207,7 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
 
   // Spoils: every foe put down (not the ones that got away), scaled by depth and the kind of node.
   const beaten = end.units.filter((u) => u.team === "foes" && (u.life === "dead" || u.life === "downed"));
-  const mult = (1 + REWARD.perLayer * node.layer) * (node.kind === "boss" ? REWARD.bossMult : node.kind === "elite" ? REWARD.eliteMult : node.kind === "rival" ? REWARD.rivalMult : 1);
+  const mult = (1 + REWARD.perLayer * depthOf(next, node)) * (node.kind === "boss" ? REWARD.bossMult : node.kind === "elite" ? REWARD.eliteMult : node.kind === "rival" ? REWARD.rivalMult : 1);
   const coins = Math.round(beaten.length * REWARD.coinsPerFoe * mult * rulesOf(next).coins);
   const xp = Math.round(beaten.length * REWARD.xpPerFoe * mult);
   const shards = node.kind === "boss" ? REWARD.bossShards : node.kind === "elite" ? REWARD.eliteShards
@@ -209,9 +229,18 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
     const at = next.map.nodes.find((n) => n.rival === r.id);
     if (at && ahead.has(at.id)) continue;
     if (at) { at.rival = undefined; if (at.id !== b.node) at.kind = "battle"; }
-    placeRival(next.map, next.at, r.id, `${next.seed}:${next.path.length}`);
+    placeRival(next.map, next.at, r.id, `${next.seed}:${next.region ?? 0}:${next.path.length}`);
   }
-  if (node.kind === "boss") { next.over = "won"; next.offers = []; return next; }
+  if (node.kind === "boss") {
+    if (isLastRegion(next)) { next.over = "won"; next.offers = []; return next; }
+    // On to the next region: a fresh map, the party and everything carried, and a breather.
+    next.region = (next.region ?? 0) + 1;
+    next.map = generateMap(regionSeed(next.seed, next.region));
+    next.at = null; next.path = [];
+    next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * REGION_REST));
+    for (const m of fielded(next)) m.hp = Math.min(memberMaxHp(next, m), m.hp + Math.round(memberMaxHp(next, m) * REGION_REST));
+    for (const r of activeRivals(next.rivals)) placeRival(next.map, null, r.id, `${next.seed}:region:${next.region}:${r.id}`);
+  }
   next.offers.push({ kind: "reward", options: rewardOptions(next, node) });
   return next;
 }
@@ -225,11 +254,11 @@ function rewardOptions(run: RunState, node: RunNode): RewardOption[] {
   let rng = seedFrom(`${run.seed}:reward:${node.id}`);
   const roll = () => { let v: number; [v, rng] = rngNext(rng); return v; };
   const tough = node.kind !== "battle";
-  const rarity: Rarity = roll() < (tough ? 0.25 : 0.05) + node.layer * 0.04 ? "epic" : roll() < (tough ? 0.6 : 0.3) + node.layer * 0.05 ? "rare" : "common";
+  const rarity: Rarity = roll() < (tough ? 0.25 : 0.05) + Math.min(depthOf(run, node), 10) * 0.04 ? "epic" : roll() < (tough ? 0.6 : 0.3) + Math.min(depthOf(run, node), 10) * 0.05 ? "rare" : "common";
   const options: RewardOption[] = [];
   const pool = unowned(run, rarity).length ? unowned(run, rarity) : unowned(run, "common");
   if (pool.length) options.push({ t: "item", id: pool[Math.floor(roll() * pool.length)]! });
-  options.push({ t: "coins", n: Math.round(REWARD.purse * (1 + REWARD.perLayer * node.layer)) });
+  options.push({ t: "coins", n: Math.round(REWARD.purse * (1 + REWARD.perLayer * depthOf(run, node))) });
   options.push(roll() < 0.25 ? { t: "shards", n: 1 } : { t: "heal", n: Math.round(heroMaxHp(run) * REWARD.patchUp) });
   return options;
 }

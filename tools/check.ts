@@ -4,10 +4,10 @@ import { existsSync } from "node:fs";
 import { ELEMENTS, ELEMENT_IDS, BEATS } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
-import { TERRAIN, tileAt } from "../src/engine/grid";
+import { standable, TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
-import { ARENAS } from "../src/data/region";
+import { REGIONS } from "../src/data/region";
 import { ITEMS, PERKS } from "../src/data/gear";
 import { COMPANIONS, TALKS } from "../src/data/companions";
 import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
@@ -53,7 +53,7 @@ for (const m of [MEADOW]) {
     if (ids.has(u.id)) fail(`unit id ${u.id} is used twice`);
     ids.add(u.id);
     const tile = tileAt(m, u.pos);
-    if (!tile || !TERRAIN[tile.terrain].walkable) fail(`unit ${u.id} starts on a tile it cannot stand on in ${m.id}`);
+    if (!standable(tile)) fail(`unit ${u.id} starts on a tile it cannot stand on in ${m.id}`);
     if (!ELEMENTS[u.element]) fail(`unit ${u.id} has unknown element ${u.element}`);
     if (!existsSync(`public/art/creatures/${u.look}.png`)) fail(`unit ${u.id}: missing art public/art/creatures/${u.look}.png`);
   }
@@ -87,15 +87,22 @@ for (const [id, talk] of Object.entries(TALKS)) {
   talk.choices.forEach((c, i) => { lineOk(`talk ${id} choice ${i}`, c.text); lineOk(`talk ${id} reply ${i}`, c.reply); });
 }
 
-// Region arenas: the party and up to four foes start on tiles they can stand on, all different.
-for (const a of ARENAS) {
+// Regions: a name in both languages, species, a boss species that exists, and arenas where the party and up to
+// four foes start on tiles they can stand on, all different.
+for (const r of REGIONS) {
+  lineOk(`region ${r.id} name`, r.name);
+  if (!r.species.length) fail(`region ${r.id}: no species`);
+  if (!r.species[r.boss.species]) fail(`region ${r.id}: boss species ${r.boss.species} does not exist`);
+  if (!r.arenas.length) fail(`region ${r.id}: no arenas`);
+}
+for (const a of REGIONS.flatMap((r) => r.arenas)) {
   if (a.map.tiles.length !== a.map.w * a.map.h) fail(`map ${a.map.id}: tile count does not match its size`);
   const spots = [a.hero, ...a.allies, ...a.foes];
   if (a.allies.length < 3) fail(`arena ${a.map.id}: needs 3 ally spots (a field of 4)`);
   if (a.foes.length < 4) fail(`arena ${a.map.id}: needs 4 foe spots (elites field 4)`);
   for (const p of spots) {
     const tile = tileAt(a.map, p);
-    if (!tile || !TERRAIN[tile.terrain].walkable) fail(`arena ${a.map.id}: start ${p.x},${p.y} is not walkable`);
+    if (!standable(tile)) fail(`arena ${a.map.id}: start ${p.x},${p.y} is not walkable`);
   }
   if (new Set(spots.map((p) => `${p.x},${p.y}`)).size !== spots.length) fail(`arena ${a.map.id}: two starts share a tile`);
 }

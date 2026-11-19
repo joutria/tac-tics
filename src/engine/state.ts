@@ -9,10 +9,12 @@
    character. */
 import { ABILITIES } from "../data/abilities";
 import type { Element } from "../data/elements";
-import { abilityAvailable, castProblem, resolveCast, type Hit } from "./combat";
-import { GridMap, NEIGHBOURS, Pos, samePos, tileAt, TERRAIN } from "./grid";
+import { abilityAvailable, castProblem, hurt, resolveCast, type Hit } from "./combat";
+import { absorb, removeStatus, statusOf, tickDown, POISON_HEAL_FACTOR, type Status, type StatusId } from "./status";
+import { GridMap, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
 import { routeTo } from "./movement";
 import { rngNext, seedFrom } from "./rng";
+import { fireUnder, updateTiles, type TerrainFx } from "./terrain";
 import { escapeStateFor, FLEE_LOCK, isBorder, turnMp, type EscapeState } from "./escape";
 
 export type Team = "heroes" | "foes";
@@ -81,6 +83,9 @@ export interface Unit extends UnitSpec {
   waited: boolean;
   spentAp: boolean;
   moved: boolean;
+  statuses: Status[];
+  /** Just lost a turn to a stun: cannot be stunned again until its next turn ends. */
+  stunGuard?: boolean;
 }
 
 export interface BattleSetup {
@@ -115,13 +120,18 @@ export type Command =
 
 export type BattleEvent =
   | { e: "moved"; unit: string; path: Pos[] }
-  | { e: "cast"; unit: string; ability: string; target: Pos; hits: Hit[] }
+  | { e: "cast"; unit: string; ability: string; target: Pos; hits: Hit[]; fx: TerrainFx[] }
+  /** Walked into fire, or started a turn in it. */
+  | { e: "caughtFire"; unit: string }
   | { e: "waited"; unit: string }
   | { e: "turnStarted"; unit: string; round: number }
   | { e: "died"; unit: string }
   | { e: "escapeState"; unit: string; state: EscapeState }
   | { e: "escaped"; unit: string }
-  | { e: "refused"; unit: string; target: Pos };
+  | { e: "refused"; unit: string; target: Pos }
+  /** A status acting at the start of a turn (Burn, Poison, Regen). */
+  | { e: "tick"; unit: string; status: StatusId; damage: number; heal: number; downed: boolean; died: boolean }
+  | { e: "stunned"; unit: string };
 
 export type Result =
   | { ok: true; state: BattleState; events: BattleEvent[] }
@@ -164,7 +174,7 @@ export function createBattle(setup: BattleSetup): BattleState {
     ids.add(u.id);
     for (const a of u.abilities) if (!ABILITIES[a]) throw new Error(`unit ${u.id} has unknown ability ${a}`);
     const tile = tileAt(setup.map, u.pos);
-    if (!tile || !TERRAIN[tile.terrain].walkable) throw new Error(`unit ${u.id} starts on a tile it cannot stand on`);
+    if (!standable(tile)) throw new Error(`unit ${u.id} starts on a tile it cannot stand on`);
   }
   let rng = seedFrom(setup.seed);
   const rolls = new Map<string, number>();
@@ -173,7 +183,7 @@ export function createBattle(setup: BattleSetup): BattleState {
   const order = [...setup.units].sort((a, b) => b.speed - a.speed || rolls.get(b.id)! - rolls.get(a.id)!);
   const units: Unit[] = order.map((u, i) => ({
     ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
-    life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, downs: 0, escape: "none", cooldowns: {}, usedThisTurn: {}, rooted: false,
+    life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, downs: 0, escape: "none", cooldowns: {}, usedThisTurn: {}, rooted: false, statuses: [],
     ct: Math.round(delayFor(u.speed) / 2), seq: i, waited: false, spentAp: false, moved: false,
   }));
   const s: BattleState = {
@@ -209,6 +219,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
     if (!u) return;
     s.clock = u.ct;
     s.active = u.id;
+    updateTiles(s);
     if (u.life === "downed") {
       u.downedTurns -= 1;
       if (u.downedTurns <= 0) { u.life = "dead"; events.push({ e: "died", unit: u.id }); s.winner = winnerOf(s); continue; }
@@ -216,8 +227,16 @@ function advance(s: BattleState, events: BattleEvent[]) {
       continue;
     }
     if (!u.waited) {
+      if (statusOf(u, "stun")) {
+        removeStatus(u, "stun"); u.stunGuard = true;
+        events.push({ e: "stunned", unit: u.id });
+        u.ct += delayFor(u.speed); u.seq = ++s.seqCounter;
+        continue;
+      }
+      if (fireUnder(s, u)) events.push({ e: "caughtFire", unit: u.id });
+      if (startOfTurnTicks(s, u, events)) { s.winner = winnerOf(s); u.ct += delayFor(u.speed); u.seq = ++s.seqCounter; continue; }
       u.ap = u.maxAp;
-      u.mp = turnMp(u);
+      u.mp = Math.max(0, turnMp(u) - (statusOf(u, "slow")?.power ?? 0));
       u.rooted = false;
       u.usedThisTurn = {};
       u.spentAp = false;
@@ -227,6 +246,25 @@ function advance(s: BattleState, events: BattleEvent[]) {
     events.push({ e: "turnStarted", unit: u.id, round: roundOf(s) });
     return;
   }
+}
+
+/** Regen, then Burn and Poison, at the start of a unit's turn. True when they knock it out (its turn is lost). */
+function startOfTurnTicks(s: BattleState, u: Unit, events: BattleEvent[]): boolean {
+  for (const id of ["regen", "burn", "poison"] as const) {
+    const st = statusOf(u, id);
+    if (!st || u.life !== "up") continue;
+    const ev = { e: "tick" as const, unit: u.id, status: id, damage: 0, heal: 0, downed: false, died: false };
+    if (id === "regen") {
+      const amount = statusOf(u, "poison") ? Math.floor(st.power * POISON_HEAL_FACTOR) : st.power;
+      ev.heal = Math.min(amount, u.maxHp - u.hp); u.hp += ev.heal;
+    } else {
+      ev.damage = absorb(u, st.power);
+      hurt(u, ev.damage, ev);
+    }
+    events.push(ev);
+    if (ev.died) events.push({ e: "died", unit: u.id });
+  }
+  return u.life !== "up";
 }
 
 function facingOf(from: Pos, to: Pos): Facing {
@@ -252,6 +290,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       actor.mp -= route.cost;
       actor.moved = true;
       events.push({ e: "moved", unit: actor.id, path: route.path });
+      if (fireUnder(s, actor)) events.push({ e: "caughtFire", unit: actor.id });
       break;
     }
     case "cast": {
@@ -267,7 +306,8 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
         return { ok: true, state: r.state, events: [{ e: "refused", unit: actor.id, target: cmd.target }, ...r.events] };
       }
       if (!samePos(cmd.target, actor.pos)) actor.facing = facingOf(actor.pos, cmd.target);
-      const hits = resolveCast(s, actor, ab, cmd.target);
+      const fx: TerrainFx[] = [];
+      const hits = resolveCast(s, actor, ab, cmd.target, fx);
       actor.ap -= ab.ap;
       actor.spentAp = true;
       actor.usedThisTurn[ab.id] = (actor.usedThisTurn[ab.id] ?? 0) + 1;
@@ -277,7 +317,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
         if (dist <= 1) s.habits.melee++; else s.habits.ranged++;
         s.habits.elements[ab.element] = (s.habits.elements[ab.element] ?? 0) + 1;
       }
-      events.push({ e: "cast", unit: actor.id, ability: ab.id, target: cmd.target, hits });
+      events.push({ e: "cast", unit: actor.id, ability: ab.id, target: cmd.target, hits, fx });
       for (const h of hits) if (h.died) events.push({ e: "died", unit: h.unit });
       s.winner = winnerOf(s);
       break;
@@ -307,6 +347,8 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       actor.ct += actor.spentAp ? delay : Math.round(delay * MOVE_ONLY_FACTOR);
       actor.seq = ++s.seqCounter;
       actor.waited = false;
+      actor.stunGuard = false;
+      tickDown(actor);
       for (const k of Object.keys(actor.cooldowns)) {
         actor.cooldowns[k] = Math.max(0, actor.cooldowns[k]! - 1);
         if (!actor.cooldowns[k]) delete actor.cooldowns[k];

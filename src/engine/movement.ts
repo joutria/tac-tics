@@ -2,7 +2,7 @@
    Each step to a neighbouring tile costs 1 MP. A step may climb at most `jump` levels and drop at most
    `jump + 1`. Other units block the tile. Lock: a step that leaves a tile next to standing foes costs 1 extra MP
    for each of those foes whose Agility is at least the walker's (a slippery unit escapes, a slow one is pinned). */
-import { GridMap, NEIGHBOURS, Pos, TERRAIN, tileAt } from "./grid";
+import { GridMap, NEIGHBOURS, Pos, standable, tileAt } from "./grid";
 
 export interface MoveRules {
   mp: number;
@@ -19,7 +19,7 @@ const key = (p: Pos) => `${p.x},${p.y}`;
 
 export function canStep(m: GridMap, from: Pos, to: Pos, jump: number): boolean {
   const a = tileAt(m, from), b = tileAt(m, to);
-  if (!a || !b || !TERRAIN[b.terrain].walkable) return false;
+  if (!a || !b || !standable(b)) return false;
   const rise = b.h - a.h;
   return rise <= jump && -rise <= jump + 1;
 }

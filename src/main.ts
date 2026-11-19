@@ -8,12 +8,13 @@ import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
-import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
+import { manhattan, Pos, sightBlock, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
+import { STATUS } from "./engine/status";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { buy, choose, enterNode, finishBattle, leaveShop, newRun, rulesOf, RUN_VERSION, shopHeal, wear, type RunState } from "./run/run";
+import { buy, choose, enterNode, finishBattle, leaveShop, newRun, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
 import { DIFFICULTY, type Difficulty } from "./data/region";
 import { renderRunMap } from "./ui/runmap";
 import { BattleSave, replay } from "./engine/save";
@@ -177,7 +178,9 @@ function startBattle(announce: boolean) {
 function afterBattleButton() {
   if (journey.over) { startRun(); return; }
   if (!journey.battle || !state.winner) return;
+  const region = journey.region;
   journey = finishBattle(journey, state);
+  if (journey.region !== region) { toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
   const sp = journey.spoils;
   if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : ""), 2600);
   showMap();
@@ -187,7 +190,7 @@ function loadOrNew() {
   const text = safeGet(RUN_KEY);
   if (text) {
     try {
-      const saved = JSON.parse(text) as RunState;
+      const saved = upgradeRun(JSON.parse(text) as RunState);
       if (saved.version !== RUN_VERSION) throw new Error(`unknown run version ${saved.version}`);
       journey = saved;
       if (journey.battle) { startBattle(false); toast(t(lang, "resume")); } else showMap();
@@ -261,18 +264,45 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       toast(t(lang, "escapedToast", { name: u.name }));
       continue;
     }
+    if (ev.e === "tick") {
+      const u = unitById(state, ev.unit);
+      const info = STATUS[ev.status];
+      if (ev.damage) floaters.push({ pos: { ...u.pos }, text: `${info.icon} -${ev.damage}`, color: info.colour, born: now });
+      if (ev.heal) floaters.push({ pos: { ...u.pos }, text: `${info.icon} +${ev.heal}`, color: info.colour, born: now });
+      if (ev.downed || ev.died) floaters.push({ pos: { ...u.pos }, text: t(lang, ev.died ? "dead" : "downed"), color: "#ffffff", born: now + 300 });
+      continue;
+    }
+    if (ev.e === "caughtFire") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: `🔥 ${t(lang, "st.burn")}`, color: STATUS.burn.colour, born: now });
+      continue;
+    }
+    if (ev.e === "stunned") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: `${STATUS.stun.icon} ${t(lang, "st.stun")}`, color: STATUS.stun.colour, born: now });
+      toast(t(lang, "stunnedToast", { name: u.name }));
+      continue;
+    }
     if (ev.e !== "cast") continue;
+    for (const f of ev.fx) {
+      const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡" }[f.fx];
+      if (word) floaters.push({ pos: { ...f.at }, text: word, color: f.fx === "explode" ? "#ffb347" : "#e8f4ff", born: now + (f.fx === "explode" ? 0 : 100) });
+    }
     for (const h of ev.hits) {
       const u = unitById(state, h.unit);
       // A pushed unit gets its numbers where it lands, once it has slid there.
       const start = was.get(h.unit);
       const wait = h.pushedTo && start ? 120 + PUSH_STEP_MS * Math.max(1, manhattan(start, h.pushedTo)) : 0;
       const add = (text: string, color: string, delay = 0) => floaters.push({ pos: { ...u.pos }, text, color, born: now + wait + delay });
-      if (h.damage) add(`-${h.damage}${h.crit ? "!" : ""}`, h.crit ? "#ffd86b" : "#ff8a7a");
+      const tag = h.source === "blast" ? "💥 " : h.source === "chain" ? "⚡ " : "";
+      if (h.damage) add(`${tag}-${h.damage}${h.crit ? "!" : ""}`, h.crit ? "#ffd86b" : "#ff8a7a", h.source ? 200 : 0);
       if (h.heal) add(`+${h.heal}`, "#7ed957");
       if (h.revived) add(t(lang, "revived"), "#7ed957");
       if (h.maxHpLost) add(t(lang, "maxHpDown", { n: h.maxHpLost }), "#c9a0ff", 350);
       if (h.rooted) add(t(lang, "rooted"), "#b9e08a", 250);
+      if (h.shielded) add(`${STATUS.shield.icon} ${h.shielded}`, STATUS.shield.colour, 150);
+      for (const id of h.statuses ?? []) add(`${STATUS[id].icon} ${t(lang, `st.${id}` as TextKey)}`, STATUS[id].colour, 450);
+      for (const id of h.cleansed ?? []) add(`${STATUS[id].icon} ✕`, "#8fd0ff", 450);
       if (h.downed) add(t(lang, "downed"), "#ffffff", 300);
       if (h.died) add(t(lang, "dead"), "#ffffff", 300);
     }
@@ -374,7 +404,7 @@ function marks(): Map<string, Mark> {
     const p = { x, y }, d = manhattan(u.pos, p);
     if (d < ab.range[0] || d > maxRange(state, ab, u.pos, p)) continue;
     const why = castProblem(state, u, selected, p);
-    out.set(`${x},${y}`, !why ? "target" : why === "no line of sight" || TERRAIN[tileAt(state.map, p)!.terrain].blocksSight ? "blocked" : "range");
+    out.set(`${x},${y}`, !why ? "target" : why === "no line of sight" || sightBlock(tileAt(state.map, p)!) > 0 ? "blocked" : "range");
   }
   const focus = pending ?? hover;
   if (focus && out.get(`${focus.x},${focus.y}`) === "target") for (const p of areaTiles(ab, focus)) out.set(`${p.x},${p.y}`, "area");
@@ -464,7 +494,9 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   const tip = $("tip");
   const u = heroTurn() ? activeUnit(state) : null;
   const target = at && unitAt(state, at);
-  if (!at || !target) { tip.style.display = "none"; return; }
+  const ground = at ? tileInfo(at) : [];
+  if (!at || (!target && !ground.length)) { tip.style.display = "none"; return; }
+  if (!target) { showTip(tip, ground.join("<br>"), at, ev); return; }
   const hover = at;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
   const rival = target.rival ? journey.rivals.find((r) => r.id === target.id && !r.settled) : undefined;
@@ -484,6 +516,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
     }
   }
+  for (const st of target.statuses) lines.push(`<span style="color:${STATUS[st.id].colour}">${STATUS[st.id].icon} ${t(lang, `st.${st.id}` as TextKey)}</span> · ${t(lang, `st.${st.id}.d` as TextKey, { n: st.power })} · ${t(lang, "turnsLeft", { n: st.turns })}`);
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
@@ -511,10 +544,29 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       const cd = target.cooldowns[id];
       const dmg = ab.damage ? ` ${ab.damage.min}–${ab.damage.max}` : "";
       const state_ = cd ? `⏳ ${t(lang, "cooldown", { n: cd })}` : t(lang, "ready");
-      lines.push(`${abilityName(lang, id)}${dmg} · ${ab.range[0]}–${ab.range[1]} · ${state_}${zone.includes(id) ? ` · <b class="down">${t(lang, "reachesYou")}</b>` : ""}`);
+      const leaves = ab.status ? ` · ${STATUS[ab.status.id].icon}` : "";
+      lines.push(`${abilityName(lang, id)}${dmg}${leaves} · ${ab.range[0]}–${ab.range[1]} · ${state_}${zone.includes(id) ? ` · <b class="down">${t(lang, "reachesYou")}</b>` : ""}`);
     }
   }
-  tip.innerHTML = lines.join("<br>");
+  showTip(tip, [...lines, ...ground].join("<br>"), at, ev);
+}
+
+/** What the ground under a tile does: objects, fire, ice. */
+function tileInfo(at: Pos): string[] {
+  const tile = tileAt(state.map, at);
+  if (!tile) return [];
+  const out: string[] = [];
+  if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
+  if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
+  if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, "fireInfo")}`);
+  if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);
+  if (tile.terrain === "bridge") out.push(t(lang, "bridgeInfo"));
+  if (tile.terrain === "water") out.push(t(lang, "waterInfo"));
+  return out;
+}
+
+function showTip(tip: HTMLElement, html: string, at: Pos, ev?: { clientX: number; clientY: number }) {
+  tip.innerHTML = html;
   tip.style.display = "block";
   const spot = ev ?? screenOf(at);
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -674,7 +726,7 @@ function frame(time: number) {
 
 async function start() {
   const base = import.meta.env.BASE_URL;
-  const tiles = ["top-grass", "top-dirt", "top-water", "top-rock", "top-tree", "side-left", "side-right", "obj-rock", "obj-tree"];
+  const tiles = ["top-grass", "top-dirt", "top-water", "top-rock", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-rock", "obj-tree"];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   for (const u of [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec)]) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);

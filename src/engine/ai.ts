@@ -6,10 +6,12 @@
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { abilityAvailable, areaTiles, damagePreview, maxRange, unitAbilities } from "./combat";
-import { manhattan, NEIGHBOURS, Pos, samePos, TERRAIN, tileAt } from "./grid";
+import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
+import { BLAST_DAMAGE, burning } from "./terrain";
 import { reachable } from "./movement";
 import { isBorder } from "./escape";
 import { hasLineOfSight } from "./sight";
+import { statusOf, STATUS, type Status } from "./status";
 import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, onMap, roundOf, unitAt, type AiKind, type Unit } from "./state";
 
 interface Weights {
@@ -96,14 +98,35 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
   if (style <= -3 && w.idealDistance > 1) ideal += 1;
   const spacing = Math.abs(nearest - ideal) * w.spacing;
   const height = (tileAt(s.map, spot)?.h ?? 0) * 3;
-  const cover = NEIGHBOURS.some((d) => { const t = tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }); return !!t && TERRAIN[t.terrain].blocksSight; }) ? 2 : 0;
-  return -threat * caution + offense - spacing + height + cover - nearest * late;
+  const cover = NEIGHBOURS.some((d) => { const t = tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }); return !!t && sightBlock(t) > 0; }) ? 2 : 0;
+  // Fire under its feet, or a barrel next to it that the players could set off.
+  const hazard = (burning(s, tileAt(s.map, spot)) ? 8 : 0)
+    + (nearBarrel(s, spot) ? BLAST_DAMAGE * 0.5 : 0);
+  return -threat * caution + offense - spacing + height + cover - nearest * late - hazard;
 }
 
 /** Value of casting `ab` on `target` from `from`: expected damage, kills, finishing downed foes, healing. */
+const nearBarrel = (s: BattleState, p: Pos) => {
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (tileAt(s.map, { x: p.x + dx, y: p.y + dy })?.prop === "barrel") return true;
+  return false;
+};
+
+/** Setting off a barrel: the blast's damage on enemies around it, minus on friends (the caster counts too). */
+function blastValue(s: BattleState, u: Unit, at: Pos, from: Pos): number {
+  let v = 0;
+  for (const o of s.units) {
+    if (o.life !== "up" || Math.max(Math.abs(o.pos.x - at.x), Math.abs(o.pos.y - at.y)) > 1) continue;
+    const here = o.id === u.id ? from : o.pos;
+    if (Math.max(Math.abs(here.x - at.x), Math.abs(here.y - at.y)) > 1) continue;
+    v += isFoe(u, o) ? Math.min(BLAST_DAMAGE, o.hp) + 3 + (BLAST_DAMAGE >= o.hp ? 25 : 0) : -(BLAST_DAMAGE * 1.5 + 5);
+  }
+  return v;
+}
+
 function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos): number {
   let v = 0;
   for (const p of areaTiles(ab, target)) {
+    if ((ab.damage || ab.element === "fire") && tileAt(s.map, p)?.prop === "barrel") v += blastValue(s, u, p, from);
     const o = unitAt(s, p);
     if (!o) continue;
     const enemy = isFoe(u, o);
@@ -118,8 +141,24 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (ab.revive && !enemy && o.life === "downed") v += 40;
     if (ab.root && enemy && o.life === "up") v += 6;
     if (ab.push && enemy && o.life === "up") v += 4;
+    if (ab.status && o.life === "up" && (o.id !== u.id || !ab.damage)) v += statusValue(ab.status, o, enemy);
   }
   return v;
+}
+
+/** What leaving a status on `o` is worth, in points of damage. Bad ones help on enemies and hurt on friends. */
+function statusValue(st: Status, o: Unit, enemy: boolean): number {
+  const good = STATUS[st.id].good;
+  if (good === enemy) return enemy ? -st.power : -6; // a buff on a foe, or a debuff on a friend
+  if (statusOf(o, st.id)) return 1; // already has it: refreshing is worth little
+  switch (st.id) {
+    case "burn": case "poison": return Math.min(st.power * st.turns, o.hp) * 0.8;
+    case "stun": return 18;
+    case "slow": return st.power * 3;
+    case "weaken": return 8;
+    case "shield": return o.hp < o.maxHp ? st.power * 0.6 : st.power * 0.3;
+    case "regen": return Math.min(st.power * st.turns, o.maxHp - o.hp + st.power) * 0.6;
+  }
 }
 
 const isHealer = (o: Unit) => o.abilities.some((id) => !!ABILITIES[id]?.heal);
@@ -132,6 +171,7 @@ function candidateTargets(s: BattleState, ab: Ability): Pos[] {
     spots.set(key(o.pos), o.pos);
     if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }
+  if (ab.damage) s.map.tiles.forEach((t, i) => { if (t.prop === "barrel") { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   return [...spots.values()];
 }
 

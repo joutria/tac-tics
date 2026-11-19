@@ -7,7 +7,7 @@ import { abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
 import { APPROVAL, COMPANIONS, TALKS } from "../data/companions";
-import { fielded, heroMaxHp, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
+import { fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
 import type { Member } from "../run/party";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", boss: "♛" };
@@ -132,7 +132,7 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
 
   const lv = run.hero.level;
   root.querySelector("#runHead")!.innerHTML =
-    `<b>${t(lang, "regionTown")}</b> · ${t(lang, `diff.${run.difficulty ?? "normal"}`)} · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
+    `<b>${html(regionOf(run).name[lang])}</b> · ${t(lang, `diff.${run.difficulty ?? "normal"}`)} · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
     + `${t(lang, "level", { n: lv })} · ${t(lang, "xpBar", { a: run.hero.xp, b: xpToNext(lv) })} · ${t(lang, "hp")} ${run.heroHp}/${heroMaxHp(run)} · 🪙 ${run.coins} · ◆ ${run.shards}`;
   const waiting = nextNodes(run).flatMap((n) => run.rivals.filter((r) => r.id === n.rival && !r.settled)).map((r) => rivalName(r, lang));
   const party = fielded(run).map((m) => `${COMPANIONS[m.id]!.spec.name} ${m.hp}/${memberMaxHp(run, m)} (${moodOf(m, lang)})`);
@@ -141,7 +141,7 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
   root.querySelector("#runHint")!.textContent = run.over === "won" ? t(lang, "runWon") : run.over === "lost" ? t(lang, "runLost")
     : [said, waiting.length ? t(lang, "rivalsAhead", { names: waiting.join(", ") }) : "", t(lang, "runHint")].filter(Boolean).join("\n");
 
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": t(lang, "regionTown") });
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": regionOf(run).name[lang] });
   // Links first, so nodes sit on top. Links on the path taken are bright.
   for (const n of run.map.nodes) for (const id of n.next) {
     const m = run.map.nodes[id]!, a = pos(n), b = pos(m);

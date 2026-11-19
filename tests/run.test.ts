@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HERO } from "../src/data/region";
+import { HERO, REGIONS } from "../src/data/region";
 import { applyCommand, createBattle, type BattleState, type Command, type UnitSpec } from "../src/engine/state";
 import { parseMap } from "../src/engine/grid";
 import { APPROVAL, COMPANIONS } from "../src/data/companions";
@@ -7,7 +7,7 @@ import { memberSpec, newMember, react, readDeeds } from "../src/run/party";
 import { aheadOf, generateMap, MAP_LAYERS } from "../src/run/map";
 import { ITEMS, PERKS, SHOP, xpToNext } from "../src/data/gear";
 import { gainXp, heroSpec, newProgress } from "../src/run/hero";
-import { battleSetup, buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
+import { battleSetup, buy, RUN_VERSION, upgradeRun, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, REST_HEAL, rulesOf, shopHeal, wear, type RunState } from "../src/run/run";
 
 /** Answers every offer with the first option and leaves shops. */
 function answer(run: RunState): RunState {
@@ -244,5 +244,51 @@ describe("difficulty", () => {
     expect(newRun("x").difficulty).toBe("normal");
     expect(rulesOf(newRun("x", "hard")).rewinds).toBe(0);
     expect(rulesOf(newRun("x", "easy")).rewinds).toBe(3);
+  });
+});
+
+describe("regions", () => {
+  it("moves on to the next region after a boss, with a fresh map and stronger, renamed foes", () => {
+    const extra = {
+      id: "test", name: { es: "Prueba", en: "Test" }, arenas: REGIONS[0]!.arenas, species: REGIONS[0]!.species, boss: REGIONS[0]!.boss,
+      variant: { element: "ice" as const, name: { es: "{name} Helado", en: "Frozen {name}" }, res: { ice: 20 }, stat: 1 },
+    };
+    REGIONS.push(extra);
+    try {
+      let run = newRun("regions");
+      let firstSetup: ReturnType<typeof battleSetup> | undefined;
+      while (!run.over && run.region === 0) {
+        run = answer(run);
+        const pick = nextNodes(run)[0]!;
+        run = enterNode(run, pick.id, "en");
+        if (run.battle) { firstSetup ??= run.battle.setup; run = finishBattle(run, end(run, "win")); }
+      }
+      expect(run.over).toBeNull();
+      expect(run.region).toBe(1);
+      expect(run.at).toBeNull();
+      expect(run.path).toEqual([]);
+      run = answer(run);
+      const node = nextNodes(run)[0]!;
+      const setup = battleSetup(run, node.id, "en");
+      const foe = setup.units.find((u) => u.team === "foes" && !u.rival)!;
+      expect(foe.name.startsWith("Frozen ")).toBe(true);
+      expect(foe.element).toBe("ice");
+      const base = REGIONS[0]!.species.find((sp) => foe.name.endsWith(sp.name))!;
+      expect(foe.hp).toBeGreaterThan(base.hp);
+      // Finish the second region: now the run is won.
+      while (!run.over) {
+        run = answer(run);
+        run = enterNode(run, nextNodes(run)[0]!.id, "en");
+        if (run.battle) run = finishBattle(run, end(run, "win"));
+      }
+      expect(run.over).toBe("won");
+      expect(firstSetup).toBeDefined();
+    } finally { REGIONS.pop(); }
+  });
+  it("upgrades a save from before regions", () => {
+    const { region: _r, ...old } = { ...newRun("old"), version: 4 };
+    const up = upgradeRun(old as RunState);
+    expect(up.version).toBe(RUN_VERSION);
+    expect(up.region).toBe(0);
   });
 });

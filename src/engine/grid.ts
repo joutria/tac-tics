@@ -1,7 +1,7 @@
 /* The battle map as the engine sees it: a square grid where every tile has a terrain and a height.
    The isometric look is only how the renderer draws it; nothing in the engine knows about diamonds. */
 
-export type Terrain = "grass" | "dirt" | "water" | "rock" | "tree";
+export type Terrain = "grass" | "dirt" | "water" | "rock" | "tree" | "ice" | "bridge";
 
 export interface TerrainInfo {
   /** Units can stand here. */
@@ -18,12 +18,34 @@ export const TERRAIN: Record<Terrain, TerrainInfo> = {
   water: { walkable: false, blocksSight: false, sightHeight: 0 },
   rock: { walkable: false, blocksSight: true, sightHeight: 1 },
   tree: { walkable: false, blocksSight: true, sightHeight: 2 },
+  /** Frozen water: walkable until it thaws (src/engine/terrain.ts). */
+  ice: { walkable: true, blocksSight: false, sightHeight: 0 },
+  /** Wooden bridge over water: walkable, burns away. */
+  bridge: { walkable: true, blocksSight: false, sightHeight: 0 },
 };
+
+/** Things standing on a tile that can be hit, pushed or set off (src/engine/terrain.ts). */
+export type Prop = "barrel" | "crate";
+export const PROP_HP: Record<Prop, number> = { barrel: 1, crate: 12 };
 
 export interface Tile {
   terrain: Terrain;
   /** Height in levels, 0 to 3. */
   h: number;
+  /** An object on the tile; it blocks movement and some sight. */
+  prop?: Prop;
+  propHp?: number;
+  /** Timeline time when fire on this tile goes out, or when ice made by an ability thaws. */
+  fireUntil?: number;
+  thawAt?: number;
+}
+
+/** Units can stand on the tile now (terrain and no object in the way). */
+export const standable = (t: Tile | undefined): t is Tile => !!t && TERRAIN[t.terrain].walkable && !t.prop;
+/** Levels above the ground that block sight on this tile. */
+export function sightBlock(t: Tile): number {
+  const info = TERRAIN[t.terrain];
+  return Math.max(info.blocksSight ? info.sightHeight : 0, t.prop ? 1 : 0);
 }
 
 export interface GridMap {
@@ -49,16 +71,19 @@ export const manhattan = (a: Pos, b: Pos) => Math.abs(a.x - b.x) + Math.abs(a.y 
 
 /**
  * Builds a map from text rows. Each tile is two characters: terrain letter + height digit.
- * g grass, d dirt, w water, r rock, t tree. Example row: "g0 g0 d1 r1".
+ * g grass, d dirt, w water, r rock, t tree, i ice, b bridge. An optional third character puts an object on the
+ * tile: B barrel, C crate. Example row: "g0 g0 d1 r1 g0B".
  */
 export function parseMap(id: string, rows: string[]): GridMap {
-  const letters: Record<string, Terrain> = { g: "grass", d: "dirt", w: "water", r: "rock", t: "tree" };
+  const letters: Record<string, Terrain> = { g: "grass", d: "dirt", w: "water", r: "rock", t: "tree", i: "ice", b: "bridge" };
+  const props: Record<string, Prop> = { B: "barrel", C: "crate" };
   const parsed = rows.map((row, y) =>
     row.trim().split(/\s+/).map((cell, x) => {
       const terrain = letters[cell[0] ?? ""];
-      const h = Number(cell.slice(1));
-      if (!terrain || !Number.isInteger(h) || h < 0 || h > 3) throw new Error(`map ${id}: bad tile "${cell}" at ${x},${y}`);
-      return { terrain, h };
+      const h = Number(cell.slice(1, 2));
+      const prop = cell[2] ? props[cell[2]] : undefined;
+      if (!terrain || !Number.isInteger(h) || h < 0 || h > 3 || cell.length > 3 || (cell[2] && !prop)) throw new Error(`map ${id}: bad tile "${cell}" at ${x},${y}`);
+      return prop ? { terrain, h, prop, propHp: PROP_HP[prop] } : { terrain, h };
     }),
   );
   const w = parsed[0]?.length ?? 0;
