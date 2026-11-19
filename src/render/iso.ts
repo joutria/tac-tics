@@ -93,12 +93,48 @@ export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: numbe
 export type Mark = "move" | "range" | "target" | "area" | "chosen";
 export interface Floater { pos: Pos; text: string; color: string; born: number }
 
+/** A unit on its way somewhere. The rules already put it at the end; this only draws the trip.
+    walk = step by step with a hop on height changes; slide = pushed in a straight line; blink = vanish and reappear. */
+export interface Motion { points: Pos[]; born: number; stepMs: number; kind: "walk" | "slide" | "blink" }
+
+export const motionMs = (mo: Motion) => (mo.points.length - 1) * mo.stepMs;
+
+const facingOf = (a: Pos, b: Pos): Facing => {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? "E" : "W") : dy >= 0 ? "S" : "N";
+};
+
+/** Where to draw a unit right now: the screen point, the tile it is painted with (so it sorts in front of the
+    tiles it passes) and the way it faces. */
+function placeOf(m: GridMap, u: Unit, mo: Motion | undefined, time: number, rot: number) {
+  const still = { c: tileCenter(m, u.pos, rot), slot: u.pos, facing: u.facing, alpha: 1 };
+  if (!mo || mo.points.length < 2) return still;
+  const e = (time - mo.born) / mo.stepMs, last = mo.points.length - 1;
+  if (e >= last) return still;
+  if (e < 0) return { ...still, c: tileCenter(m, mo.points[0]!, rot), slot: mo.points[0]! };
+  if (mo.kind === "blink") {
+    const at = e < 0.5 ? mo.points[0]! : mo.points[last]!;
+    return { c: tileCenter(m, at, rot), slot: at, facing: u.facing, alpha: Math.abs(1 - 2 * e) };
+  }
+  const i = Math.floor(e), f = e - i, a = mo.points[i]!, b = mo.points[i + 1]!;
+  const ca = tileCenter(m, a, rot), cb = tileCenter(m, b, rot);
+  const dh = Math.abs((tileAt(m, a)?.h ?? 0) - (tileAt(m, b)?.h ?? 0));
+  const lift = mo.kind === "walk" ? Math.sin(Math.PI * f) * (dh ? 10 + 6 * dh : 3) : 0;
+  const ra = rotate(m, a, rot), rb = rotate(m, b, rot);
+  const slot = rb.x + rb.y >= ra.x + ra.y ? b : a;
+  return {
+    c: { x: ca.x + (cb.x - ca.x) * f, y: ca.y + (cb.y - ca.y) * f - lift },
+    slot, facing: mo.kind === "walk" ? facingOf(a, b) : u.facing, alpha: 1,
+  };
+}
+
 export interface DrawOptions {
   marks: Map<string, Mark>;
   hover: Pos | null;
   active: string | null;
   time: number;
   floaters: Floater[];
+  motions?: Map<string, Motion>;
 }
 
 const FACING_FRAME = { S: { col: 0, flip: false }, N: { col: 2, flip: false }, E: { col: 4, flip: false }, W: { col: 4, flip: true } } as const;
@@ -116,6 +152,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.setTransform(view.scale, 0, 0, view.scale, view.ox, view.oy);
+  const places = s.units.filter((v) => v.life !== "dead").map((v) => ({ u: v, ...placeOf(m, v, opt.motions?.get(v.id), opt.time, view.rot) }));
   // Painter's order: back diagonals first; on each tile its ground, then what stands on it.
   for (let k = 0; k <= d.w + d.h - 2; k++) {
     for (let x = 0; x <= k; x++) {
@@ -137,14 +174,18 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         // See-through when someone stands right behind it, so trees never hide a unit.
         const behind = [[-1, 0], [0, -1], [-1, -1]].some(([dx, dy]) => {
           const q = unrotate(m, { x: x + dx!, y: k - x + dy! }, view.rot);
-          return s.units.some((v) => v.life !== "dead" && v.pos.x === q.x && v.pos.y === q.y);
+          return places.some((v) => v.slot.x === q.x && v.slot.y === q.y);
         });
         ctx.globalAlpha = behind ? 0.45 : 1;
         ctx.drawImage(img["obj-tree"]!, c.x - 32, c.y - 56, 64, 64);
         ctx.globalAlpha = 1;
       }
-      const u = s.units.find((v) => v.life !== "dead" && v.pos.x === p.x && v.pos.y === p.y);
-      if (u) drawUnit(ctx, u, img, c, u.id === opt.active, opt.time, view.rot);
+      for (const pl of places) {
+        if (pl.slot.x !== p.x || pl.slot.y !== p.y) continue;
+        ctx.globalAlpha = pl.alpha;
+        drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot);
+        ctx.globalAlpha = 1;
+      }
     }
   }
   for (const f of opt.floaters) {
@@ -171,12 +212,13 @@ function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, fill: stri
 function drawUnit(ctx: CanvasRenderingContext2D, u: Unit, img: Images, c: { x: number; y: number }, active: boolean, time: number, rot: number) {
   const sheet = img[`unit-${u.look}`];
   const team = u.team === "heroes" ? "#ffe680" : "#ff8a7a";
+  const base = ctx.globalAlpha; // lets a blinking unit fade as a whole
   ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
   ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 16, 7, 0, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = team; ctx.lineWidth = active ? 2.5 : 1;
-  ctx.globalAlpha = active ? 1 : 0.6;
+  ctx.globalAlpha = base * (active ? 1 : 0.6);
   ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 20, 9, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = base;
   if (!sheet) return;
   const downed = u.life === "downed";
   const f = FACING_FRAME[rotFacing(u.facing, rot)];
@@ -185,7 +227,7 @@ function drawUnit(ctx: CanvasRenderingContext2D, u: Unit, img: Images, c: { x: n
   ctx.save();
   ctx.translate(c.x, c.y + 6);
   if (f.flip && !downed) ctx.scale(-1, 1);
-  if (downed) ctx.globalAlpha = 0.6;
+  if (downed) ctx.globalAlpha = base * 0.6;
   ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32, -64, 64, 64);
   ctx.restore();
   // Health bar over the head; downed units show the turns they have left.

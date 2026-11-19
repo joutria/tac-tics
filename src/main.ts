@@ -13,11 +13,12 @@ import {
   activeUnit, applyCommand, BattleEvent, BattleSetup, BattleState, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t } from "./i18n/text";
-import { drawBattle, Floater, Images, loadImages, mapPixelSize, Mark, pickAt, tileCenter, TW, View } from "./render/iso";
+import { drawBattle, Floater, Images, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, tileCenter, TW, View } from "./render/iso";
 
 const SAVE_KEY = "tac-tics.save.v2";
 const LANG_KEY = "tac-tics.lang";
 const FOE_STEP_MS = 380;
+const WALK_STEP_MS = 190, PUSH_STEP_MS = 90, BLINK_MS = 320;
 const MIN_TILE_PX = 58; // a tile narrower than this is hard to hit with a finger
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -37,6 +38,9 @@ let pending: Pos | null = null;
 let busy = false;
 let turnStart = 0;
 const floaters: Floater[] = [];
+const motions = new Map<string, Motion>();
+let animUntil = 0; // input waits until units have finished moving
+const animating = () => performance.now() < animUntil;
 
 function safeGet(k: string) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode: play without saving */ } }
@@ -47,7 +51,7 @@ function newBattle() {
   const setup: BattleSetup = { seed: Date.now(), map: MEADOW, units: TEST_UNITS };
   save = { version: SAVE_VERSION, setup, commands: [] };
   state = replay(setup, []);
-  turnStart = 0; selected = null; pending = null;
+  turnStart = 0; selected = null; pending = null; motions.clear(); animUntil = 0;
   persist(); refresh(); followHero(); maybeFoeTurn();
 }
 
@@ -68,14 +72,39 @@ function persist() { safeSet(SAVE_KEY, toJSON(save)); }
 
 function run(cmd: Command): boolean {
   const before = state.active;
+  const was = new Map(state.units.map((u) => [u.id, { ...u.pos }]));
   const r = applyCommand(state, cmd);
   if (!r.ok) { toast(r.error); return false; }
   state = r.state;
+  animate(r.events, was);
   save.commands.push(cmd);
   if (state.active !== before) turnStart = save.commands.length;
   persist();
   showEvents(r.events);
   return true;
+}
+
+/** Turns the rules' events into trips for the renderer. The state already holds where everyone ends up. */
+function animate(events: BattleEvent[], was: Map<string, Pos>) {
+  const now = performance.now();
+  const add = (unit: string, mo: Motion) => { motions.set(unit, mo); animUntil = Math.max(animUntil, now + motionMs(mo)); };
+  for (const ev of events) {
+    const from = was.get(ev.unit);
+    if (!from) continue;
+    if (ev.e === "moved" && ev.path.length) add(ev.unit, { points: [from, ...ev.path], born: now, stepMs: WALK_STEP_MS, kind: "walk" });
+    if (ev.e !== "cast") continue;
+    const caster = unitById(state, ev.unit);
+    if (ABILITIES[ev.ability]?.teleport && (caster.pos.x !== from.x || caster.pos.y !== from.y)) {
+      add(ev.unit, { points: [from, { ...caster.pos }], born: now, stepMs: BLINK_MS, kind: "blink" });
+    }
+    for (const h of ev.hits) {
+      const start = was.get(h.unit);
+      if (!h.pushedTo || !start) continue;
+      const tiles = Math.max(1, manhattan(start, h.pushedTo));
+      add(h.unit, { points: [start, h.pushedTo], born: now + 120, stepMs: PUSH_STEP_MS * tiles, kind: "slide" });
+      animUntil = Math.max(animUntil, now + 120 + PUSH_STEP_MS * tiles);
+    }
+  }
 }
 
 function showEvents(events: BattleEvent[]) {
@@ -101,11 +130,12 @@ async function maybeFoeTurn() {
   busy = true; refresh();
   while (!state.winner && activeUnit(state).team === "foes") {
     for (const c of planTurn(state)) {
-      await new Promise((ok) => setTimeout(ok, FOE_STEP_MS));
+      await new Promise((ok) => setTimeout(ok, Math.max(FOE_STEP_MS, animUntil - performance.now() + 150)));
       if (!run(c)) break;
       refresh();
     }
   }
+  await new Promise((ok) => setTimeout(ok, Math.max(0, animUntil - performance.now())));
   busy = false; selected = null; pending = null; refresh(); followHero();
 }
 
@@ -117,6 +147,7 @@ function canUndo() {
 function undo() {
   if (!canUndo()) return;
   save.commands.pop();
+  motions.clear(); animUntil = 0;
   state = replay(save.setup, save.commands);
   persist(); refresh();
 }
@@ -318,7 +349,7 @@ function act(cmd: Command) {
 /** A mouse click acts at once (the hover already previewed it). A finger has no hover, so its first tap chooses
     the tile and shows what will happen; tapping it again or pressing Confirm does it. */
 function onTap(p: Pos, touch: boolean) {
-  if (!heroTurn() || busy) return;
+  if (!heroTurn() || busy || animating()) return;
   const a = actionAt(p);
   if (!a) { pending = null; refresh(); tooltip(p); return; }
   if ("why" in a) { pending = null; refresh(); if (selected || touch) toast(a.why); tooltip(p); return; }
@@ -327,7 +358,7 @@ function onTap(p: Pos, touch: boolean) {
 }
 
 function confirmPending() {
-  if (!pending || !heroTurn() || busy) return;
+  if (!pending || !heroTurn() || busy || animating()) return;
   const a = actionAt(pending);
   if (a && "cmd" in a) act(a.cmd); else { pending = null; refresh(); }
   tooltip(null);
@@ -336,7 +367,8 @@ function confirmPending() {
 function frame(time: number) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#1d1f2b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  drawBattle(ctx, state, images, view, { marks: marks(), hover, active: state.active, time, floaters });
+  const moving = time < animUntil;
+  drawBattle(ctx, state, images, view, { marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions });
   requestAnimationFrame(frame);
 }
 
