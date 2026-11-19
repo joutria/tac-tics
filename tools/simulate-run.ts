@@ -1,15 +1,17 @@
 /* Run simulator: plays whole runs of the first region with the AI on both sides, always taking the first open
-   node (or a rest when the hero is under half HP). Run with `npm run simulate:run [-- <runs>]`. */
+   node (or a rest when the hero is under half HP). Run with `npm run simulate:run [-- <runs> <easy|normal|hard>]`. */
 import { planTurn } from "../src/engine/ai";
 import { applyCommand, createBattle } from "../src/engine/state";
+import type { Difficulty } from "../src/data/region";
 import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceOf, shopHeal, type RunState } from "../src/run/run";
 
 const runs = Number(process.argv[2] ?? 100);
+const difficulty = (process.argv[3] ?? "normal") as Difficulty;
 let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0;
 const deaths = new Map<number, number>();
 const started = Date.now();
 for (let i = 1; i <= runs; i++) {
-  let run = newRun(`sim-${i}`);
+  let run = newRun(`sim-${i}`, difficulty);
   while (!run.over) {
     run = answerOffers(run);
     const open = nextNodes(run);
@@ -36,7 +38,7 @@ for (let i = 1; i <= runs; i++) {
   nodes += run.path.length;
   rivalsMade += run.rivals.length;
 }
-console.log(`${runs} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+console.log(`${runs} ${difficulty} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 console.log(`runs won ${won} (${((100 * won) / runs).toFixed(0)}%), average nodes cleared ${(nodes / runs).toFixed(1)}`);
 console.log(`runs lost by layer: ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
