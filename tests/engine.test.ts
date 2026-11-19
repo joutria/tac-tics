@@ -142,7 +142,30 @@ describe("abilities", () => {
     expect(activeUnit(s).id).toBe("h2");
     s = play(s, [{ t: "cast", unit: "h2", ability: "helpUp", target: { x: 0, y: 0 } }]);
     expect(unitById(s, "h").life).toBe("up");
-    expect(unitById(s, "h").hp).toBe(2);
+    // The revive costs a quarter of the starting 5 max HP (1), and the unit stands with a quarter of the rest.
+    expect(unitById(s, "h").maxHp).toBe(4);
+    expect(unitById(s, "h").hp).toBe(1);
+  });
+  it("allows two revives, each lowering max HP, then the third fall is for good", () => {
+    let s = createBattle({ seed: 5, map: flat(), units: [
+      unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 80, hp: 40 }),
+      unit({ id: "h2", team: "heroes", pos: { x: 1, y: 0 }, speed: 70 }),
+      unit({ id: "f", team: "foes", pos: { x: 0, y: 3 }, speed: 60, mag: 900, abilities: ["ray"] }),
+    ] });
+    const maxes: number[] = [];
+    for (let fall = 1; fall <= 3; fall++) {
+      // Run the timeline until the foe acts, then it fells the hero.
+      while (activeUnit(s).id !== "f") s = play(s, [{ t: "endTurn", unit: activeUnit(s).id }]);
+      s = play(s, [{ t: "cast", unit: "f", ability: "ray", target: { x: 0, y: 0 } }, { t: "endTurn", unit: "f" }]);
+      const h = unitById(s, "h");
+      if (fall === 3) { expect(h.life).toBe("dead"); break; }
+      expect(h.life).toBe("downed");
+      while (activeUnit(s).id !== "h2") s = play(s, [{ t: "endTurn", unit: activeUnit(s).id }]);
+      s = play(s, [{ t: "cast", unit: "h2", ability: "helpUp", target: { x: 0, y: 0 } }]);
+      maxes.push(unitById(s, "h").maxHp);
+    }
+    expect(maxes).toEqual([30, 20]);
+    expect(unitById(s, "h").revives).toBe(2);
   });
 });
 

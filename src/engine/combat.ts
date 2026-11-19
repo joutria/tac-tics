@@ -19,6 +19,10 @@ export const CRIT_CHANCE = 0.05;
 export const CRIT_MULT = 1.5;
 export const DOWNED_TURNS = 2;
 export const REVIVE_HP = 0.25;
+/** A unit can be helped up this many times per battle; the next time it falls it is out for good. */
+export const MAX_REVIVES = 2;
+/** Each Help up costs this share of the unit's starting max HP, for the rest of the battle. */
+export const REVIVE_MAX_HP_COST = 0.25;
 export const PUSH_HIT = 3;
 
 export interface Hit {
@@ -31,6 +35,8 @@ export interface Hit {
   revived: boolean;
   rooted: boolean;
   pushedTo?: Pos;
+  /** Max HP the unit lost for good by being helped up. */
+  maxHpLost?: number;
 }
 
 export const unitAbilities = (u: Unit) => [...u.abilities, "helpUp"];
@@ -121,7 +127,12 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
     if (!u) continue;
     const hit: Hit = { unit: u.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false };
     if (ab.revive && u.life === "downed") {
-      u.life = "up"; u.hp = Math.ceil(u.maxHp * REVIVE_HP); u.downedTurns = 0; hit.revived = true;
+      // Each revive leaves a scar: max HP drops by a quarter of the starting max, and the unit stands with a
+      // quarter of what is left. Two revives at most; see hurt().
+      const lost = Math.min(u.maxHp - 1, Math.round(u.baseHp * REVIVE_MAX_HP_COST));
+      u.maxHp -= lost; hit.maxHpLost = lost;
+      u.revives += 1;
+      u.life = "up"; u.hp = Math.max(1, Math.ceil(u.maxHp * REVIVE_HP)); u.downedTurns = 0; hit.revived = true;
     }
     if (ab.heal && u.life === "up") {
       const [roll, rng] = rngInt(s.rng, ab.heal.min, ab.heal.max); s.rng = rng;
@@ -145,7 +156,12 @@ function hurt(u: Unit, dmg: number, hit: Hit) {
   if (dmg <= 0) return;
   if (u.life === "downed") { u.life = "dead"; hit.died = true; return; }
   u.hp -= dmg;
-  if (u.hp <= 0) { u.hp = 0; u.life = "downed"; u.downedTurns = DOWNED_TURNS; hit.downed = true; }
+  if (u.hp <= 0) {
+    u.hp = 0;
+    // Already helped up the most times allowed: this fall is permanent.
+    if (u.revives >= MAX_REVIVES) { u.life = "dead"; hit.died = true; return; }
+    u.life = "downed"; u.downedTurns = DOWNED_TURNS; hit.downed = true;
+  }
 }
 
 /** Shoves a unit straight away from `from`. Hitting a wall, a unit or a cliff costs PUSH_HIT per tile left. */

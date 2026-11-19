@@ -5,7 +5,7 @@ import { elementMultiplier } from "./data/elements";
 import { MEADOW } from "./data/maps/meadow";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
-import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
+import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
 import { manhattan, Pos, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
@@ -149,6 +149,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       if (h.damage) add(`-${h.damage}${h.crit ? "!" : ""}`, h.crit ? "#ffd86b" : "#ff8a7a");
       if (h.heal) add(`+${h.heal}`, "#7ed957");
       if (h.revived) add(t(lang, "revived"), "#7ed957");
+      if (h.maxHpLost) add(t(lang, "maxHpDown", { n: h.maxHpLost }), "#c9a0ff", 350);
       if (h.rooted) add(t(lang, "rooted"), "#b9e08a", 250);
       if (h.downed) add(t(lang, "downed"), "#ffffff", 300);
       if (h.died) add(t(lang, "dead"), "#ffffff", 300);
@@ -340,6 +341,8 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   if (!at || !target) { tip.style.display = "none"; return; }
   const hover = at;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
+  const left = MAX_REVIVES - target.revives;
+  lines.push(left > 0 ? t(lang, "revivesLeft", { n: left }) : `<span class="down">${t(lang, "lastFall")}</span>`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
     if (ab.damage && target.team !== u.team) {
