@@ -206,7 +206,9 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
   const next = structuredClone(run);
   delete next.battle;
   next.rivals = afterBattle(next.rivals, b.setup, b.commands, end);
-  const hero = end.units.find((u) => u.team === "heroes")!;
+  // The hero is the first unit of the setup; the battle can reorder its units, so look it up by id.
+  const heroId = b.setup.units[0]!.id;
+  const hero = end.units.find((u) => u.id === heroId)!;
   if (end.winner === "foes" || hero.life !== "up") { next.over = "lost"; next.heroHp = 0; return next; }
   const node = next.map.nodes[b.node]!;
   next.at = b.node; next.path.push(b.node);

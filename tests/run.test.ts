@@ -182,6 +182,21 @@ describe("companions", () => {
     expect(run.battle!.setup.units.some((u) => u.id === "remanso")).toBe(true);
   });
 
+  it("a won battle where a companion fell does not end the run, whatever order the units end in", () => {
+    let run = newRun("c1");
+    const node = run.map.nodes.find((n) => n.kind === "recruit")!;
+    run = { ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))!.id };
+    run = choose(choose(enterNode(run, node.id, "en"), 0), 0);
+    run = enterNode(run, nextNodes(run).find((n) => n.kind !== "rest" && n.kind !== "shop")!.id, "en");
+    const s = end(run, "win");
+    s.units.find((u) => u.id === "remanso")!.life = "dead";
+    // The battle can reorder its units, so the fallen companion may come before the hero.
+    s.units.sort((a, b) => (a.id === "remanso" ? -1 : b.id === "remanso" ? 1 : 0));
+    const after = finishBattle(run, s);
+    expect(after.over).toBeNull();
+    expect(after.party[0]!.status).toBe("fallen");
+  });
+
   it("reads deeds from the log: killing a fleeing foe is forbidden, helping up is liked", () => {
     const s = createBattle({ seed: 1, map: flat, units: [
       mk({ id: "h", team: "heroes", pos: { x: 3, y: 5 }, speed: 90, mag: 300 }),
