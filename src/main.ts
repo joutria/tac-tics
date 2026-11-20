@@ -14,9 +14,11 @@ import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { buy, choose, enterNode, finishBattle, leaveShop, newRun, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
+import { buy, choose, enterNode, finishBattle, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
 import { DIFFICULTY, REGIONS, type Difficulty } from "./data/region";
 import { renderRunMap } from "./ui/runmap";
+import { record, renderStats } from "./ui/stats";
+import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
 import {
   activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
@@ -91,9 +93,15 @@ let onMap = true;
 
 /** While true, the map shows the Easy / Normal / Hard choice instead of the run. */
 let choosingDifficulty = false;
+/** While true, the map shows the play log panel. */
+let statsOpen = false;
+/** When the battle on screen started, for the play log (0 for a battle resumed from a save). */
+let battleStartedAt = 0;
 
 /** A new run starts with the difficulty choice; the run itself is made once the player picks. */
 function startRun() {
+  // Giving up a run that had begun counts as its end in the play log.
+  if (journey && !journey.over && !choosingDifficulty && (journey.path.length || journey.battle)) record(logRunEnd(PLAYER, journey, "abandoned"));
   journey = newRun(`${Date.now()}`);
   choosingDifficulty = true;
   showMap();
@@ -102,6 +110,7 @@ function startRun() {
 function pickDifficulty(d: Difficulty) {
   journey = newRun(`${Date.now()}`, d);
   choosingDifficulty = false;
+  record(logRunStart(PLAYER, journey));
   showMap();
 }
 
@@ -130,14 +139,16 @@ function showMap() {
   const safely = (f: () => RunState) => { try { update(f()); } catch (e) { toast(t(lang, "tooPoor")); console.warn(e); } };
   renderRunMap($("runmap"), journey, lang, {
     pick: pickNode,
-    choose: (i) => update(choose(journey, i)),
-    buy: (id) => safely(() => buy(journey, id)),
-    heal: () => safely(() => shopHeal(journey)),
-    leave: () => update(leaveShop(journey)),
-    wear: (id) => { journey = wear(journey, id); showMap(); },
+    choose: (i) => { const before = journey; update(choose(journey, i)); record(logChoice(PLAYER, before, i)); },
+    buy: (id) => { const before = journey; safely(() => buy(journey, id)); if (journey !== before) record(logBuy(PLAYER, before, id)); },
+    heal: () => { const before = journey; safely(() => shopHeal(journey)); if (journey !== before) record(logShopHeal(PLAYER, before)); },
+    leave: () => { record(logShopLeave(PLAYER, journey)); update(leaveShop(journey)); },
+    wear: (id) => { journey = wear(journey, id); record(logWear(PLAYER, journey, id)); showMap(); },
     newRun: () => startRun(),
   }, gearOpen, () => { gearOpen = false; showMap(); });
   if (choosingDifficulty) renderDifficulty($("runPanel"));
+  else if (statsOpen) renderStats($("runPanel"), lang, () => { statsOpen = false; showMap(); });
+  $("statsBtn").textContent = `📊 ${t(lang, "stats")}`;
   $<HTMLButtonElement>("newRun").textContent = t(lang, "newRun");
   $("gearBtn").textContent = `🎒 ${t(lang, "gear")}`;
   $("mapLang").textContent = lang === "es" ? "English" : "Español";
@@ -157,6 +168,7 @@ function pickNode(id: number) {
   if (choosingDifficulty) return;
   const kind = journey.map.nodes[id]!.kind;
   const before = journey.heroHp;
+  record(logNode(PLAYER, journey, id, nextNodes(journey).map((n) => n.id)));
   journey = enterNode(journey, id, lang);
   if (!journey.battle) { if (kind === "rest") toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
   startBattle(kind === "rival" || kind === "boss");
@@ -167,6 +179,7 @@ function startBattle(announce: boolean) {
   onMap = false;
   $("runmap").style.display = "none";
   save = journey.battle!;
+  battleStartedAt = save.commands.length ? 0 : Date.now();
   rebuild(save.commands);
   resetView();
   persist(); refresh(); followHero();
@@ -180,7 +193,12 @@ function afterBattleButton() {
   if (journey.over) { startRun(); return; }
   if (!journey.battle || !state.winner) return;
   const region = journey.region;
+  const before = journey, fought = { ...save, node: journey.battle.node };
   journey = finishBattle(journey, state);
+  try {
+    record(...logBattle(PLAYER, before, fought, state, journey, battleStartedAt ? Date.now() - battleStartedAt : undefined));
+    if (journey.over) record(logRunEnd(PLAYER, journey, journey.over));
+  } catch (e) { console.warn("play log:", e); }
   if (journey.region !== region) { toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
   const sp = journey.spoils;
   if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : ""), 2600);
@@ -818,7 +836,8 @@ async function start() {
   $("confirm").addEventListener("click", confirmPending);
   $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
   $("again").addEventListener("click", afterBattleButton);
-  $("gearBtn").addEventListener("click", () => { if (choosingDifficulty) return; gearOpen = !gearOpen; showMap(); });
+  $("gearBtn").addEventListener("click", () => { if (choosingDifficulty) return; gearOpen = !gearOpen; statsOpen = false; showMap(); });
+  $("statsBtn").addEventListener("click", () => { if (choosingDifficulty || journey.offers.length) return; statsOpen = !statsOpen; gearOpen = false; showMap(); });
   $("newRun").addEventListener("click", () => { if (journey.over || confirmNewRun()) startRun(); });
   $("mapLang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); showMap(); });
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });

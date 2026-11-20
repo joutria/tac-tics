@@ -11,7 +11,8 @@
     "check": "tsx tools/check.ts",
     "typecheck": "tsc --noEmit",
     "simulate": "tsx tools/simulate.ts",
-    "simulate:run": "tsx tools/simulate-run.ts"
+    "simulate:run": "tsx tools/simulate-run.ts",
+    "analyze": "tsx tools/analyze-log.ts"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
