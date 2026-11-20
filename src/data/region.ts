@@ -7,9 +7,11 @@ import type { GridMap } from "../engine/grid";
 import type { UnitSpec } from "../engine/state";
 import { MEADOW } from "./maps/meadow";
 import { RUINS } from "./maps/ruins";
+import { SHORE, SPILLWAY } from "./maps/reservoir";
 import { TEST_UNITS } from "./units";
 import type { Element } from "./elements";
 import type { Line } from "./rivals";
+import type { RecruitSpot } from "../run/map";
 
 export interface Arena { map: GridMap; hero: Pos; allies: Pos[]; foes: Pos[] }
 
@@ -27,7 +29,12 @@ export const HERO: UnitSpec = TEST_UNITS.find((u) => u.team === "heroes")!;
 
 /** Per layer of the run map: foes get this much more HP and Str/Mag. */
 export const DEPTH_HP = 0.04, DEPTH_STAT = 1;
-export interface BossRule { species: number; hp: number; stat: number; mp: number; name: Line }
+export interface BossRule {
+  /** Index into the region's species, made stronger by the numbers below... */
+  species: number; hp: number; stat: number; mp: number; name: Line;
+  /** ...or a unit of its own (a guardian), used as it is apart from depth scaling. */
+  unit?: Species;
+}
 /** The boss: a species swollen by the Sap. */
 export const BOSS: BossRule = { species: 1, hp: 1.5, stat: 6, mp: 1, name: { es: "{name} Hinchado de Savia", en: "Sap-Swollen {name}" } };
 
@@ -38,6 +45,8 @@ export interface VariantRule {
   res?: Partial<Record<Element, number>>;
   hp?: number;
   stat?: number;
+  /** Abilities the species learns here. */
+  abilities?: string[];
 }
 
 export interface Region {
@@ -46,25 +55,57 @@ export interface Region {
   arenas: Arena[];
   species: Species[];
   boss: BossRule;
-  /** Applied to every species of this region. */
+  /** Applied to every species in `species`, which are borrowed from earlier regions. */
   variant?: VariantRule;
+  /** Species that live only here, fielded as they are. */
+  natives?: Species[];
+  /** Companions met here, by map layer. */
+  recruits: RecruitSpot[];
 }
 
 /** A species as a region fields it, in the player's language. */
 export function regionalSpecies(region: Region, lang: "es" | "en"): Species[] {
   const v = region.variant;
-  if (!v) return region.species;
-  return region.species.map((sp) => ({
+  if (!v) return [...region.species, ...(region.natives ?? [])];
+  return [...region.species.map((sp) => ({
     ...structuredClone(sp),
     name: v.name[lang].replace("{name}", sp.name),
     element: v.element ?? sp.element,
     res: { ...sp.res, ...v.res },
     hp: sp.hp + (v.hp ?? 0), str: sp.str + (v.stat ?? 0), mag: sp.mag + (v.stat ?? 0),
-  }));
+    abilities: [...sp.abilities, ...(v.abilities ?? [])],
+  })), ...(region.natives ?? [])];
 }
 
+const RESERVOIR_NATIVES: Species[] = [
+  { name: "Relampín", team: "foes", element: "bolt", look: "relampin", hp: 28, ap: 6, mp: 4, speed: 52, jump: 1, str: 6, mag: 12, agi: 16,
+    res: { bolt: 25 }, abilities: ["spark", "jolt"], ai: "skirmisher", marked: true },
+  { name: "Carámbano", team: "foes", element: "ice", look: "carambano", hp: 40, ap: 6, mp: 3, speed: 34, jump: 1, str: 10, mag: 8, agi: 8,
+    res: { ice: 30, water: 15 }, abilities: ["chill", "freeze"], ai: "bruiser", marked: true },
+];
+
+/** Broken Mira: the reservoir's guardian, frozen and swollen by the Sap. A boss of her own, not a swollen species. */
+const BROKEN_MIRA: Species = {
+  name: "Mira", team: "foes", element: "ice", look: "mira-broken", hp: 90, ap: 7, mp: 2, speed: 38, jump: 1, str: 6, mag: 22, agi: 6,
+  res: { ice: 40, water: 30 }, abilities: ["glare", "shatter", "freeze"], ai: "caster", marked: true,
+};
+
 export const REGIONS: Region[] = [
-  { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS },
+  { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS,
+    recruits: [{ layer: 1, talk: "remanso.meet" }, { layer: 3, talk: "guijo.meet" }] },
+  {
+    id: "reservoir", name: { es: "El Embalse Quebrado", en: "The Broken Reservoir" },
+    arenas: [
+      { map: SHORE, hero: { x: 2, y: 8 }, allies: [{ x: 1, y: 8 }, { x: 3, y: 7 }, { x: 2, y: 9 }], foes: [{ x: 7, y: 1 }, { x: 9, y: 1 }, { x: 5, y: 0 }, { x: 8, y: 3 }] },
+      { map: SPILLWAY, hero: { x: 4, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 5, y: 8 }, { x: 4, y: 9 }], foes: [{ x: 2, y: 0 }, { x: 5, y: 1 }, { x: 8, y: 0 }, { x: 6, y: 2 }] },
+    ],
+    // The first region's foes, touched by the frozen lake: Ice instead of their element, and a cold bite.
+    species: SPECIES,
+    variant: { element: "ice", name: { es: "{name} Escarchado", en: "Frost {name}" }, res: { ice: 20 }, hp: 4, abilities: ["frostbite"] },
+    natives: RESERVOIR_NATIVES,
+    boss: { species: 0, hp: 1, stat: 0, mp: 0, name: { es: "Mira Quebrada", en: "Broken Mira" }, unit: BROKEN_MIRA },
+    recruits: [{ layer: 1, talk: "centella.meet" }, { layer: 3, talk: "moheda.meet" }],
+  },
 ];
 
 /** Chosen when a run starts. Normal is the tuned baseline; Hard is closer to the game's "punish rushing in" goal. */

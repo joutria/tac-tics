@@ -6,11 +6,12 @@ import { ITEMS, PERKS, SHOP, xpToNext, type Mods } from "../data/gear";
 import { abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
-import { APPROVAL, COMPANIONS, TALKS } from "../data/companions";
-import { fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
-import type { Member } from "../run/party";
+import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
+import { JOBS } from "../data/jobs";
+import { ALTAR, questChoices, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
+import { endingOf, readyForLesson, type Member } from "../run/party";
 
-export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", boss: "♛" };
+export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛" };
 
 const SVG = "http://www.w3.org/2000/svg";
 const el = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>) => {
@@ -34,6 +35,8 @@ export interface MapActions {
   heal: () => void;
   leave: () => void;
   wear: (itemId: string) => void;
+  /** Starts a new run (from the epilogue). */
+  newRun?: () => void;
 }
 
 const html = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -63,8 +66,9 @@ function rewardCard(r: RewardOption, lang: Lang): string {
 /** The first thing to answer (perk, reward or shop), or the gear panel when `gearOpen`. */
 function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActions, gearOpen: boolean, closeGear: () => void) {
   const offer = run.offers[0];
-  panel.style.display = offer || gearOpen ? "flex" : "none";
-  if (!offer && !gearOpen) { panel.replaceChildren(); return; }
+  const epilogue = !!run.over && run.party.length > 0 && !gearOpen;
+  panel.style.display = offer || gearOpen || epilogue ? "flex" : "none";
+  if (!offer && !gearOpen && !epilogue) { panel.replaceChildren(); return; }
   const button = (inner: string, onClick: () => void, cls = "card", disabled = false) => {
     const b = document.createElement("button"); b.className = cls; b.innerHTML = inner; b.disabled = disabled; b.onclick = onClick; return b;
   };
@@ -76,7 +80,38 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
   const spoils = document.createElement("p"); spoils.className = "spoils";
   if (sp && offer && offer.kind !== "shop") spoils.textContent = t(lang, "spoils", { c: sp.coins, x: sp.xp })
     + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: run.hero.level }) : "");
-  if (offer?.kind === "talk") {
+  if (epilogue) {
+    // The run is over: one short epilogue per companion ever recruited.
+    title.textContent = t(lang, "epilogue");
+    for (const m of run.party) {
+      const q = QUESTS[m.id];
+      if (!q) continue;
+      const end = endingOf(m);
+      const p = document.createElement("p"); p.className = `say ending ${end}`;
+      p.innerHTML = `<b>${html(COMPANIONS[m.id]!.spec.name)} · ${html(t(lang, `ending.${end}`))}</b><br>${html(q.endings[end][lang])}`;
+      list.append(p);
+    }
+    if (act.newRun) foot.append(button(t(lang, "newRun"), act.newRun, "primary"));
+  } else if (offer?.kind === "job") {
+    title.textContent = t(lang, "pickJob");
+    for (const [i, id] of offer.options.entries()) {
+      const j = JOBS[id];
+      list.append(button(`<b>${html(j.name[lang])}</b><span>${html(j.desc[lang])}</span><small>${j.abilities.map((a) => html(abilityName(lang, a))).join(" · ")}</small>`, () => act.choose(i)));
+    }
+    if (offer.options.length === 1) { const p = document.createElement("p"); p.className = "spoils"; p.textContent = t(lang, "jobLocked"); list.append(p); }
+  } else if (offer?.kind === "quest") {
+    const q = QUESTS[offer.companion]!;
+    title.textContent = t(lang, "questOf", { name: COMPANIONS[offer.companion]!.spec.name });
+    for (const l of q.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
+    if (offer.reply) {
+      const p = document.createElement("p"); p.className = "say reply"; p.textContent = offer.reply[lang]; list.append(p);
+      foot.append(button(t(lang, "goOn"), () => act.choose(0), "primary"));
+    } else {
+      const m = run.party.find((x) => x.id === offer.companion)!;
+      if (!readyForLesson(m)) { const p = document.createElement("p"); p.className = "say down"; p.textContent = q.notReady[lang]; list.append(p); }
+      questChoices(run, offer.companion).forEach((lesson, i) => list.append(button(`<span>${html(q.choices[lesson].text[lang])}</span>`, () => act.choose(i))));
+    }
+  } else if (offer?.kind === "talk") {
     const talk = TALKS[offer.id]!;
     title.textContent = COMPANIONS[talk.companion]!.spec.name;
     for (const l of talk.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
@@ -84,6 +119,16 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
       const p = document.createElement("p"); p.className = "say reply"; p.textContent = offer.reply[lang]; list.append(p);
       foot.append(button(t(lang, "goOn"), () => act.choose(0), "primary"));
     } else talk.choices.forEach((c, i) => list.append(button(`<span>${html(c.text[lang])}</span>`, () => act.choose(i))));
+  } else if (offer?.kind === "altar") {
+    title.textContent = t(lang, "altarTitle");
+    const p = document.createElement("p"); p.className = "say"; p.textContent = t(lang, "altarText"); list.append(p);
+    for (const m of fielded(run)) {
+      const c = COMPANIONS[m.id]!;
+      if (!m.known || !c.forbidden.includes("destroyShards")) continue;
+      const w = document.createElement("p"); w.className = "say down"; w.textContent = `⚠ ${c.forbiddenWarning[lang]}`; list.append(w);
+    }
+    list.append(button(`<b>🔥 ${html(t(lang, "altarBurn", { n: ALTAR.shards }))}</b>`, () => act.choose(0)));
+    list.append(button(`<b>◆ ${html(t(lang, "altarKeep"))}</b>`, () => act.choose(1)));
   } else if (offer?.kind === "perk") {
     title.textContent = t(lang, "pickPerk");
     offer.options.forEach((id, i) => list.append(button(`<b>${html(PERKS[id]!.name[lang])}</b><span>${html(PERKS[id]!.desc[lang])}</span>`, () => act.choose(i))));
@@ -102,9 +147,11 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     foot.append(button(t(lang, "leave"), act.leave, "primary"));
   } else {
     title.textContent = t(lang, "gear");
-    for (const m of fielded(run)) {
+    const out = fielded(run);
+    for (const m of run.party.filter((x) => x.status === "with" || x.status === "leaving")) {
       const p = document.createElement("p"); p.className = "say";
-      p.textContent = `${COMPANIONS[m.id]!.spec.name} · ${t(lang, "hp")} ${m.hp}/${memberMaxHp(run, m)} · ${t(lang, "approval", { n: m.approval })} · ${moodOf(m, lang)}`;
+      p.textContent = `${COMPANIONS[m.id]!.spec.name} · ${t(lang, "hp")} ${m.hp}/${memberMaxHp(run, m)} · ${t(lang, "approval", { n: m.approval })} · ${moodOf(m, lang)}`
+        + (out.includes(m) ? "" : ` · ${t(lang, "atCamp")}`);
       list.append(p);
     }
     for (const slot of ["weapon", "armour", "charm"] as const) {
@@ -156,7 +203,8 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
     icon.textContent = NODE_ICON[n.kind];
     g.append(icon);
     const rival = n.rival ? run.rivals.find((r) => r.id === n.rival && !r.settled) : undefined;
-    const label = rival ? `${rivalName(rival, lang)} · ${t(lang, "rival", { n: rival.level })}` : t(lang, `node.${n.kind}`);
+    const label = rival ? `${rivalName(rival, lang)} · ${t(lang, "rival", { n: rival.level })}`
+      : n.quest && COMPANIONS[n.quest] ? t(lang, "questOf", { name: COMPANIONS[n.quest]!.spec.name }) : t(lang, `node.${n.kind}`);
     const title = el("title", {}); title.textContent = label; g.append(title);
     if (open.has(n.id)) {
       g.setAttribute("tabindex", "0"); g.setAttribute("role", "button"); g.setAttribute("aria-label", label);

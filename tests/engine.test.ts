@@ -4,7 +4,7 @@ import { elementMultiplier } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
 import { planTurn } from "../src/engine/ai";
-import { castProblem, damageFactor, damagePreview, directionBonus, maxRange } from "../src/engine/combat";
+import { castProblem, damageFactor, damagePreview, directionBonus, maxRange, previewEffects } from "../src/engine/combat";
 import { parseMap } from "../src/engine/grid";
 import { canStep, reachable } from "../src/engine/movement";
 import { rngNext, seedFrom } from "../src/engine/rng";
@@ -590,5 +590,19 @@ describe("interactive terrain", () => {
     expect(hitA).toBeGreaterThan(0);
     expect(unitById(s, "b").hp).toBe(60 - Math.floor(hitA * 0.5));
     expect(unitById(s, "c").hp).toBe(60);
+  });
+});
+
+describe("effect preview", () => {
+  it("shows where a push ends and the bump damage, exactly as the cast does", () => {
+    const s = createBattle({ seed: 5, map: parseMap("p", ["g0 g0 g0 g0 r0 g0"]), units: [
+      unit({ id: "h", team: "heroes", pos: { x: 1, y: 0 }, speed: 90, abilities: ["undertow"], str: 0 }),
+      unit({ id: "f", team: "foes", pos: { x: 2, y: 0 } }),
+    ] });
+    const pv = previewEffects(s, unitById(s, "h"), ABILITIES.undertow!, { x: 2, y: 0 });
+    expect(pv.moves).toEqual([{ from: { x: 2, y: 0 }, to: { x: 3, y: 0 }, unit: "f", bump: 3 }]);
+    const after = play(s, [{ t: "cast", unit: "h", ability: "undertow", target: { x: 2, y: 0 } }]);
+    expect(unitById(after, "f").pos).toEqual({ x: 3, y: 0 });
+    expect(unitById(s, "f").pos).toEqual({ x: 2, y: 0 }); // the preview never touches the real state
   });
 });

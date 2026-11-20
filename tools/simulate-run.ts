@@ -19,6 +19,7 @@ const log: PlayEvent[] = [];
 const keep = (...e: (PlayEvent | null)[]) => { if (logFile) for (const x of e) if (x) log.push(x); };
 let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0;
 const deaths = new Map<number, number>();
+const endings = new Map<string, number>();
 const started = Date.now();
 for (let i = 1; i <= runs; i++) {
   let run = newRun(`sim-${i}`, difficulty);
@@ -26,7 +27,7 @@ for (let i = 1; i <= runs; i++) {
   while (!run.over) {
     run = answerOffers(run);
     const open = nextNodes(run);
-    const pick = open.find((n) => n.kind === "recruit")
+    const pick = open.find((n) => n.kind === "recruit" || n.kind === "quest")
       ?? (run.heroHp < heroMaxHp(run) / 2 ? open.find((n) => n.kind === "rest") ?? open[0]! : open.find((n) => n.kind !== "rest") ?? open[0]!);
     if (pick.kind === "rival") rivalsMet++;
     keep(logNode(ctx, run, pick.id, open.map((n) => n.id)));
@@ -49,18 +50,21 @@ for (let i = 1; i <= runs; i++) {
   }
   keep(logRunEnd(ctx, run, run.over === "won" ? "won" : "lost"));
   if (run.over === "won") won++;
+  if (run.region > 0 || run.over === "won") cleared1++;
   levels += run.hero.level;
-  nodes += run.path.length;
+  nodes += run.path.length + MAP_LAYERS * run.region;
   rivalsMade += run.rivals.length;
+  for (const m of run.party) { const k = `${m.id} ${endingOf(m)}`; endings.set(k, (endings.get(k) ?? 0) + 1); }
 }
 console.log(`${runs} ${difficulty} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 console.log(`runs won ${won} (${((100 * won) / runs).toFixed(0)}%), average nodes cleared ${(nodes / runs).toFixed(1)}`);
-console.log(`runs lost by layer: ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
+console.log(`first region cleared ${cleared1} (${((100 * cleared1) / runs).toFixed(0)}%)`);
+console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
 if (logFile) { writeFileSync(logFile, JSON.stringify({ game: "tac-tics", log: 1, events: log })); console.log(`play log: ${log.length} events -> ${logFile}`); }
 
-/** A simple player: takes the item reward (else the first), the first perk, buys what it can afford, heals if hurt. */
+/** A simple player: takes the item reward (else the first), the first perk, burns shards at the fire only when badly hurt, buys what it can afford, heals if hurt. */
 function answerOffers(run: RunState): RunState {
   while (run.offers.length) {
     const o = run.offers[0]!;

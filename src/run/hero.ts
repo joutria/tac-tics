@@ -3,6 +3,7 @@
 import { GROWTH, ITEMS, LEVEL_CAP, PERKS, xpToNext, type Mods, type Slot } from "../data/gear";
 import { rngInt, seedFrom } from "../engine/rng";
 import type { UnitSpec } from "../engine/state";
+import { JOBS, type Job } from "../data/jobs";
 
 export interface HeroProgress {
   level: number;
@@ -11,6 +12,8 @@ export interface HeroProgress {
   gear: Partial<Record<Slot, string>>;
   /** Items owned but not worn. */
   bag: string[];
+  /** The job taken halfway through the first region. */
+  job?: Job;
 }
 
 export const newProgress = (): HeroProgress => ({ level: 1, xp: 0, perks: [], gear: {}, bag: [] });
@@ -31,6 +34,10 @@ export function heroSpec(base: UnitSpec, p: HeroProgress): UnitSpec {
     const item = ITEMS[id!]!;
     apply(spec, item.mods);
     if (item.teaches && !spec.abilities.includes(item.teaches)) spec.abilities.push(item.teaches);
+  }
+  if (p.job) {
+    for (const a of JOBS[p.job].abilities) if (!spec.abilities.includes(a)) spec.abilities.push(a);
+    spec.passive = JOBS[p.job].passive;
   }
   for (const e of Object.keys(spec.res) as (keyof UnitSpec["res"])[]) spec.res[e] = Math.min(75, spec.res[e]!);
   return spec;

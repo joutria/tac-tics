@@ -94,6 +94,11 @@ for (const r of REGIONS) {
   if (!r.species.length) fail(`region ${r.id}: no species`);
   if (!r.species[r.boss.species]) fail(`region ${r.id}: boss species ${r.boss.species} does not exist`);
   if (!r.arenas.length) fail(`region ${r.id}: no arenas`);
+  for (const sp of [...r.species, ...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])]) {
+    if (!existsSync(`public/art/creatures/${sp.look}.png`)) fail(`region ${r.id}: ${sp.name} has no art ${sp.look}.png`);
+    for (const a of sp.abilities) if (!ABILITIES[a]) fail(`region ${r.id}: ${sp.name} has unknown ability ${a}`);
+  }
+  for (const a of r.variant?.abilities ?? []) if (!ABILITIES[a]) fail(`region ${r.id}: variant teaches unknown ability ${a}`);
 }
 for (const a of REGIONS.flatMap((r) => r.arenas)) {
   if (a.map.tiles.length !== a.map.w * a.map.h) fail(`map ${a.map.id}: tile count does not match its size`);

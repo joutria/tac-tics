@@ -7,7 +7,7 @@ import { MEADOW } from "./data/maps/meadow";
 import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
-import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, unitAbilities } from "./engine/combat";
+import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, sightBlock, TERRAIN, tileAt } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
@@ -169,7 +169,7 @@ function pickNode(id: number) {
   const before = journey.heroHp;
   record(logNode(PLAYER, journey, id, nextNodes(journey).map((n) => n.id)));
   journey = enterNode(journey, id, lang);
-  if (!journey.battle) { toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
+  if (!journey.battle) { if (kind === "rest") toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
   startBattle(kind === "rival" || kind === "boss");
 }
 
@@ -540,7 +540,8 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
     if (ab.damage && target.team !== u.team) {
-      const r = damagePreview(state, u, target, ab);
+      const base = damagePreview(state, u, target, ab), bump = previewMoves()?.moves.find((x) => x.unit === target.id)?.bump ?? 0;
+      const r = { min: base.min + bump, max: base.max + bump };
       const m = elementMultiplier(ab.element, target.element);
       const dir = directionBonus(target, u.pos);
       lines.push(`${abilityName(lang, selected)}: <b>${r.min}–${r.max}</b>${m > 1 ? ` · ${t(lang, "strong")}` : m < 1 ? ` · ${t(lang, "weak")}` : ""}`);
@@ -551,6 +552,8 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b>`);
       else if (Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<span class="down">${t(lang, "critDown")}</span>`);
       if (dir > 1.2) lines.push(t(lang, "back")); else if (dir > 1) lines.push(t(lang, "side"));
+      const mv = previewMoves()?.moves.find((m) => m.unit === target.id);
+      if (mv && (mv.to.x !== mv.from.x || mv.to.y !== mv.from.y || mv.bump)) lines.push(t(lang, mv.bump ? "pushBump" : "pushTo", { n: mv.bump }));
       lines.push(t(lang, "crit"));
     } else if (ab.heal) lines.push(`${abilityName(lang, selected)}: <b>+${ab.heal.min}–${ab.heal.max}</b>`);
   } else if (!selected && target.team === "foes") {
@@ -702,13 +705,32 @@ function confirmPending() {
   tooltip(null);
 }
 
+/** What the selected ability would move or set off at the tile under the finger or cursor (push preview). */
+let effectsCache: { key: string; out: MovePreview | undefined } | null = null;
+function previewMoves(): MovePreview | undefined {
+  const at = pending ?? hover;
+  if (!selected || !at || !heroTurn()) return undefined;
+  const key = `${state.turns}:${state.active}:${selected}:${at.x},${at.y}:${state.units.map((u) => `${u.pos.x},${u.pos.y}`).join(";")}`;
+  if (effectsCache?.key === key) return effectsCache.out;
+  const u = activeUnit(state), ab = ABILITIES[selected]!;
+  const tile = tileAt(state.map, at);
+  let out: MovePreview | undefined;
+  if ((ab.push || tile?.prop === "barrel" || areaTiles(ab, at).some((p) => tileAt(state.map, p)?.prop === "barrel")) && !castProblem(state, u, selected, at)) {
+    out = previewEffects(state, u, ab, at);
+    if (!out.moves.length && !out.blasts.length) out = undefined;
+  }
+  effectsCache = { key, out };
+  return out;
+}
+
 /** The selected attack's predicted damage on the unit under the finger or cursor, for the health bar. */
 function previewHit() {
   const at = pending ?? hover;
   if (!selected || !at || !heroTurn()) return undefined;
   const u = activeUnit(state), target = unitAt(state, at), ab = ABILITIES[selected]!;
   if (!target || !ab.damage || target.team === u.team || castProblem(state, u, selected, at)) return undefined;
-  return { unit: target.id, ...damagePreview(state, u, target, ab) };
+  const r = damagePreview(state, u, target, ab), bump = previewMoves()?.moves.find((m) => m.unit === target.id)?.bump ?? 0;
+  return { unit: target.id, min: r.min + bump, max: r.max + bump };
 }
 
 /** For each foe backing off or running: the way it would take to the nearest edge tile. */
@@ -737,7 +759,7 @@ function frame(time: number) {
   if (focus && time > focus.until) focus = null;
   drawBattle(ctx, state, images, view, {
     marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions,
-    danger: dangerTiles(), preview: moving ? undefined : previewHit(), focus: focus?.id,
+    danger: dangerTiles(), preview: moving ? undefined : previewHit(), effects: moving ? undefined : previewMoves(), focus: focus?.id,
     escapePaths: moving ? undefined : escapePaths(),
   });
   requestAnimationFrame(frame);
@@ -747,7 +769,8 @@ async function start() {
   const base = import.meta.env.BASE_URL;
   const tiles = ["top-grass", "top-dirt", "top-water", "top-rock", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-rock", "obj-tree"];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
-  for (const u of [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec)]) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
+  const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
+  for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);
   setFlat(safeGet(VIEW_KEY) === "flat");
   // Until a battle starts (the map screen comes first), the battle screen holds the test fight, never shown.
@@ -825,6 +848,7 @@ async function start() {
   Object.assign(window, { __tactics: {
     state: () => state,
     run: () => journey,
+    setRun: (r: RunState) => { journey = r; showMap(); },
     pickNode: (id: number) => pickNode(id),
     marks: () => [...marks().entries()],
     select: (id: string | null) => { selected = id; refresh(); },

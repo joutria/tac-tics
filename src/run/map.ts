@@ -3,7 +3,7 @@
    the same seed always gives the same map. */
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
 
-export type NodeKind = "battle" | "elite" | "rest" | "shop" | "recruit" | "rival" | "boss";
+export type NodeKind = "battle" | "elite" | "rest" | "shop" | "recruit" | "rival" | "quest" | "boss";
 
 export interface RunNode {
   id: number;
@@ -17,13 +17,18 @@ export interface RunNode {
   recruit?: string;
   /** Rival waiting here (its id), for kind "rival". */
   rival?: string;
+  /** Companion whose personal quest waits here (data/companions.ts QUESTS), for kind "quest". */
+  quest?: string;
 }
 
 export interface RunMap { layers: number; width: number; nodes: RunNode[] }
 
 export const MAP_LAYERS = 7, MAP_WIDTH = 3;
 
-export function generateMap(seed: string | number, layers = MAP_LAYERS, width = MAP_WIDTH): RunMap {
+/** A recruit waiting on a layer of the map: the talk that can recruit them. */
+export interface RecruitSpot { layer: number; talk: string }
+
+export function generateMap(seed: string | number, recruits: RecruitSpot[] = [{ layer: 1, talk: "remanso.meet" }], layers = MAP_LAYERS, width = MAP_WIDTH): RunMap {
   let rng = seedFrom(`${seed}:map`);
   const roll = (min: number, max: number) => { let v: number; [v, rng] = rngInt(rng, min, max); return v; };
   const chance = (p: number) => { let v: number; [v, rng] = rngNext(rng); return v < p; };
@@ -47,9 +52,12 @@ export function generateMap(seed: string | number, layers = MAP_LAYERS, width = 
     else if (n.layer === mid && n.col === byLayer[mid]![0]!.col) n.kind = "rest";
     else if (n.layer >= 2 && chance(0.3)) n.kind = "elite";
   }
-  // The first recruit waits on layer 1, so a companion can join early on most paths.
-  const meet = byLayer[1]!.filter((n) => n.kind === "battle");
-  if (meet.length) { const n = meet[roll(0, meet.length - 1)]!; n.kind = "recruit"; n.recruit = "remanso.meet"; }
+  // Recruits wait on their layers (the region says which), each on a node that is still a fight; the first
+  // sits on layer 1, so a companion can join early on most paths.
+  for (const r of recruits) {
+    const meet = (byLayer[r.layer] ?? []).filter((n) => n.kind === "battle" || n.kind === "elite");
+    if (meet.length) { const n = meet[roll(0, meet.length - 1)]!; n.kind = "recruit"; n.recruit = r.talk; }
+  }
   // One shop on layer 2 and one on the layer before the last rests, each on a node that is still a plain battle.
   for (const layer of [2, layers - 3]) {
     const spots = (byLayer[layer] ?? []).filter((n) => n.kind === "battle");
@@ -104,5 +112,23 @@ export function placeRival(map: RunMap, at: number | null, rivalId: string, seed
   const [i] = rngInt(seedFrom(`${seed}:rival:${rivalId}`), 0, near.length - 1);
   const node = near[i]!;
   node.kind = "rival"; node.rival = rivalId;
+  return node.id;
+}
+
+/** Puts a companion's quest on a fight node ahead of `at`, at least QUEST_GAP layers on when it can, so the party
+    travels together a while first. Returns the node, or null when nothing ahead is free. */
+export const QUEST_GAP = 2;
+export function placeQuest(map: RunMap, at: number | null, companion: string, seed: string | number): number | null {
+  const ahead = aheadOf(map, at);
+  const spots = map.nodes.filter((n) => ahead.has(n.id) && (n.kind === "battle" || n.kind === "elite"));
+  if (!spots.length) return null;
+  const from = at === null ? -1 : map.nodes[at]!.layer;
+  const far = spots.filter((n) => n.layer >= from + QUEST_GAP);
+  const pool = far.length ? far : spots;
+  const nearest = Math.min(...pool.map((n) => n.layer));
+  const near = pool.filter((n) => n.layer === nearest);
+  const [i] = rngInt(seedFrom(`${seed}:quest:${companion}`), 0, near.length - 1);
+  const node = near[i]!;
+  node.kind = "quest"; node.quest = companion;
   return node.id;
 }
