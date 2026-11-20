@@ -15,7 +15,7 @@ import { isBorder, turnMp, wavering } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
 import { buy, choose, enterNode, finishBattle, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
-import { DIFFICULTY, type Difficulty } from "./data/region";
+import { DIFFICULTY, REGIONS, type Difficulty } from "./data/region";
 import { renderRunMap } from "./ui/runmap";
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
@@ -95,7 +95,7 @@ let onMap = true;
 let choosingDifficulty = false;
 /** While true, the map shows the play log panel. */
 let statsOpen = false;
-/** When the battle on screen started (or was resumed), for the play log. */
+/** When the battle on screen started, for the play log (0 for a battle resumed from a save). */
 let battleStartedAt = 0;
 
 /** A new run starts with the difficulty choice; the run itself is made once the player picks. */
@@ -144,6 +144,7 @@ function showMap() {
     heal: () => { const before = journey; safely(() => shopHeal(journey)); if (journey !== before) record(logShopHeal(PLAYER, before)); },
     leave: () => { record(logShopLeave(PLAYER, journey)); update(leaveShop(journey)); },
     wear: (id) => { journey = wear(journey, id); record(logWear(PLAYER, journey, id)); showMap(); },
+    newRun: () => startRun(),
   }, gearOpen, () => { gearOpen = false; showMap(); });
   if (choosingDifficulty) renderDifficulty($("runPanel"));
   else if (statsOpen) renderStats($("runPanel"), lang, () => { statsOpen = false; showMap(); });
@@ -178,7 +179,6 @@ function startBattle(announce: boolean) {
   onMap = false;
   $("runmap").style.display = "none";
   save = journey.battle!;
-  // A battle resumed from a save has no honest duration, so only fresh battles are timed.
   battleStartedAt = save.commands.length ? 0 : Date.now();
   rebuild(save.commands);
   resetView();

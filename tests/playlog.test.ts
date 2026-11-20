@@ -27,10 +27,12 @@ function loggedRun(seed: string): { run: RunState; log: PlayEvent[] } {
     run = enterNode(run, open[0]!.id, "en");
     if (!run.battle) continue;
     const s = fight(run), fought = run;
+    // A stalemate (no winner within the turn limit) ends the run, as in the simulator.
+    if (!s.winner) { run = { ...run, over: "lost" }; break; }
     run = finishBattle(run, s);
     log.push(...logBattle(ctx, fought, fought.battle!, s, run));
   }
-  log.push(logRunEnd(ctx, run, run.over));
+  log.push(logRunEnd(ctx, run, run.over ?? "lost"));
   return { run, log };
 }
 

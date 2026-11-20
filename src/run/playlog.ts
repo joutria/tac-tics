@@ -33,7 +33,7 @@ export type PlayEvent = Base & (
     /** Who downed or killed the hero, if anyone did. */
     heroFelledBy?: string;
   }
-  | { ev: "pick"; offer: "reward" | "perk" | "talk"; options: string[]; chose: number; region: number; layer: number }
+  | { ev: "pick"; offer: "reward" | "perk" | "talk" | "altar" | "job" | "quest"; options: string[]; chose: number; region: number; layer: number }
   | { ev: "buy"; item: string; price: number; currency: string; coins: number; shards: number }
   | { ev: "shopHeal"; hp: number; coins: number }
   | { ev: "shopLeave"; stock: string[] }
@@ -127,11 +127,13 @@ const foeLabel = (u: { name: string; rival?: boolean } | undefined) => (!u ? "?"
 
 const rewardKey = (r: RewardOption) => (r.t === "item" ? `item:${r.id}` : r.t);
 
-/** Answering an offer (reward, perk or conversation). The second answer of a conversation only closes it. */
+/** Answering an offer (reward, perk, job, the shard fire, a conversation or a quest's lesson). The second answer
+    of a conversation or quest only closes it. */
 export function logChoice(ctx: LogContext, before: RunState, index: number): PlayEvent | null {
   const o = before.offers[0];
-  if (!o || o.kind === "shop" || (o.kind === "talk" && o.reply)) return null;
-  const options = o.kind === "reward" ? o.options.map(rewardKey) : o.kind === "perk" ? [...o.options] : [`talk:${o.id}`];
+  if (!o || o.kind === "shop" || ((o.kind === "talk" || o.kind === "quest") && o.reply)) return null;
+  const options = o.kind === "reward" ? o.options.map(rewardKey) : o.kind === "perk" || o.kind === "job" ? [...o.options]
+    : o.kind === "altar" ? ["burn", "keep"] : o.kind === "quest" ? [`quest:${o.companion}`] : [`talk:${o.id}`];
   return make(ctx, before, "pick", { offer: o.kind, options, chose: index, ...where(before) });
 }
 
@@ -165,7 +167,8 @@ export const appendCapped = (log: PlayEvent[], events: PlayEvent[], cap = LOG_CA
 export interface LogSummary {
   runs: number;
   byDifficulty: Record<string, { runs: number; won: number; lost: number; abandoned: number }>;
-  /** Runs that ended in a loss, by "region:layer" of the battle that ended them. */
+  /** Runs that ended in a loss, by "region:layer" of the battle that ended them ("other" when no logged battle did,
+      such as a simulated stalemate). */
   lostAt: Record<string, number>;
   battles: number;
   battlesWon: number;
@@ -181,6 +184,9 @@ export interface LogSummary {
   /** What players pick when offered: option kind -> [picked, offered]. */
   rewards: Record<string, [number, number]>;
   perks: Record<string, [number, number]>;
+  jobs: Record<string, [number, number]>;
+  /** The shard fire at rests: burn or keep. */
+  altar: Record<string, [number, number]>;
   /** Node kinds picked when other kinds were open: kind -> [picked, open]. */
   nodes: Record<string, [number, number]>;
   /** Mercy: foes finished while downed, fleeing foes killed, foes let go. */
@@ -197,7 +203,7 @@ const top = (m: Record<string, number>) => Object.entries(m).sort((a, b) => b[1]
 export function summarize(events: PlayEvent[]): LogSummary {
   const byDifficulty: LogSummary["byDifficulty"] = {};
   const lostAt: Record<string, number> = {}, abilities: Record<string, number> = {}, felledBy: Record<string, number> = {};
-  const rewards: Record<string, [number, number]> = {}, perks: Record<string, [number, number]> = {}, nodes: Record<string, [number, number]> = {};
+  const rewards: Record<string, [number, number]> = {}, perks: Record<string, [number, number]> = {}, jobs: Record<string, [number, number]> = {}, altar: Record<string, [number, number]> = {}, nodes: Record<string, [number, number]> = {};
   const deeds: Record<string, number> = {}, bought: Record<string, number> = {};
   const companions: Record<string, Record<string, number>> = {};
   let runs = 0, battles = 0, won = 0, rounds = 0, turns = 0, ms = 0, timed = 0, rewinds = 0, levels = 0;
@@ -214,8 +220,8 @@ export function summarize(events: PlayEvent[]): LogSummary {
     } else if (e.ev === "node") {
       pair(nodes, e.kind, 0); pair(nodes, e.kind, 1);
       for (const k of new Set(e.open)) if (k !== e.kind) pair(nodes, k, 1);
-    } else if (e.ev === "pick" && (e.offer === "reward" || e.offer === "perk")) {
-      const into = e.offer === "reward" ? rewards : perks;
+    } else if (e.ev === "pick" && (e.offer === "reward" || e.offer === "perk" || e.offer === "job" || e.offer === "altar")) {
+      const into = e.offer === "reward" ? rewards : e.offer === "perk" ? perks : e.offer === "job" ? jobs : altar;
       const key = (s: string) => (e.offer === "reward" ? s.split(":")[0]! : s);
       e.options.forEach((o, i) => { pair(into, key(o), 1); if (i === e.chose) pair(into, key(o), 0); });
     } else if (e.ev === "buy") bump(bought, e.item);
@@ -225,13 +231,13 @@ export function summarize(events: PlayEvent[]): LogSummary {
       const d = byDifficulty[e.difficulty] ??= { runs: 0, won: 0, lost: 0, abandoned: 0 };
       d.runs++; d[e.result]++;
       const b = lastBattle.get(e.run);
-      if (e.result === "lost" && b) bump(lostAt, `${b.region}:${b.layer}`);
+      if (e.result === "lost") bump(lostAt, b?.result === "lost" ? `${b.region}:${b.layer}` : "other");
     }
   }
   return {
     runs, byDifficulty, lostAt, battles, battlesWon: won,
     avgRounds: battles ? rounds / battles : 0, avgTurns: battles ? turns / battles : 0, avgBattleMs: timed ? ms / timed : null,
-    rewindsUsed: rewinds, abilities: top(abilities), felledBy: top(felledBy), rewards, perks, nodes, deeds, companions,
+    rewindsUsed: rewinds, abilities: top(abilities), felledBy: top(felledBy), rewards, perks, jobs, altar, nodes, deeds, companions,
     bought: top(bought), avgLevel: runs ? levels / runs : 0,
   };
 }
@@ -250,6 +256,8 @@ export function summaryLines(s: LogSummary): string[] {
   lines.push(`node picks ${rate(s.nodes)}`);
   lines.push(`reward picks ${rate(s.rewards)}`);
   lines.push(`perk picks ${rate(s.perks)}`);
+  if (Object.keys(s.jobs).length) lines.push(`job picks ${rate(s.jobs)}`);
+  if (Object.keys(s.altar).length) lines.push(`shard fire ${rate(s.altar)}`);
   lines.push(`deeds ${Object.entries(s.deeds).map(([k, n]) => `${k} ${n}`).join(", ") || "-"}`);
   for (const [id, st] of Object.entries(s.companions)) lines.push(`companion ${id}: ${Object.entries(st).map(([k, n]) => `${k} ${n}`).join(", ")}`);
   if (s.bought.length) lines.push(`bought ${s.bought.slice(0, 8).map(([k, n]) => `${k} ${n}`).join(", ")}`);

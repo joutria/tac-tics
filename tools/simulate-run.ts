@@ -6,6 +6,8 @@ import { writeFileSync } from "node:fs";
 import { planTurn } from "../src/engine/ai";
 import { applyCommand, createBattle } from "../src/engine/state";
 import type { Difficulty } from "../src/data/region";
+import { MAP_LAYERS } from "../src/run/map";
+import { endingOf } from "../src/run/party";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, simContext, type PlayEvent } from "../src/run/playlog";
 import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceOf, shopHeal, type RunState } from "../src/run/run";
 
@@ -17,7 +19,7 @@ const difficulty = (args[1] ?? "normal") as Difficulty;
 const ctx = simContext();
 const log: PlayEvent[] = [];
 const keep = (...e: (PlayEvent | null)[]) => { if (logFile) for (const x of e) if (x) log.push(x); };
-let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0;
+let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0, cleared1 = 0;
 const deaths = new Map<number, number>();
 const endings = new Map<string, number>();
 const started = Date.now();
@@ -42,7 +44,7 @@ for (let i = 1; i <= runs; i++) {
       }
     }
     if (!s.winner) { run.over = "lost"; break; }
-    const layer = run.map.nodes[run.battle.node]!.layer;
+    const layer = run.map.nodes[run.battle.node]!.layer + 10 * run.region;
     const fought = run;
     run = finishBattle(run, s);
     if (logFile) keep(...logBattle(ctx, fought, fought.battle!, s, run));
@@ -62,13 +64,15 @@ console.log(`first region cleared ${cleared1} (${((100 * cleared1) / runs).toFix
 console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
+console.log(`endings: ${[...endings.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);
 if (logFile) { writeFileSync(logFile, JSON.stringify({ game: "tac-tics", log: 1, events: log })); console.log(`play log: ${log.length} events -> ${logFile}`); }
 
 /** A simple player: takes the item reward (else the first), the first perk, burns shards at the fire only when badly hurt, buys what it can afford, heals if hurt. */
 function answerOffers(run: RunState): RunState {
   while (run.offers.length) {
     const o = run.offers[0]!;
-    if (o.kind === "perk" || o.kind === "talk") { keep(logChoice(ctx, run, 0)); run = choose(run, 0); }
+    if (o.kind === "perk" || o.kind === "talk" || o.kind === "quest" || o.kind === "job") { keep(logChoice(ctx, run, 0)); run = choose(run, 0); }
+    else if (o.kind === "altar") { const i = run.heroHp < heroMaxHp(run) * 0.5 ? 0 : 1; keep(logChoice(ctx, run, i)); run = choose(run, i); }
     else if (o.kind === "reward") {
       const hurt = run.heroHp < heroMaxHp(run) * 0.4;
       const i = hurt ? o.options.findIndex((r) => r.t === "heal") : o.options.findIndex((r) => r.t === "item");
