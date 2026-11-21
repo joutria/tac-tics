@@ -20,6 +20,7 @@ import type { Line } from "../data/rivals";
 import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, type Member } from "./party";
 import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, runEnder, type Rival } from "./rivals";
 import { NEMESIS, nemesisLine } from "./legacy";
+import type { Kit } from "../data/camp";
 import { HELP_LINES, MERCY, type HelpKind } from "../data/mercy";
 import { unsettled } from "../engine/state";
 import { ALIGN, SHIFT, type Align, type Meter, type Side } from "../data/alignment";
@@ -106,6 +107,8 @@ export interface RunState {
   combos?: string[];
   /** Poison hurts the party this much less per turn (Moheda's research, finished). */
   poisonWard?: number;
+  /** The starting kit the run set out with (data/camp.ts). */
+  kit?: string;
   /** A lost run: the rival (its id in `rivals`) who ended it. It becomes the next run's nemesis (run/legacy.ts). */
   endedBy?: string;
 }
@@ -122,7 +125,7 @@ export interface SparedFoe {
 }
 
 /** A new run. `nemesis` is the rival who ended the last one (legacy.ts carriedNemesis): it waits on the map. */
-export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?: Rival): RunState {
+export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?: Rival, kit?: Kit): RunState {
   const run: RunState = {
     version: RUN_VERSION, seed, difficulty, region: 0, map: regionMap(seed, 0), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
     coins: 0, shards: 0, rivals: [], party: [], remarks: [], offers: [], over: null,
@@ -131,6 +134,13 @@ export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?
     run.rivals.push(structuredClone(nemesis));
     placeRival(run.map, null, nemesis.id, `${seed}:nemesis`, NEMESIS.layer);
     run.remarks.push(nemesisLine("arrives", nemesis));
+  }
+  // The kit picked at the camp (data/camp.ts): what the hero sets out with.
+  if (kit) {
+    for (const id of kit.items ?? []) gainItem(run, id);
+    run.coins += kit.coins ?? 0;
+    run.shards += kit.shards ?? 0;
+    run.kit = kit.id;
   }
   return run;
 }

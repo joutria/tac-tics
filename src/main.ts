@@ -17,8 +17,9 @@ import { dangerZone } from "./engine/threat";
 import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { charged } from "./engine/terrain";
-import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { carriedNemesis, closeRun, newLegacy, type Legacy } from "./run/legacy";
+import { rivalName, rivalTaunt, rivalTitle } from "./run/rivals";
+import { carriedNemesis, closeRun, hasMilestone, kitOf, newLegacy, type Legacy } from "./run/legacy";
+import { KITS, LORE, MILESTONE_HINT } from "./data/camp";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
 import { choices } from "./run/map";
 import { memberSpec } from "./run/party";
@@ -116,6 +117,10 @@ let onMap = true;
 
 /** While true, the map shows the Easy / Normal / Hard choice instead of the run. */
 let choosingDifficulty = false;
+/** While true (and choosing), the camp between runs shows first: the record, kits and lore (data/camp.ts). */
+let atCamp = false;
+/** The lore page open at the camp. */
+let campPage: string | null = null;
 /** While true, the map shows the play log panel. */
 let statsOpen = false;
 /** When the battle on screen started, for the play log (0 for a battle resumed from a save). */
@@ -127,6 +132,8 @@ function startRun() {
   if (journey && !journey.over && !choosingDifficulty && (journey.path.length || journey.battle)) record(logRunEnd(PLAYER, journey, "abandoned"));
   journey = newRun(`${Date.now()}`);
   choosingDifficulty = true;
+  // The camp only shows once there is something behind the hero: a first journey goes straight to the difficulty.
+  atCamp = loadLegacy().runs > 0; campPage = null;
   showMap();
 }
 
@@ -140,10 +147,55 @@ function closeLegacy() {
 }
 
 function pickDifficulty(d: Difficulty) {
-  journey = newRun(`${Date.now()}`, d, carriedNemesis(loadLegacy()));
+  const legacy = loadLegacy();
+  journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy));
   choosingDifficulty = false;
   record(logRunStart(PLAYER, journey));
   showMap();
+}
+
+function saveLegacy(f: (l: Legacy) => void) { const l = loadLegacy(); f(l); safeSet(LEGACY_KEY, JSON.stringify(l)); }
+
+/** The camp between runs: what the hero has done so far, the starting kits it opened, and the journal pages. */
+function renderCamp(panel: HTMLElement) {
+  panel.style.display = "flex";
+  const legacy = loadLegacy(), fresh = new Set(legacy.fresh ?? []), kit = kitOf(legacy);
+  const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text = "") => { const e = document.createElement(tag); e.className = cls; e.textContent = text; return e; };
+  const title = el("h2", "", t(lang, "camp"));
+  const rec = el("p", "say", t(lang, "campRecord", { runs: legacy.runs, wins: legacy.wins, settled: legacy.settled.length }));
+  const parts: HTMLElement[] = [title, rec];
+  if (legacy.nemesis) parts.push(el("p", "say down", t(lang, "campNemesis", { name: rivalName(legacy.nemesis, lang) })));
+  const card = (open: boolean, isNew: boolean, name: string, desc: string, hint: string) => {
+    const b = el("button", "card"); b.disabled = !open;
+    const n = el("b", "", open ? name : `🔒 ${t(lang, "campLocked")}`);
+    if (isNew) n.append(" ", el("em", "", t(lang, "campNew")));
+    b.append(n, el("small", "", open ? desc : hint));
+    return b;
+  };
+  const kits = el("div", "cards");
+  for (const k of KITS) {
+    const open = hasMilestone(legacy, k.needs);
+    const b = card(open, !!k.needs && fresh.has(k.needs), k.name[lang], k.desc[lang], k.needs ? MILESTONE_HINT[k.needs][lang] : "");
+    if (k.id === kit.id) { b.classList.add("worn"); b.setAttribute("aria-pressed", "true"); }
+    b.dataset.kit = k.id;
+    b.onclick = () => { saveLegacy((l) => { l.kit = k.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-kit="${k.id}"]`)?.focus(); };
+    kits.append(b);
+  }
+  const lore = el("div", "cards");
+  for (const page of LORE) {
+    const open = hasMilestone(legacy, page.needs);
+    const b = card(open, fresh.has(page.needs), page.title[lang], campPage === page.id ? page.text[lang] : "…", MILESTONE_HINT[page.needs][lang]);
+    b.setAttribute("aria-expanded", String(campPage === page.id));
+    b.onclick = () => { campPage = campPage === page.id ? null : page.id; showMap(); document.querySelector<HTMLButtonElement>(`[data-lore="${page.id}"]`)?.focus(); };
+    b.dataset.lore = page.id;
+    lore.append(b);
+  }
+  const go = el("button", "", t(lang, "campSetOut"));
+  // Leaving the camp: what was new has been seen.
+  go.onclick = () => { saveLegacy((l) => { l.fresh = []; }); atCamp = false; showMap(); };
+  parts.push(go, el("h3", "", t(lang, "campKits")), kits, el("h3", "", t(lang, "campLore")), lore);
+  panel.replaceChildren(...parts);
+  go.focus();
 }
 
 function renderDifficulty(panel: HTMLElement) {
@@ -181,7 +233,7 @@ function showMap() {
     twin: (base, on) => { try { update(wearTwin(journey, base, on)); document.querySelector<HTMLButtonElement>(`[data-twin="${base}"]`)?.focus(); } catch (e) { console.warn(e); } },
     newRun: () => startRun(),
   }, gearOpen, () => { gearOpen = false; showMap(); });
-  if (choosingDifficulty) renderDifficulty($("runPanel"));
+  if (choosingDifficulty) (atCamp ? renderCamp : renderDifficulty)($("runPanel"));
   else if (statsOpen) renderStats($("runPanel"), lang, () => { statsOpen = false; showMap(); });
   const label = (id: string, ic: IconId | null, text: string, help: string) => {
     $(id).innerHTML = `${ic ? icon(ic) : ""}<span class="lbl">${text}</span>`; $(id).setAttribute("aria-label", text);

@@ -9,6 +9,8 @@ import { NEMESIS_LINES } from "../data/rivals";
 import { rivalName, type Rival } from "./rivals";
 import type { RunState } from "./run";
 import { DEPTH_HP, DEPTH_STAT } from "../data/region";
+import { KITS, type Kit, type Milestone } from "../data/camp";
+import { endingOf } from "./party";
 
 export interface Legacy {
   version: 1;
@@ -21,6 +23,12 @@ export interface Legacy {
   settled: { name: string; epithet: number; how: "finished" | "spared"; run: number }[];
   /** Seed of the last run folded in, so a run is never counted twice (the end screen can be reloaded). */
   lastRun?: string;
+  /** What the player has done in any run (data/camp.ts): opens kits and lore pages at the camp. */
+  milestones?: Milestone[];
+  /** Milestones the last run reached for the first time (shown as new at the camp). */
+  fresh?: Milestone[];
+  /** The starting kit picked at the camp. */
+  kit?: string;
 }
 
 /** Levels a nemesis loses when it carries over; shards the party gets for settling it; the first map layer it can
@@ -64,7 +72,24 @@ export function closeRun(legacy: Legacy, run: RunState): Legacy {
   } else if (carried) next.nemesis = structuredClone(carried);
   const ender = run.endedBy ? run.rivals.find((r) => r.id === run.endedBy) : undefined;
   if (ender && !ender.settled) next.nemesis = structuredClone(ender);
+  // Milestones: what this run did that opens something at the camp.
+  const reached: Milestone[] = ["firstRun"];
+  if ((run.region ?? 0) > 0 || run.over === "won") reached.push("region1");
+  if (run.over === "won") reached.push("runWon");
+  if (carried?.settled || run.rivals.some((r) => r.nemesis && r.settled)) reached.push("nemesisSettled");
+  if (run.spared?.length) reached.push("spared");
+  for (const m of run.party) if (endingOf(m) === "good") reached.push("anyGood", `good:${m.id}` as Milestone);
+  const had = new Set(next.milestones ?? []);
+  next.fresh = [...new Set(reached.filter((m) => !had.has(m)))];
+  next.milestones = [...had, ...next.fresh];
   return next;
+}
+
+export const hasMilestone = (legacy: Legacy | undefined, m: Milestone | null) => m === null || !!legacy?.milestones?.includes(m);
+/** The kit a new run starts with: the one picked at the camp, if it is open, else the plain one. */
+export function kitOf(legacy: Legacy | undefined): Kit {
+  const k = KITS.find((x) => x.id === legacy?.kit);
+  return k && hasMilestone(legacy, k.needs) ? k : KITS[0]!;
 }
 
 /** Fills a nemesis line with the rival's name. */
