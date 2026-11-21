@@ -440,6 +440,12 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       toast(t(lang, "shockedToast", { name: u.name }));
       continue;
     }
+    if (ev.e === "trampled") {
+      // A giant walking through: crates it crushes break with a puff, tall grass it treads on goes flat.
+      for (const p of ev.crushed) { floaters.push({ pos: { ...p }, text: `✕ ${t(lang, "broken")}`, color: "#e8f4ff", born: now }); bursts.push({ pos: { ...p }, born: now, kind: "smoke" }); }
+      if (ev.crushed.length) shakeUntil = now + 220;
+      continue;
+    }
     if (ev.e === "sapped") {
       const u = unitById(state, ev.unit), info = STATUS[ev.status];
       floaters.push({ pos: { ...u.pos }, text: `${info.icon} ${t(lang, "sapGood")}`, color: info.colour, born: now });

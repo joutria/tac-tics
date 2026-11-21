@@ -120,3 +120,28 @@ export function parseMap(id: string, rows: string[]): GridMap {
   parsed.forEach((r, y) => { if (r.length !== w) throw new Error(`map ${id}: row ${y} has ${r.length} tiles, expected ${w}`); });
   return { id, w, h: parsed.length, tiles: parsed.flat() };
 }
+
+/* Giants. A unit can take up a square of size x size tiles (bosses: 2x2). `pos` is its corner with the lowest x and
+   y; every other rule asks the helpers below instead of comparing `pos` directly. */
+
+/** The tiles of a size x size body whose corner is at `p`. */
+export function cellsOf(p: Pos, size = 1): Pos[] {
+  if (size <= 1) return [{ x: p.x, y: p.y }];
+  const out: Pos[] = [];
+  for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) out.push({ x: p.x + dx, y: p.y + dy });
+  return out;
+}
+
+/** Whether `q` is one of the tiles of a body of `size` at `p`. */
+export const coversPos = (p: Pos, size: number, q: Pos) => q.x >= p.x && q.y >= p.y && q.x < p.x + size && q.y < p.y + size;
+
+/** The tile of a body (corner `p`, `size`) closest to `to`: where it attacks from and is hit on. */
+export const nearestCell = (p: Pos, size: number, to: Pos): Pos =>
+  size <= 1 ? { x: p.x, y: p.y } : { x: Math.max(p.x, Math.min(p.x + size - 1, to.x)), y: Math.max(p.y, Math.min(p.y + size - 1, to.y)) };
+
+/** Steps between two bodies (Manhattan, between their closest tiles): 1 = side by side. */
+export function bodyGap(a: Pos, as: number, b: Pos, bs: number): number {
+  const dx = Math.max(0, a.x - (b.x + bs - 1), b.x - (a.x + as - 1));
+  const dy = Math.max(0, a.y - (b.y + bs - 1), b.y - (a.y + as - 1));
+  return dx + dy;
+}

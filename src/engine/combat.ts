@@ -15,7 +15,7 @@
    once a turn, for everyone, and cannot move heavy units such as bosses. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
-import { HIDE_RANGE, inside, manhattan, NEIGHBOURS, Pos, samePos, standable, TERRAIN, tileAt, type Terrain } from "./grid";
+import { bodyGap, cellsOf, coversPos, HIDE_RANGE, inside, manhattan, NEIGHBOURS, nearestCell, Pos, samePos, standable, TERRAIN, tileAt, type Terrain } from "./grid";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor, yielding } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
@@ -23,7 +23,7 @@ import { EXECUTIONER_FACTOR, GUARD_FACTOR } from "../data/jobs";
 import { hasLineOfSight } from "./sight";
 import { canStep } from "./movement";
 import { burning, chainBolt, explode, giveFire, takeFire, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
-import { isFoe, unitAt, type BattleState, type Unit } from "./state";
+import { bodiesInWay, isFoe, nearestOf, sizeOf, unitAt, unitGap, type BattleState, type Unit } from "./state";
 
 /* Pacing (FFTA-style, 2026-11-21): positional bonuses are a nudge, not a kill switch. Standing high, hitting
    from behind and Guard all used to stack into one-turn knockouts, which made camping the only safe play. */
@@ -50,6 +50,8 @@ export const LANDING: Partial<Record<Terrain, number>> = { grass: 0.85, ice: 1.2
 export const FALL_AGI_CAP = 0.4;
 /** A shove moves 2 tiles instead of 1 when the shover's Strength beats the target's by this much. */
 export const SHOVE_STRONG = 10;
+/** A giant takes this many tiles off every push: a plain Shove cannot move it, a strong one moves it 1. */
+export const GIANT_PUSH_RESIST = 1;
 
 export interface Hit {
   unit: string;
@@ -94,7 +96,8 @@ export interface Hit {
     for now: in AI runs it cut the Normal clear rate from 27% to 18%. */
 export const QUICK_SHARED = ["shove", "jump", "throw", "dip"];
 export const unitAbilities = (u: Unit) => [...u.abilities, "helpUp", ...(u.team === "heroes" ? ["spare"] : []),
-  ...QUICK_SHARED.filter((q) => u.team === "heroes" || q !== "throw"), ...(u.quick ? [u.quick] : [])];
+  // Giants do not Jump.
+  ...QUICK_SHARED.filter((q) => (u.team === "heroes" || q !== "throw") && (sizeOf(u) <= 1 || q !== "jump")), ...(u.quick ? [u.quick] : [])];
 /** Thrown crates hit for this (x Strength), and fly this far (+1 with Strength 10 or more). */
 export const THROW_HIT = 6;
 export const THROW_RANGE = 3;
@@ -142,33 +145,34 @@ export function guardAbility(u: Unit): string | null {
 /** A unit standing (up) in tall grass is hidden from enemies more than HIDE_RANGE tiles from it, until it attacks
     (then it is seen until its next turn). */
 export function hiddenFrom(s: BattleState, viewer: Unit, u: Unit, from: Pos = viewer.pos): boolean {
-  return u.life === "up" && !u.revealed && isFoe(viewer, u) && tileAt(s.map, u.pos)?.terrain === "tallgrass" && manhattan(from, u.pos) > HIDE_RANGE;
+  // A giant is far too big to hide (and tramples the grass anyway); a giant viewer looks from its nearest tile.
+  return u.life === "up" && sizeOf(u) <= 1 && !u.revealed && isFoe(viewer, u) && tileAt(s.map, u.pos)?.terrain === "tallgrass"
+    && bodyGap(from, sizeOf(viewer), u.pos, 1) > HIDE_RANGE;
 }
 
 /** Why a cast is not allowed, or null when it is. `from` lets the AI test casts from other tiles. */
-export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, from: Pos = u.pos): string | null {
+export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, at: Pos = u.pos): string | null {
   const avail = abilityAvailable(u, id);
   if (avail) return avail;
   const ab = ABILITIES[id]!;
   if (!inside(s.map, target)) return "outside the map";
+  // A giant casts from whichever of its tiles is closest to the target.
+  const from = nearestCell(at, sizeOf(u), target);
   const d = manhattan(from, target);
   if (d < ab.range[0] || d > maxRange(s, ab, from, target, u)) return "out of range";
   if ((ab.jump || ab.step) && u.rooted) return "rooted";
   const occupant = unitAt(s, target);
   const other = occupant && occupant.id !== u.id ? occupant : undefined;
-  if (other && hiddenFrom(s, u, other, from)) return "hidden in tall grass";
-  if (ab.los && d > 0 && !hasLineOfSight(s.map, from, target, (p) => {
-    const o = unitAt(s, p);
-    return !!o && o.life === "up" && o.id !== u.id && !samePos(p, target);
-  })) return "no line of sight";
+  if (other && hiddenFrom(s, u, other, at)) return "hidden in tall grass";
+  if (ab.los && d > 0 && !hasLineOfSight(s.map, from, target, bodiesInWay(s, [u.id], target))) return "no line of sight";
   switch (ab.target) {
     case "foe": if ((!other || !isFoe(u, other)) && !(tileAt(s.map, target)?.prop && (ab.damage || ab.push))) return "needs an enemy";
-      if (ab.shove && other?.heavy) return "too heavy to shove";
+      if (ab.shove && other && (other.heavy || pushTiles(ab, u, other) <= 0)) return "too heavy to shove";
       break;
     case "unit": if (ab.push && !other && tileAt(s.map, target)?.prop) break;
-      if (!other || other.life !== "up") return "needs a unit"; if (ab.push && other.heavy) return "too heavy to shove"; break;
+      if (!other || other.life !== "up") return "needs a unit"; if (ab.push && (other.heavy || pushTiles(ab, u, other) <= 0)) return "too heavy to shove"; break;
     case "prop": { const p = tileAt(s.map, target)?.prop; if (p !== "crate" && p !== "barrel") return "needs a crate or barrel"; break; }
-    case "ally": { const t = samePos(target, from) ? u : other; if (!t || isFoe(u, t) || t.life !== "up") return "needs a standing ally"; break; }
+    case "ally": { const t = coversPos(at, sizeOf(u), target) ? u : other; if (!t || isFoe(u, t) || t.life !== "up") return "needs a standing ally"; break; }
     // Help up also frees a standing ally from Root or Stun.
     case "downedAlly": if (!other || isFoe(u, other) || !(other.life === "downed" || (ab.revive && other.life === "up" && other.id !== u.id && stuck(other)))) return "needs a downed, rooted or stunned ally"; break;
     case "yielding": if (!other || !isFoe(u, other) || !yielding(other)) return "needs a yielding foe"; break;
@@ -181,9 +185,9 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
     }
     case "any": break;
   }
-  if (ab.dip && !dipSource(s, from)) return "needs fire or Sap next to you";
+  if (ab.dip && !cellsOf(at, sizeOf(u)).some((c) => dipSource(s, c))) return "needs fire or Sap next to you";
   if (ab.combo) {
-    const why = comboProblem(s, u, ab, from);
+    const why = comboProblem(s, u, ab, at);
     if (why) return why;
     if (ab.combo.onPartner && other?.id !== ab.combo.partner) return "needs the combo partner";
   }
@@ -195,7 +199,7 @@ export function comboProblem(s: BattleState, u: Unit, ab: Ability, from: Pos = u
   if (!ab.combo) return null;
   const p = s.units.find((x) => x.id === ab.combo!.partner);
   if (!p || p.life !== "up" || isFoe(u, p)) return "the combo partner is not standing";
-  if (manhattan(from, p.pos) > ab.combo.reach) return "the combo partner is too far";
+  if (bodyGap(from, sizeOf(u), p.pos, sizeOf(p)) > ab.combo.reach) return "the combo partner is too far";
   return null;
 }
 
@@ -225,10 +229,12 @@ export function areaTiles(ab: Ability, target: Pos): Pos[] {
 }
 
 /** Everything that changes the damage except the roll and the critical. */
-export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Ability, from: Pos = caster.pos): number {
+export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Ability, at: Pos = caster.pos): number {
   if (!ab.damage) return 0;
   const stat = ab.damage.stat === "str" ? caster.str : caster.mag;
-  const up = (tileAt(s.map, from)?.h ?? 0) - (tileAt(s.map, target.pos)?.h ?? 0);
+  // Giants: the caster's tile closest to the target, and the target's tile closest to that.
+  const from = nearestCell(at, sizeOf(caster), nearestOf(target, at));
+  const up = (tileAt(s.map, from)?.h ?? 0) - (tileAt(s.map, nearestOf(target, from))?.h ?? 0);
   const height = 1 + Math.min(HEIGHT_CAP, Math.max(0, up) * HEIGHT_PER_LEVEL);
   const res = (target.res[ab.element] ?? 0) / 100;
   const weak = statusOf(caster, "weaken") ? WEAKEN_FACTOR : 1;
@@ -240,7 +246,7 @@ export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Abi
 function passiveFactor(s: BattleState, caster: Unit, target: Unit): number {
   let f = caster.passive === "executioner" && target.hp < target.maxHp / 2 ? EXECUTIONER_FACTOR : 1;
   const guarded = s.units.some((g) => g.passive === "guard" && g.id !== target.id && g.life === "up" && !isFoe(g, target)
-    && Math.abs(g.pos.x - target.pos.x) + Math.abs(g.pos.y - target.pos.y) === 1);
+    && unitGap(g, target) === 1);
   if (guarded) f *= GUARD_FACTOR;
   return f;
 }
@@ -248,7 +254,9 @@ function passiveFactor(s: BattleState, caster: Unit, target: Unit): number {
 /** Where the attack lands relative to the way the target faces. */
 export function directionBonus(target: Unit, from: Pos): number {
   const f = { N: { x: 0, y: -1 }, S: { x: 0, y: 1 }, E: { x: 1, y: 0 }, W: { x: -1, y: 0 } }[target.facing];
-  const d = { x: from.x - target.pos.x, y: from.y - target.pos.y };
+  // Measured from the middle of the target's body (a giant's middle is between its four tiles).
+  const half = (sizeOf(target) - 1) / 2;
+  const d = { x: from.x - target.pos.x - half, y: from.y - target.pos.y - half };
   const dot = f.x * d.x + f.y * d.y;
   const cross = Math.abs(f.x * d.y - f.y * d.x);
   if (dot > cross) return 1;          // in front
@@ -272,10 +280,10 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
 
 function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, fx: TerrainFx[]): Hit[] {
   const hits: Hit[] = [];
-  const from = { ...caster.pos };
+  const from = nearestOf(caster, target);
   if (ab.teleport) { caster.pos = { ...target }; return hits; }
   if (ab.aim) { caster.aiming = true; return hits; }
-  if (ab.dip) { caster.dipped = dipSource(s, from) ?? false; return hits; }
+  if (ab.dip) { caster.dipped = cellsOf(caster.pos, sizeOf(caster)).map((c) => dipSource(s, c)).find(Boolean) ?? false; return hits; }
   if (ab.spare) {
     const u = unitAt(s, target);
     if (!u) return hits;
@@ -286,11 +294,15 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
   const ground: TerrainHit[] = [];
   const credit = (u: Unit, h: { downed: boolean; died: boolean }) => { if ((h.downed || h.died) && isFoe(caster, u)) caster.downs += 1; };
   const hurtByTerrain = (u: Unit, dmg: number, h: TerrainHit) => { hurt(u, dmg, h); credit(u, h); };
+  const struck = new Set<string>();
   for (const p of areaTiles(ab, target)) {
     touchTile(s, ab, from, p, fx, ground, hurtByTerrain, caster.str);
     const u = unitAt(s, p);
     // An area attack hits allies caught in it, but never the one who casts it (so it can be used point-blank).
-    if (!u || (u.id === caster.id && ab.damage) || (ab.alliesOnly && isFoe(caster, u)) || (ab.foesOnly && !isFoe(caster, u))) continue;
+    // A giant under several tiles of the area is still hit once.
+    if (!u || struck.has(u.id)) continue;
+    struck.add(u.id);
+    if ((u.id === caster.id && ab.damage) || (ab.alliesOnly && isFoe(caster, u)) || (ab.foesOnly && !isFoe(caster, u))) continue;
     const hit: Hit = { unit: u.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false };
     if (ab.revive && u.life === "up") {
       if (u.rooted) { u.rooted = false; hit.freed = true; }
@@ -334,7 +346,7 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
     if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [...(hit.statuses ?? []), ab.status.id];
     if (ab.also && u.life === "up" && addStatus(u, ab.also)) hit.statuses = [...(hit.statuses ?? []), ab.also.id];
     const extra: Hit[] = [];
-    if (ab.push && u.life === "up") push(s, caster, u, from, ab.shove ? shoveDistance(caster, u) : ab.push, hit, extra, fx, ground, hurtByTerrain);
+    if (ab.push && u.life === "up") push(s, caster, u, from, pushTiles(ab, caster, u), hit, extra, fx, ground, hurtByTerrain);
     credit(u, hit);
     hits.push(hit);
     for (const e of extra) { credit(s.units.find((x) => x.id === e.unit)!, e); hits.push(e); }
@@ -431,6 +443,9 @@ function throwProp(s: BattleState, thrower: Unit, from: Pos, at: Pos, hits: Hit[
 
 /** Tiles a Shove moves the target: 1, or 2 when the shover is much stronger. */
 export const shoveDistance = (caster: Unit, target: Unit) => caster.str >= target.str + SHOVE_STRONG ? 2 : 1;
+/** Tiles a push ability moves `target` before anything stops it: a giant shrugs off GIANT_PUSH_RESIST of them. */
+export const pushTiles = (ab: Ability, caster: Unit, target: Unit) =>
+  Math.max(0, (ab.shove ? shoveDistance(caster, target) : ab.push ?? 0) - (sizeOf(target) > 1 ? GIANT_PUSH_RESIST : 0));
 
 /** Damage for falling `levels` levels onto `land`. It grows with the drop, the pusher's Strength (which grows
     with level) and a hard landing, and shrinks with the target's Agility, its Stone resistance and job passives
@@ -472,6 +487,7 @@ export interface PushOutcome {
 export const stuck = (u: Unit) => u.rooted || !!statusOf(u, "stun");
 
 export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number): PushOutcome {
+  if (sizeOf(u) > 1) return giantPushOutcome(s, pusher, u, from, tiles);
   const dx = u.pos.x - from.x, dy = u.pos.y - from.y;
   const step = Math.abs(dx) >= Math.abs(dy) ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dy) };
   let at = { ...u.pos }, fell = 0, slid = false;
@@ -490,7 +506,8 @@ export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, ti
       const crush = fallDamage(s, pusher, u, fell + here.h - next.h, next.terrain);
       const b = { x: n.x + step.x, y: n.y + step.y }, beyond = tileAt(s.map, b);
       out.landedOn = true; out.blocker = "unit"; out.other = other.id; out.at = n; out.splash = crush;
-      if (standable(beyond) && !unitAt(s, b) && beyond.h <= next.h) { out.otherTo = b; at = n; }
+      // A giant below is not knocked aside: the faller bounces back.
+      if (sizeOf(other) <= 1 && standable(beyond) && !unitAt(s, b) && beyond.h <= next.h) { out.otherTo = b; at = n; }
       out.to = at; out.fell = fell + here.h - next.h; out.fall = Math.floor(crush / 2);
       return out;
     }
@@ -512,6 +529,47 @@ export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, ti
     at = n;
     // Ice: a push that ends on it slides one tile further (once).
     if (i === tiles - 1 && next.terrain === "ice" && !slid) { slid = true; out.slid = true; tiles++; }
+  }
+  out.to = at; out.fell = fell;
+  out.fall = fallDamage(s, pusher, u, fell, tileAt(s.map, at)!.terrain);
+  return out;
+}
+
+/** A push on a giant: its whole body moves, straight away from the pusher (measured from the middle of the body).
+    Every tile it moves onto must be free and no higher than the tile it leaves, or the push stops there and slams
+    it, as for anyone. It falls by how much its highest tile drops. Nobody is knocked aside by it. */
+function giantPushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number): PushOutcome {
+  const size = sizeOf(u), half = (size - 1) / 2;
+  const dx = u.pos.x + half - from.x, dy = u.pos.y + half - from.y;
+  const step = Math.abs(dx) >= Math.abs(dy) ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dy) };
+  let at = { ...u.pos }, fell = 0;
+  const out: PushOutcome = { to: at, bump: 0, fall: 0, fell: 0, splash: 0 };
+  if ((!step.x && !step.y) || tiles <= 0) return out;
+  const top = (p: Pos) => Math.max(...cellsOf(p, size).map((c) => tileAt(s.map, c)?.h ?? 0));
+  for (let i = 0; i < tiles; i++) {
+    const n = { x: at.x + step.x, y: at.y + step.y };
+    // The tiles the body moves onto (its leading edge), each with the tile of its own it leaves.
+    const lead = cellsOf(n, size).filter((c) => !coversPos(at, size, c));
+    let stop: { kind: Blocker; mult: number; at: Pos; other?: string } | null = null;
+    for (const c of lead) {
+      const here = tileAt(s.map, { x: c.x - step.x, y: c.y - step.y })!, next = tileAt(s.map, c);
+      const other = unitAt(s, c);
+      if (!next) { stop = { kind: "edge", mult: SLAM.edge, at: c }; break; }
+      if (next.prop) { stop = { kind: next.prop, mult: SLAM[next.prop], at: c }; break; }
+      if (other && other.id !== u.id) { stop = { kind: "unit", mult: SLAM.unit, at: c, other: other.id }; break; }
+      if (!TERRAIN[next.terrain].walkable) { const k = next.terrain as Blocker; stop = { kind: k, mult: SLAM[k as keyof typeof SLAM] ?? 1, at: c }; break; }
+      if (next.h > here.h) { stop = { kind: "step", mult: 1 + STEP_SLAM_PER_LEVEL * (next.h - here.h), at: c }; break; }
+    }
+    if (stop) {
+      out.blocker = stop.kind; out.at = stop.at;
+      if (stop.other) out.other = stop.other;
+      out.bump = Math.floor(PUSH_HIT * (tiles - i) * stop.mult);
+      if (stop.kind === "unit") out.splash = Math.floor(out.bump * SLAM_SHARE);
+      if (stop.kind === "crate") out.splash = out.bump;
+      break;
+    }
+    fell += Math.max(0, top(at) - top(n));
+    at = n;
   }
   out.to = at; out.fell = fell;
   out.fall = fallDamage(s, pusher, u, fell, tileAt(s.map, at)!.terrain);

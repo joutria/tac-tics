@@ -3,11 +3,11 @@
    as the game itself, so the overlay never lies. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { maxRange } from "./combat";
-import { inside, manhattan, Pos, samePos } from "./grid";
+import { inside, manhattan, nearestCell, Pos } from "./grid";
 import { turnMp } from "./escape";
 import { reachable } from "./movement";
 import { hasLineOfSight } from "./sight";
-import { BattleState, moveRules, unitAt, type Unit } from "./state";
+import { BattleState, bodiesInWay, moveRules, sizeOf, type Unit } from "./state";
 
 const key = (p: Pos) => `${p.x},${p.y}`;
 
@@ -27,15 +27,13 @@ export function nextTurnSpots(s: BattleState, u: Unit): Pos[] {
 }
 
 /** Can `ab` cast from `from` reach `to`, with range, height and line of sight? Units other than `ignore` and the
-    target block sight, as in the real cast check. */
-export function abilityReaches(s: BattleState, ab: Ability, from: Pos, to: Pos, ignore: string): boolean {
+    target block sight, as in the real cast check. A giant (`size` 2, `from` its corner) casts from its closest tile. */
+export function abilityReaches(s: BattleState, ab: Ability, at: Pos, to: Pos, ignore: string, size = 1): boolean {
+  const from = nearestCell(at, size, to);
   const d = manhattan(from, to);
   if (d < ab.range[0] || d > maxRange(s, ab, from, to)) return false;
   if (!ab.los || d === 0) return true;
-  return hasLineOfSight(s.map, from, to, (p) => {
-    const o = unitAt(s, p);
-    return !!o && o.life === "up" && o.id !== ignore && !samePos(p, to);
-  });
+  return hasLineOfSight(s.map, from, to, bodiesInWay(s, [ignore], to));
 }
 
 /** Every tile a unit could hit next turn (after walking), with the abilities that reach it. */
@@ -44,14 +42,14 @@ export function dangerZone(s: BattleState, u: Unit): Map<string, string[]> {
   if (u.life !== "up") return out;
   const spots = nextTurnSpots(s, u);
   for (const ab of readyAttacks(u)) {
-    const reach = ab.range[1] + 3; // height can add up to 3 levels of reach
+    const size = sizeOf(u), reach = ab.range[1] + 3 + size - 1; // height can add up to 3 levels of reach
     for (const from of spots) {
       for (let dy = -reach; dy <= reach; dy++) for (let dx = -reach; dx <= reach; dx++) {
         const to = { x: from.x + dx, y: from.y + dy };
         if (!inside(s.map, to)) continue;
         const k = key(to), list = out.get(k);
         if (list?.includes(ab.id)) continue;
-        if (!abilityReaches(s, ab, from, to, u.id)) continue;
+        if (!abilityReaches(s, ab, from, to, u.id, size)) continue;
         if (list) list.push(ab.id); else out.set(k, [ab.id]);
       }
     }
