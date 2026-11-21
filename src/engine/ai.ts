@@ -5,7 +5,7 @@
    with line of sight and height (so they hide behind obstacles and look for high ground). It also reads how the
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
 import { ABILITIES, type Ability } from "../data/abilities";
-import { abilityAvailable, areaTiles, damagePreview, maxRange, pushOutcome, shoveDistance, throwOutcome, unitAbilities } from "./combat";
+import { abilityAvailable, areaTiles, damagePreview, guardAbility, maxRange, previewEffects, pushOutcome, shoveDistance, stuck, throwOutcome, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain";
 import { reachable } from "./movement";
@@ -106,8 +106,21 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
     + (nearBarrel(s, spot) ? BLAST_DAMAGE * 0.5 : 0)
     + (ground?.surface === "sap" ? (u.team === "heroes" ? 6 : -4) : 0)
     + (ground?.surface === "oil" ? 2 : 0)
-    + (NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }))) ? 4 : 0);
+    + (NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }))) ? 4 : 0)
+    + guardDanger(s, u, spot);
   return -threat * caution + offense - spacing + height + cover - nearest * late - hazard;
+}
+
+/** An enemy on Guard next to `spot` would strike on the way in: its average hit (approximate, ignores the path). */
+function guardDanger(s: BattleState, u: Unit, spot: Pos): number {
+  let v = 0;
+  for (const g of s.units) {
+    if (!g.guard || g.life !== "up" || !isFoe(g, u) || Math.abs(g.pos.x - spot.x) + Math.abs(g.pos.y - spot.y) !== 1) continue;
+    if (Math.abs(g.pos.x - u.pos.x) + Math.abs(g.pos.y - u.pos.y) === 1) continue; // already next to it: no hit
+    const d = ABILITIES[g.guard]?.damage;
+    if (d) v += (d.min + d.max) / 2;
+  }
+  return v;
 }
 
 /** Value of casting `ab` on `target` from `from`: expected damage, kills, finishing downed foes, healing. */
@@ -149,6 +162,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (!hit) return 0;
     return isFoe(u, hit) ? Math.min(o.damage, hit.hp) + (o.damage >= hit.hp ? 25 : 0) : -(o.damage * 1.5 + 5);
   }
+  if (ab.push && ab.area === "single" && tileAt(s.map, target)?.prop && !unitAt(s, target)) return objectPushValue(s, u, ab, from, target);
   let flared = false;
   for (const p of areaTiles(ab, target)) {
     if ((ab.damage || ab.element === "fire") && tileAt(s.map, p)?.prop === "barrel") v += blastValue(s, u, p, from);
@@ -167,6 +181,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     }
     if (ab.heal && !enemy && o.life === "up") v += Math.min(avg(ab.heal), o.maxHp - o.hp);
     if (ab.revive && !enemy && o.life === "downed") v += 40;
+    if (ab.revive && !enemy && o.life === "up" && o.id !== u.id) v += (statusOf(o, "stun") ? 20 : 0) + (o.rooted ? 8 : 0);
     if (ab.root && enemy && o.life === "up") v += 6;
     if (ab.push && enemy && o.life === "up") {
       // What the push itself does: a fall or a slam is damage (and can down), and a shove that moves nothing is worthless.
@@ -181,6 +196,22 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     }
     if (ab.status && o.life === "up" && (o.id !== u.id || !ab.damage)) v += statusValue(ab.status, o, enemy);
   }
+  return v;
+}
+
+/** Pushing a crate, barrel or boulder: worth the damage it does to whoever it runs into, and any blast it sets off. */
+function objectPushValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos): number {
+  const me = s.units.find((x) => x.id === u.id)!;
+  const moved = samePos(me.pos, from) ? s : { ...s, units: s.units.map((x) => (x.id === u.id ? { ...x, pos: { ...from } } : x)) };
+  const fx = previewEffects(moved, { ...me, pos: { ...from } }, ab, target);
+  let v = 0;
+  for (const sp of fx.splashes) {
+    const o = s.units.find((x) => x.id === sp.unit);
+    if (!o || !sp.damage) continue;
+    if (isFoe(u, o)) v += o.life === "downed" ? 45 : Math.min(sp.damage, o.hp) + (sp.damage >= o.hp ? 25 : 0);
+    else v -= sp.damage * 1.5 + 5;
+  }
+  for (const b of fx.blasts) v += blastValue(s, u, b, from);
   return v;
 }
 
@@ -210,6 +241,7 @@ function candidateTargets(s: BattleState, ab: Ability): Pos[] {
     if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }
   if (ab.throwProp) s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
+  if (ab.push && ab.area === "single") s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   if (ab.damage) s.map.tiles.forEach((t, i) => { if (t.prop === "barrel") { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   return [...spots.values()];
 }
@@ -261,9 +293,10 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
       for (const t of targets) {
         if (!reaches(s, ab, sp.p, t, [u.id])) continue;
         const occupant = unitAt(s, t);
-        if (ab.target === "foe" && (!occupant || !isFoe(u, occupant))) continue;
+        const pushable = !occupant && !!ab.push && ab.area === "single" && !!tileAt(s.map, t)?.prop;
+        if (ab.target === "foe" && !pushable && (!occupant || !isFoe(u, occupant))) continue;
         if (ab.target === "ally" && (!occupant || isFoe(u, occupant) || occupant.life !== "up")) continue;
-        if (ab.target === "downedAlly" && (!occupant || isFoe(u, occupant) || occupant.life !== "downed")) continue;
+        if (ab.target === "downedAlly" && (!occupant || isFoe(u, occupant) || !(occupant.life === "downed" || (ab.revive && occupant.id !== u.id && stuck(occupant))))) continue;
         if (ab.target === "yielding" && (!occupant || !isFoe(u, occupant) || !yielding(occupant))) continue;
         const act = actionValue(s, u, ab, sp.p, t, opts);
         if (act <= 0) continue;
@@ -297,6 +330,12 @@ function escapeTurn(start: BattleState, run: (c: Command) => boolean, now: () =>
   if (!samePos(best.p, me.pos)) run({ t: "move", unit: id, to: best.p });
 }
 
+function guardWorth(s: BattleState, me: Unit): boolean {
+  if (!guardAbility(me)) return false;
+  return s.units.some((o) => o.life === "up" && isFoe(me, o) && Math.abs(o.pos.x - me.pos.x) + Math.abs(o.pos.y - me.pos.y) > 1
+    && Math.abs(o.pos.x - me.pos.x) + Math.abs(o.pos.y - me.pos.y) <= o.maxMp + 1);
+}
+
 /** Plays the active unit's whole turn and returns the commands, ending with endTurn (or escape). */
 export function planTurn(start: BattleState, opts: AiOptions = {}): Command[] {
   const cmds: Command[] = [];
@@ -320,7 +359,9 @@ export function planTurn(start: BattleState, opts: AiOptions = {}): Command[] {
     // Spend leftover MP on the safest spot.
     const plan = bestStep({ ...s, units: s.units.map((u) => (u.id === id ? { ...u, ap: 0 } : u)) });
     if (plan.moveTo) run({ t: "move", unit: id, to: plan.moveTo });
-    run({ t: "endTurn", unit: id });
+    // Guard when an enemy could walk up to it before its next turn; otherwise keep the shorter delay.
+    if (!s.winner && s.active === id && guardWorth(s, activeUnit(s))) run({ t: "guard", unit: id });
+    if (!s.winner && s.active === id) run({ t: "endTurn", unit: id });
   }
   return cmds;
 }

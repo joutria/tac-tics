@@ -1,5 +1,7 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
+import "@fontsource/pixelify-sans/400.css";
+import "@fontsource/pixelify-sans/600.css";
 import { ABILITIES, type Ability } from "./data/abilities";
 import { elementMultiplier, ELEMENTS } from "./data/elements";
 import { COMPANIONS } from "./data/companions";
@@ -7,7 +9,7 @@ import { MEADOW } from "./data/maps/meadow";
 import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
-import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
+import { abilityAvailable, areaTiles, castProblem, guardAbility, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
@@ -21,7 +23,8 @@ import { memberSpec } from "./run/party";
 import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, type Difficulty } from "./data/region";
-import { alignShiftText, NODE_ICON, nodeLabel, renderRunMap } from "./ui/runmap";
+import { alignShiftText, nodeLabel, renderRunMap } from "./ui/runmap";
+import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, type IconId } from "./ui/icons";
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
@@ -68,6 +71,9 @@ let rewindArmed = 0;
 /** Hold back: hits that would down a foe stop at 1 HP (sent with each cast). Remembered between battles. */
 let holdBack = false;
 const floaters: Floater[] = [];
+/** Units hit lately (they flash), and until when the view shakes (blasts, boulders, critical hits). */
+const flashes = new Map<string, number>();
+let shakeUntil = 0;
 const motions = new Map<string, Motion>();
 let animUntil = 0; // input waits until units have finished moving
 const animating = () => performance.now() < animUntil;
@@ -161,11 +167,15 @@ function showMap() {
   }, gearOpen, () => { gearOpen = false; showMap(); });
   if (choosingDifficulty) renderDifficulty($("runPanel"));
   else if (statsOpen) renderStats($("runPanel"), lang, () => { statsOpen = false; showMap(); });
-  $("statsBtn").textContent = `📊 ${t(lang, "stats")}`;
-  $<HTMLButtonElement>("newRun").textContent = t(lang, "newRun");
-  $("gearBtn").textContent = `🎒 ${t(lang, "gear")}`;
-  $("mapLang").textContent = lang === "es" ? "English" : "Español";
-  $("mapBtn").textContent = `🗺 ${t(lang, "routeMap")}`; $("mapBtn").title = t(lang, "mapKeys");
+  const label = (id: string, ic: IconId | null, text: string, help: string) => {
+    $(id).innerHTML = `${ic ? icon(ic) : ""}<span class="lbl">${text}</span>`; $(id).setAttribute("aria-label", text);
+    explains($(id), () => plainHelp(text, help, ic ?? undefined));
+  };
+  label("statsBtn", "stats", t(lang, "stats"), t(lang, "statsHint"));
+  label("newRun", null, t(lang, "newRun"), t(lang, "newRunHint"));
+  label("gearBtn", "gear", t(lang, "gear"), t(lang, "gearHint"));
+  label("mapLang", "lang", lang === "es" ? "English" : "Español", t(lang, "langHint"));
+  label("mapBtn", "map", t(lang, "routeMap"), t(lang, "mapKeys"));
   document.documentElement.lang = lang;
   ensureDepart();
   // A finished run shows the route it took, under the epilogue.
@@ -343,6 +353,17 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       floaters.push({ pos: { ...u.pos }, text: `🔥 ${t(lang, "st.burn")}`, color: STATUS.burn.colour, born: now });
       continue;
     }
+    if (ev.e === "guardHit") {
+      const g = unitById(state, ev.unit), v = unitById(state, ev.target);
+      floaters.push({ pos: { ...g.pos }, text: `🛡 ${t(lang, "guard")}!`, color: "#8fd0ff", born: now });
+      toast(t(lang, "guardToast", { name: g.name, target: v.name }));
+      continue;
+    }
+    if (ev.e === "guarded") {
+      const g = unitById(state, ev.unit);
+      floaters.push({ pos: { ...g.pos }, text: `🛡 ${t(lang, "guard")}`, color: "#8fd0ff", born: now });
+      continue;
+    }
     if (ev.e === "shocked") {
       const u = unitById(state, ev.unit);
       floaters.push({ pos: { ...u.pos }, text: "⚡", color: STATUS.stun.colour, born: now });
@@ -361,9 +382,15 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       continue;
     }
     if (ev.e !== "cast") continue;
+    callout(ev.unit, ev.ability);
+    if (ev.fx.some((f) => f.fx === "explode" || f.fx === "flare" || f.fx === "impact") || ev.hits.some((h) => h.crit)) shakeUntil = now + 320;
+    for (const h of ev.hits) if (h.damage > 0) {
+      const start = was.get(h.unit);
+      flashes.set(h.unit, now + (h.pushedTo && start ? 120 + PUSH_STEP_MS * Math.max(1, manhattan(start, h.pushedTo)) : 0) + (h.source ? 200 : 0));
+    }
     for (const f of ev.fx) {
       const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡",
-        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦" }[f.fx];
+        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "" }[f.fx];
       const loud = f.fx === "explode" || f.fx === "flare";
       if (word) floaters.push({ pos: { ...f.at }, text: word, color: loud ? "#ffb347" : "#e8f4ff", born: now + (loud ? 0 : 100) });
     }
@@ -373,12 +400,14 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       const start = was.get(h.unit);
       const wait = h.pushedTo && start ? 120 + PUSH_STEP_MS * Math.max(1, manhattan(start, h.pushedTo)) : 0;
       const add = (text: string, color: string, delay = 0) => floaters.push({ pos: { ...u.pos }, text, color, born: now + wait + delay });
-      const tag = h.source === "blast" ? "💥 " : h.source === "chain" ? "⚡ " : h.source === "sap" ? "◆ " : "";
+      const tag = h.source === "blast" || h.source === "impact" ? "💥 " : h.source === "chain" ? "⚡ " : h.source === "sap" ? "◆ " : "";
       if (h.damage) add(`${tag}-${h.damage}${h.crit ? "!" : ""}`, h.crit ? "#ffd86b" : "#ff8a7a", h.source ? 200 : 0);
       if (h.heal) add(`+${h.heal}`, "#7ed957");
       if (h.revived) add(t(lang, "revived"), "#7ed957");
       if (h.maxHpLost) add(t(lang, "maxHpDown", { n: h.maxHpLost }), "#c9a0ff", 350);
       if (h.rooted) add(t(lang, "rooted"), "#b9e08a", 250);
+      if (h.freed) add(`🌿 ✕`, "#8fd0ff", 250);
+      if (h.slid) add(`❄ ${t(lang, "slid")}`, "#cfefff", 200);
       if (h.shielded) add(`${STATUS.shield.icon} ${h.shielded}`, STATUS.shield.colour, 150);
       for (const id of h.statuses ?? []) add(`${STATUS[id].icon} ${t(lang, `st.${id}` as TextKey)}`, STATUS[id].colour, 450);
       for (const id of h.cleansed ?? []) add(`${STATUS[id].icon} ✕`, "#8fd0ff", 450);
@@ -492,15 +521,95 @@ function marks(): Map<string, Mark> {
   return out;
 }
 
-/* ---------- HUD ---------- */
+/* ---------- HUD: FFTA-style windows ---------- */
+
+/** Help window: what the menu item under the pointer, in keyboard or controller focus, or chosen does. Each item
+    that explains itself is marked data-h and registers how to say it. */
+const helpers = new WeakMap<Element, () => string>();
+let helpHover: Element | null = null;
+function explains(el: HTMLElement, say: () => string) { el.dataset.h = "1"; helpers.set(el, say); el.removeAttribute("title"); }
+const plainHelp = (title: string, body: string, ic?: IconId) => `<div class="head">${ic ? icon(ic, "big") : ""}<span>${title}</span></div><p>${body}</p>`;
+
+function showHelp() {
+  const box = $("help");
+  // The item hovered may have been rebuilt by a refresh: find the one under the pointer now.
+  if (helpHover && !document.contains(helpHover)) helpHover = [...document.querySelectorAll("[data-h]:hover")].pop() ?? null;
+  const say = helpHover && helpers.get(helpHover);
+  const html = say ? say() : !onMap && selected && heroTurn() ? abilityHelp(selected, activeUnit(state)) : "";
+  if (!html || mapOpen || (onMap && !say)) { box.style.display = "none"; return; }
+  box.innerHTML = html;
+  box.style.display = "block";
+  const topBar = onMap ? $("travelTop") : $("top");
+  box.style.top = `${topBar.getBoundingClientRect().bottom + 4}px`;
+}
+
+/** Why an ability can't be used, in words. */
+function explainAvail(why: string): string {
+  if (why.startsWith("quick action")) return t(lang, "err.quick");
+  if (why === "nobody yields") return t(lang, "err.nobody");
+  return explain(why);
+}
+
+/** Everything about one ability, for the help window. */
+function abilityHelp(id: string, u: Unit | null): string {
+  const ab = ABILITIES[id]!;
+  const chips: string[] = [];
+  const chip = (ic: IconId | null, text: string) => chips.push(`<span>${ic ? icon(ic) : ""}${text}</span>`);
+  chip("ap", ab.ap ? `${ab.ap} ${t(lang, "ap")}` : t(lang, "free"));
+  chip("range", ab.range[1] === 0 ? t(lang, "h.self") : t(lang, "h.range", { r: ab.range[0] === ab.range[1] ? `${ab.range[1]}` : `${ab.range[0]}–${ab.range[1]}` }));
+  if (ab.area === "cross1") chip("area", t(lang, "h.area"));
+  if (ab.los) chip("sight", t(lang, "h.sight"));
+  if (ab.damage) chip("sword", `${ab.damage.min}–${ab.damage.max} · ${t(lang, ab.damage.stat)}`);
+  if (ab.heal) chip("heal", `+${ab.heal.min}–${ab.heal.max}`);
+  if (ab.push) chip("push", t(lang, "h.push", { n: ab.shove ? "1–2" : ab.push }));
+  if (ab.status) chip(ab.status.id, `${t(lang, `st.${ab.status.id}` as TextKey)} · ${t(lang, "turnsLeft", { n: ab.status.turns })}`);
+  if (ab.cooldown) chip("cooldown", t(lang, "h.cd", { n: ab.cooldown }));
+  if (ab.perTurn > 1 && ab.perTurn < 4) chip(null, t(lang, "h.perTurn", { n: ab.perTurn }));
+  if (ab.quick) chip("quick", t(lang, "h.quick"));
+  const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
+  const el = ELEMENTS[ab.element];
+  const key = u ? menuOrder(u).indexOf(id) + 1 : 0;
+  return `<div class="head">${icon(abilityIcon(id, ab.element), "big")}<span>${abilityName(lang, id)}</span>${key > 0 && key <= 9 ? `<kbd>${key}</kbd>` : ""}`
+    + `<small style="margin-left:auto;font-weight:400;color:var(--quiet)">${icon(abilityIcon("", ab.element))} ${el[lang]}</small></div>`
+    + `<div class="chips">${chips.join("")}</div><p>${abilityDesc(lang, id)}</p>${why ? `<p class="why">${explainAvail(why)}</p>` : ""}`;
+}
+
+/** The order abilities are listed in the menu (and picked with the number keys): the unit's own, then the quick ones. */
+function menuOrder(u: Unit): string[] {
+  const all = unitAbilities(u);
+  return [...all.filter((id) => !ABILITIES[id]!.quick), ...all.filter((id) => ABILITIES[id]!.quick)];
+}
+
+const pips = (n: number, max: number) => Array.from({ length: max }, (_, i) => `<i${i < n ? ' class="on"' : ""}></i>`).join("");
+
+/** The window with the unit in play: face, name, element, HP, AP and MP. */
+function renderUnitCard(u: Unit) {
+  const ratio = u.hp / Math.max(1, u.maxHp);
+  const face = portrait(images, u.look);
+  const el = (u.element in ICONS ? u.element : "neutral") as IconId;
+  const statuses = u.statuses.map((x) => icon(x.id)).join("");
+  $("unitCard").innerHTML = `${face ? `<img class="face" src="${face}" alt="">` : `<span class="face"></span>`}`
+    + `<div class="name ${u.team}">${icon(el)}<span>${u.name}</span>${statuses}<span class="round">${t(lang, "round", { n: roundOf(state) })}</span></div>`
+    + `<div class="gauge">${icon("hp")}<span class="track"><span class="fill${ratio < 0.25 ? " crit" : ratio < 0.5 ? " low" : ""}" style="width:${ratio * 100}%"></span></span><b>${u.hp}/${u.maxHp}</b></div>`
+    + `<div class="gauge">${icon("ap")}<span class="pips ap">${pips(u.ap, u.maxAp)}</span>${icon("mp")}<span class="pips mp">${pips(u.mp, u.maxMp)}</span></div>`;
+  $("unitCard").setAttribute("aria-label", `${t(lang, "turnOf", { name: u.name })} · ${t(lang, "hp")} ${u.hp}/${u.maxHp} · ${t(lang, "ap")} ${u.ap}/${u.maxAp} · ${t(lang, "mp")} ${u.mp}/${u.maxMp}`);
+}
+
+/** A button with a pixel icon, a label (hidden on phones for the system buttons) and its help. */
+function dress(id: string, ic: IconId, label: string, help: () => string, iconOnly = false) {
+  const b = $<HTMLButtonElement>(id);
+  b.innerHTML = `${icon(ic)}${iconOnly ? "" : `<span class="lbl">${label}</span>`}`;
+  b.setAttribute("aria-label", label);
+  explains(b, help);
+}
 
 function refresh() {
   if (onMap) return;
   const u = activeUnit(state);
-  $("turn").textContent = `${t(lang, "round", { n: roundOf(state) })} · ${t(lang, "turnOf", { name: u.name })}`;
-  $("stats").textContent = `${t(lang, "hp")} ${u.hp}/${u.maxHp} · ${t(lang, "ap")} ${u.ap}/${u.maxAp} · ${t(lang, "mp")} ${u.mp}/${u.maxMp}`;
+  renderUnitCard(u);
   const queue = $("queue");
-  queue.replaceChildren(document.createTextNode(`${t(lang, "upNext")}:`));
+  const label = document.createElement("span"); label.className = "label"; label.textContent = `${t(lang, "upNext")}:`;
+  queue.replaceChildren(label);
   upcomingTurns(state, 8).forEach((id, i) => {
     const v = unitById(state, id);
     const chip = document.createElement("button");
@@ -516,68 +625,80 @@ function refresh() {
     queue.append(chip);
   });
   const mine = heroTurn() && !busy;
+  // The command menu: the unit's abilities as rows, then the quick actions folded under one row.
   const bar = $("abilities");
   bar.replaceChildren();
-  const quickIds = unitAbilities(u).filter((id) => ABILITIES[id]!.quick);
+  $("menu").style.display = u.team === "heroes" ? "" : "none";
+  $("menuTitle").textContent = t(lang, "actions");
+  const quickIds = menuOrder(u).filter((id) => ABILITIES[id]!.quick);
   const quickDone = !!u.usedThisTurn.quick;
   if (selected && ABILITIES[selected]?.quick) quickOpen = true;
-  const shown = unitAbilities(u).filter((id) => !ABILITIES[id]!.quick);
+  const shown = menuOrder(u).filter((id) => !ABILITIES[id]!.quick);
   for (const id of [...shown, "__quick", ...(quickOpen ? quickIds : [])]) {
     if (u.team !== "heroes") break;
     if (id === "__quick") {
-      // One button opens the quick actions: a free one per turn, shared between them.
+      // One row opens the quick actions: a free one per turn, shared between them.
       const q = document.createElement("button");
-      q.className = `ab quickToggle${quickOpen ? " on" : ""}`;
+      q.className = `cmd quickToggle${quickOpen ? " open" : ""}`;
       q.disabled = !mine || quickDone;
-      q.innerHTML = `<span>${t(lang, quickDone ? "quickUsed" : "quick")}</span><small>0 ${t(lang, "ap")} · 1/${t(lang, "turnShort")}</small>`;
-      q.title = t(lang, "quickInfo");
+      q.innerHTML = `${icon("quick")}<span class="nm">${t(lang, quickDone ? "quickUsed" : "quickMenu")}</span><span class="cost">0${icon("ap")}</span>`;
+      explains(q, () => plainHelp(t(lang, "quickMenu"), t(lang, "quickInfo"), "quick"));
       q.onclick = () => { quickOpen = !quickOpen; if (!quickOpen && selected && ABILITIES[selected]?.quick) selected = null; refresh(); };
       bar.append(q);
       continue;
     }
     const ab = ABILITIES[id]!;
     const b = document.createElement("button");
-    b.className = `ab${ab.quick ? " quick" : ""}${selected === id ? " on" : ""}`;
+    b.className = `cmd${ab.quick ? " sub" : ""}${selected === id ? " on" : ""}`;
     const why = abilityAvailable(u, id) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
-    const dmg = ab.damage ? `${ab.damage.min}–${ab.damage.max}` : ab.heal ? `+${ab.heal.min}–${ab.heal.max}` : "";
-    b.innerHTML = `<span>${abilityName(lang, id)}</span><small>${ab.ap} ${t(lang, "ap")} · ${ab.range[1] === 0 ? t(lang, "selfOnly") : `${ab.range[0]}–${ab.range[1]}`}${dmg ? " · " + dmg : ""}${cd ? " · ⏳" + t(lang, "cooldown", { n: cd }) : ""}</small>`;
-    b.title = abilityDesc(lang, id);
+    b.innerHTML = `${icon(abilityIcon(id, ab.element))}<span class="nm">${abilityName(lang, id)}</span>`
+      + `<span class="cost${cd ? " cd" : ""}">${cd ? `${icon("cooldown")}${cd}` : ab.ap ? `${ab.ap}${icon("ap")}` : ""}</span>`;
+    b.setAttribute("aria-label", `${abilityName(lang, id)}, ${ab.ap} ${t(lang, "ap")}`);
+    explains(b, () => abilityHelp(id, activeUnit(state)));
     b.onclick = () => { selected = selected === id ? null : id; pending = null; inspect = null; tooltip(null); refresh(); };
     bar.append(b);
   }
   $<HTMLButtonElement>("end").disabled = !mine;
   $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited || !!u.usedThisTurn.quick;
+  const guardWith = mine && u.escape === "none" ? guardAbility(u) : null;
+  const gb = $<HTMLButtonElement>("guard");
+  gb.disabled = !guardWith;
+  dress("guard", "shield", t(lang, "guard"), () => plainHelp(t(lang, "guard"), guardWith ? t(lang, "guardHint", { ab: abilityName(lang, guardWith) }) : t(lang, "guardNo"), "shield"));
   $<HTMLButtonElement>("undo").disabled = !canUndo();
   const rw = $<HTMLButtonElement>("rewind");
   const left = rulesOf(journey).rewinds - (save.rewindsUsed ?? 0);
   rw.disabled = rewindTarget() === null;
-  rw.textContent = performance.now() < rewindArmed ? `⟲ ${t(lang, "rewindAgain")}` : `⟲ ${t(lang, "rewind")} (${left})`;
-  rw.title = t(lang, "rewindHint");
-  rw.classList.toggle("armed", performance.now() < rewindArmed);
-  const dz = $("danger"); dz.textContent = `◈ ${t(lang, "danger")}`; dz.title = t(lang, "dangerHint"); dz.classList.toggle("on", dangerAll);
-  const fl = $("flat"); fl.textContent = `▦ ${t(lang, "flat")}`; fl.title = t(lang, "flatHint"); fl.classList.toggle("on", isFlat());
-  $("end").textContent = t(lang, "endTurn");
-  $("wait").textContent = t(lang, "wait");
+  const armed = performance.now() < rewindArmed;
+  dress("rewind", "rewind", armed ? t(lang, "rewindAgain") : `${t(lang, "rewind")} (${left})`, () => plainHelp(t(lang, "rewind"), t(lang, "rewindHint"), "rewind"));
+  rw.classList.toggle("armed", armed);
+  dress("danger", "danger", t(lang, "danger"), () => plainHelp(t(lang, "danger"), `${t(lang, "dangerHint")} (Y)`, "danger"), true);
+  $("danger").classList.toggle("on", dangerAll);
+  dress("flat", "flat", t(lang, "flat"), () => plainHelp(t(lang, "flat"), t(lang, "flatHint"), "flat"), true);
+  $("flat").classList.toggle("on", isFlat());
+  dress("end", "end", t(lang, "endTurn"), () => plainHelp(t(lang, "endTurn"), t(lang, "endHint"), "end"));
+  dress("wait", "wait", t(lang, "wait"), () => plainHelp(t(lang, "wait"), t(lang, "waitHint"), "wait"));
+  dress("hold", "hold", t(lang, "holdBack"), () => plainHelp(t(lang, "holdBack"), t(lang, "holdHint"), "hold"));
   const hold = $<HTMLButtonElement>("hold");
-  hold.textContent = t(lang, "holdBack"); hold.title = t(lang, "holdHint");
   hold.classList.toggle("on", holdBack); hold.setAttribute("aria-pressed", String(holdBack));
   hold.disabled = !mine;
-  $("wait").title = t(lang, "waitHint");
-  $("undo").textContent = t(lang, "undo");
-  for (const [id, dir, key] of [["rotateL", "rotateLeft", "Q"], ["rotateR", "rotateRight", "E"]] as const) {
-    const b = $(id); b.textContent = id === "rotateL" ? "⟲" : "⟳";
-    b.title = `${t(lang, dir)} (${key})`; b.setAttribute("aria-label", t(lang, dir));
+  dress("undo", "undo", t(lang, "undo"), () => plainHelp(t(lang, "undo"), t(lang, "undoHint"), "undo"));
+  for (const [id, dir, key, ic] of [["rotateL", "rotateLeft", "Q", "rotL"], ["rotateR", "rotateRight", "E", "rotR"]] as const) {
+    dress(id, ic, t(lang, dir), () => plainHelp(t(lang, dir), `${t(lang, dir)} (${key}, ${key === "Q" ? "LB" : "RB"})`, ic), true);
   }
-  $("lang").textContent = lang === "es" ? "English" : "Español";
+  dress("zoomIn", "zoomIn", t(lang, "zoomIn"), () => plainHelp(t(lang, "zoomIn"), t(lang, "zoomIn"), "zoomIn"), true);
+  dress("zoomOut", "zoomOut", t(lang, "zoomOut"), () => plainHelp(t(lang, "zoomOut"), t(lang, "zoomOut"), "zoomOut"), true);
+  dress("lang", "lang", lang === "es" ? "English" : "Español", () => plainHelp(lang === "es" ? "English" : "Español", t(lang, "langHint"), "lang"), true);
   const confirm = $<HTMLButtonElement>("confirm");
   confirm.style.display = mine && pending ? "" : "none";
-  confirm.textContent = selected ? `✔ ${abilityName(lang, selected)}` : `✔ ${t(lang, "moveHere")}`;
+  confirm.innerHTML = `${icon("confirm")}<span>${selected ? abilityName(lang, selected) : t(lang, "moveHere")}</span>`;
   $("cancel").style.display = mine && (pending || selected) ? "" : "none";
-  $("cancel").textContent = t(lang, "cancel");
-  $("act").style.bottom = `${$("bottom").getBoundingClientRect().height + 10}px`;
-  $("hint").textContent = !mine ? t(lang, "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
+  $("cancel").innerHTML = `${icon("cancel")}<span>${t(lang, "cancel")}</span>`;
+  const bottomH = $("bottom").getBoundingClientRect().height;
+  $("hint").style.bottom = `${innerWidth > 720 ? 10 : bottomH + 2}px`;
+  $("act").style.bottom = `${innerWidth > 720 ? 36 : bottomH + 24}px`;
+  $("hint").textContent = !mine ? t(lang, u.team === "foes" ? "foeTurn" : "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
   const lost = state.winner === "foes" || state.units.some((x) => x.id === HERO.id && x.life !== "up");
   const boss = journey.battle && journey.map.nodes[journey.battle.node]!.kind === "boss";
   $("again").textContent = t(lang, lost ? "newRun" : boss ? "regionCleared" : "toMap");
@@ -590,6 +711,7 @@ function refresh() {
   renderMercy();
   document.documentElement.lang = lang;
   layout();
+  showHelp();
 }
 
 /** After a win, foes still on the map (downed or under the white flag) wait for the party's choice. The button to
@@ -630,7 +752,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   const target = at && unitAt(state, at);
   const ground = at ? tileInfo(at) : [];
   if (!at || (!target && !ground.length)) { tip.style.display = "none"; return; }
-  if (!target) { showTip(tip, ground.join("<br>"), at, ev); return; }
+  if (!target) { showTip(tip, [...objectLines(at), ...ground].join("<br>"), at, ev); return; }
   const hover = at;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
   const rival = target.rival ? journey.rivals.find((r) => r.id === target.id && !r.settled) : undefined;
@@ -650,6 +772,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
     }
   }
+  if (target.guard) lines.push(`<span style="color:#8fd0ff">🛡 ${t(lang, "guard")}</span> · ${t(lang, "guardingInfo")}`);
   for (const st of target.statuses) lines.push(`<span style="color:${STATUS[st.id].colour}">${STATUS[st.id].icon} ${t(lang, `st.${st.id}` as TextKey)}</span> · ${t(lang, `st.${st.id}.d` as TextKey, { n: st.power })} · ${t(lang, "turnsLeft", { n: st.turns })}`);
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (yielding(target)) lines.push(`<b>${t(lang, "yieldingTag")}</b> · ${cowering(target) ? `${t(lang, "cowerInfo")} ` : ""}${t(lang, "yieldInfo")}`);
@@ -713,6 +836,24 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   showTip(tip, [...lines, ...ground].join("<br>"), at, ev);
 }
 
+/** With a push chosen and an object under the cursor: where it goes and whom it hits. */
+function objectLines(at: Pos): string[] {
+  const u = heroTurn() ? activeUnit(state) : null;
+  if (!u || !selected || !tileAt(state.map, at)?.prop || castProblem(state, u, selected, at)) return [];
+  const ab = ABILITIES[selected]!;
+  if (!ab.push || ab.damage) return [];
+  const pv = previewMoves();
+  const out = [`<b>${abilityName(lang, selected)}</b>`];
+  const mv = pv?.moves[0];
+  if (mv) out.push(t(lang, "rollTo", { n: manhattan(mv.from, mv.to) }));
+  for (const sp of pv?.splashes ?? []) out.push(`<b class="down">${t(lang, "impactOn", { who: unitById(state, sp.unit).name, n: sp.damage })}</b>`);
+  if (pv?.blasts.length) {
+    const near = state.units.filter((v) => v.life === "up" && pv.blasts.some((b) => Math.max(Math.abs(b.x - v.pos.x), Math.abs(b.y - v.pos.y)) <= 1));
+    for (const v of near) out.push(`<b class="down">${t(lang, "rollBlast", { who: v.name })}</b>`);
+  }
+  return out;
+}
+
 /** The height chip: how standing higher or lower changes this attack's damage and reach. */
 function heightLines(lines: string[], u: Unit, target: Unit, ab: Ability) {
   const diff = (tileAt(state.map, u.pos)?.h ?? 0) - (tileAt(state.map, target.pos)?.h ?? 0);
@@ -728,6 +869,7 @@ function tileInfo(at: Pos): string[] {
   const out: string[] = [];
   if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
+  if (tile.prop === "boulder") out.push(`<b>${t(lang, "boulder")}</b> · ${t(lang, "boulderInfo")}`);
   if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, "fireInfo")}`);
   if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);
   if (tile.surface === "oil") out.push(`<b>🛢</b> ${t(lang, "oilInfo")}`);
@@ -749,6 +891,20 @@ function showTip(tip: HTMLElement, html: string, at: Pos, ev?: { clientX: number
   const y = ev ? spot.clientY + 14 : spot.clientY - h - 70 * view.scale / (window.devicePixelRatio || 1);
   tip.style.left = `${Math.max(8, Math.min(x, innerWidth - w - 8))}px`;
   tip.style.top = `${Math.max(8, y)}px`;
+}
+
+/** FFTA-style call-out: the name of the ability being used, in a window at the top, for a moment. */
+let calloutTimer = 0;
+function callout(unit: string, ability: string) {
+  const u = unitById(state, unit), ab = ABILITIES[ability];
+  if (!ab) return;
+  const box = $("callout");
+  box.className = `win ${u.team}`;
+  box.innerHTML = `${icon(abilityIcon(ability, ab.element), "big")}<span><small>${u.name}</small>${abilityName(lang, ability)}</span>`;
+  box.style.top = `${$("top").getBoundingClientRect().bottom + 6}px`;
+  box.classList.add("show");
+  clearTimeout(calloutTimer);
+  calloutTimer = window.setTimeout(() => box.classList.remove("show"), u.team === "foes" ? 1300 : 900);
 }
 
 let toastTimer = 0;
@@ -940,7 +1096,7 @@ function placeSigns() {
       const n = journey.map.nodes[s.node]!;
       const b = document.createElement("button");
       b.className = `sign ${n.kind}`;
-      b.innerHTML = `<b>${NODE_ICON[n.kind]}</b><span></span>`;
+      b.innerHTML = `${icon(n.kind, "big")}<span></span>`;
       b.querySelector("span")!.textContent = nodeLabel(journey, n, lang, true);
       b.title = nodeLabel(journey, n, lang);
       b.onclick = () => { signSel = i; pickNode(s.node); };
@@ -1032,10 +1188,11 @@ function drawRoute(time: number) {
     ctx.fillStyle = done.has(n.id) ? "#4a4220" : n.kind === "boss" ? "#3d1f2a" : "#2a2c3d"; ctx.fill();
     ctx.lineWidth = isOpen ? 2.5 : 1.5;
     ctx.strokeStyle = n.rival ? "#d9a0ff" : isOpen || done.has(n.id) ? "#ffd86b" : "#5a5e80"; ctx.stroke();
-    ctx.font = `${(n.kind === "boss" ? 17 : 13) * routeIcon}px system-ui, sans-serif`; ctx.fillStyle = "#f2efe6";
-    ctx.fillText(NODE_ICON[n.kind], c.x, c.y + bob + 1);
+    const isz = (n.kind === "boss" ? 22 : 18) * routeIcon;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(iconCanvas(n.kind), Math.round(c.x - isz / 2), Math.round(c.y + bob - isz / 2), isz, isz);
     if (isOpen) {
-      ctx.font = `bold ${10 * routeIcon}px system-ui, sans-serif`; ctx.lineWidth = 3; ctx.strokeStyle = "#1d1f2b"; ctx.fillStyle = "#ffd86b";
+      ctx.font = `600 ${11 * routeIcon}px "Pixelify Sans", system-ui, sans-serif`; ctx.lineWidth = 3; ctx.strokeStyle = "#1d1f2b"; ctx.fillStyle = "#ffd86b";
       const label = nodeLabel(journey, n, lang, true);
       ctx.strokeText(label, c.x, c.y + r + 9 + bob); ctx.fillText(label, c.x, c.y + r + 9 + bob);
     }
@@ -1138,9 +1295,11 @@ function input(k: Input) {
   if (k === "back") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); return; }
   if (k === "next") {
     // Cycles the abilities that can be used now, then back to moving.
-    const u = activeUnit(state), list = unitAbilities(u).filter((id) => !abilityAvailable(u, id));
+    const u = activeUnit(state), list = menuOrder(u).filter((id) => !abilityAvailable(u, id));
     const i = selected ? list.indexOf(selected) : -1;
-    selected = i + 1 < list.length ? list[i + 1]! : null; pending = null; refresh(); tooltip(cursor);
+    selected = i + 1 < list.length ? list[i + 1]! : null; pending = null;
+    if (selected && ABILITIES[selected]!.quick) quickOpen = true;
+    refresh(); tooltip(cursor);
     return;
   }
   const u = activeUnit(state);
@@ -1194,7 +1353,10 @@ function layout() {
   // visible window (the address bar), which used to stretch the picture and put taps one tile too low.
   const box = canvas.getBoundingClientRect();
   canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
-  const top = $("top").getBoundingClientRect().height, bottom = $("bottom").getBoundingClientRect().height;
+  // On a wide screen the menus sit in the bottom corners, where the diamond-shaped map leaves room, so the map may
+  // use the height down to the hint line; on a phone the menu spans the width and the map stays above it.
+  const wide = innerWidth > 720;
+  const top = $("top").getBoundingClientRect().height, bottom = wide ? 34 : $("bottom").getBoundingClientRect().height;
   const size = mapPixelSize(state.map);
   const availW = innerWidth - 16, availH = innerHeight - top - bottom - 8;
   const fit = Math.min(availW / size.w, availH / size.h);
@@ -1261,7 +1423,7 @@ function actionAt(p: Pos): { cmd: Command } | { why: string } | null {
 function act(cmd: Command) {
   const ok = run(cmd);
   if (cmd.t === "cast" && ok) { if (ABILITIES[cmd.ability]?.quick) quickOpen = false; selected = null; }
-  if (cmd.t === "endTurn" || cmd.t === "wait") quickOpen = false;
+  if (cmd.t === "endTurn" || cmd.t === "wait" || cmd.t === "guard") quickOpen = false;
   pending = null;
   refresh();
   if (cmd.t === "cast") maybeFoeTurn();
@@ -1360,8 +1522,9 @@ function frame(time: number) {
   }
   const moving = time < animUntil;
   if (focus && time > focus.until) focus = null;
-  drawBattle(ctx, state, images, view, {
-    marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions,
+  const shake = time < shakeUntil ? Math.round(Math.sin(time / 22) * 3 * ((shakeUntil - time) / 320) * (window.devicePixelRatio || 1)) : 0;
+  drawBattle(ctx, state, images, shake ? { ...view, ox: view.ox + shake, oy: view.oy + shake / 2 } : view, {
+    marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions, flashes,
     danger: dangerTiles(), preview: moving ? undefined : previewHit(), effects: moving ? undefined : previewMoves(), focus: focus?.id,
     escapePaths: moving ? undefined : escapePaths(),
   });
@@ -1375,6 +1538,20 @@ async function start() {
   const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);
+  // Pixel icons everywhere: the menu hand, and every emoji any text still carries becomes a pixel icon as it lands.
+  document.documentElement.style.setProperty("--pointer", `url(${iconUrl("pointer")})`);
+  iconize(document.body);
+  new MutationObserver((list) => {
+    for (const m of list) {
+      if (m.type === "characterData") iconize(m.target.parentNode ?? m.target);
+      else m.addedNodes.forEach((n) => iconize(n));
+    }
+  }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  // The help window follows the pointer, the keyboard focus and the controller's focus.
+  document.addEventListener("pointerover", (ev) => { const el = (ev.target as Element).closest?.("[data-h]") ?? null; if (el !== helpHover) { helpHover = el; showHelp(); } });
+  document.addEventListener("pointerout", (ev) => { if (!(ev.relatedTarget as Element | null)?.closest?.("[data-h]")) { helpHover = null; showHelp(); } });
+  document.addEventListener("focusin", (ev) => { const el = (ev.target as Element).closest?.("[data-h]"); if (el) { helpHover = el; showHelp(); } });
+  document.addEventListener("focusout", () => { helpHover = null; showHelp(); });
   setFlat(safeGet(VIEW_KEY) === "flat");
   holdBack = safeGet(HOLD_KEY) === "1";
   // Until a battle starts (the map screen comes first), the battle screen holds the test fight, never shown.
@@ -1439,12 +1616,13 @@ async function start() {
   const turn = (dir: 1 | -1) => { view.rot = (view.rot + dir + 4) % 4; hover = null; tooltip(null); };
   $("rotateL").addEventListener("click", () => turn(-1));
   $("rotateR").addEventListener("click", () => turn(1));
-  const pass = (t_: "endTurn" | "wait") => {
+  const pass = (t_: "endTurn" | "wait" | "guard") => {
     if (!heroTurn() || busy || animating()) return;
     run({ t: t_, unit: activeUnit(state).id }); selected = null; pending = null; tooltip(null); refresh(); maybeFoeTurn();
   };
   $("end").addEventListener("click", () => pass("endTurn"));
   $("wait").addEventListener("click", () => pass("wait"));
+  $("guard").addEventListener("click", () => pass("guard"));
   $("rewind").addEventListener("click", rewind);
   $("danger").addEventListener("click", () => { dangerAll = !dangerAll; refresh(); });
   $("flat").addEventListener("click", () => { setFlat(!isFlat()); safeSet(VIEW_KEY, isFlat() ? "flat" : "iso"); tooltip(null); refresh(); });
@@ -1480,7 +1658,7 @@ async function start() {
     else if (k === "t" && !onMap) input("end");
     else if (k === "h" && !onMap) input("hold");
     else if (/^[1-9]$/.test(k) && !onMap && heroTurn()) {
-      const id = unitAbilities(activeUnit(state))[Number(k) - 1];
+      const id = menuOrder(activeUnit(state))[Number(k) - 1];
       if (id && !abilityAvailable(activeUnit(state), id)) { selected = selected === id ? null : id; pending = null; refresh(); }
     } else if (/^[1-3]$/.test(k) && onMap && play?.finished && play.kind === "depart") {
       const s = play.scene.signs[Number(k) - 1];
