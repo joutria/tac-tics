@@ -13,6 +13,7 @@ import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape";
 import { STATUS } from "./engine/status";
+import { charged } from "./engine/terrain";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
 import { choices } from "./run/map";
@@ -342,6 +343,17 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       floaters.push({ pos: { ...u.pos }, text: `🔥 ${t(lang, "st.burn")}`, color: STATUS.burn.colour, born: now });
       continue;
     }
+    if (ev.e === "shocked") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: "⚡", color: STATUS.stun.colour, born: now });
+      toast(t(lang, "shockedToast", { name: u.name }));
+      continue;
+    }
+    if (ev.e === "sapped") {
+      const u = unitById(state, ev.unit), info = STATUS[ev.status];
+      floaters.push({ pos: { ...u.pos }, text: `${info.icon} ${t(lang, "sapGood")}`, color: info.colour, born: now });
+      continue;
+    }
     if (ev.e === "stunned") {
       const u = unitById(state, ev.unit);
       floaters.push({ pos: { ...u.pos }, text: `${STATUS.stun.icon} ${t(lang, "st.stun")}`, color: STATUS.stun.colour, born: now });
@@ -350,8 +362,10 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
     }
     if (ev.e !== "cast") continue;
     for (const f of ev.fx) {
-      const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡" }[f.fx];
-      if (word) floaters.push({ pos: { ...f.at }, text: word, color: f.fx === "explode" ? "#ffb347" : "#e8f4ff", born: now + (f.fx === "explode" ? 0 : 100) });
+      const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡",
+        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦" }[f.fx];
+      const loud = f.fx === "explode" || f.fx === "flare";
+      if (word) floaters.push({ pos: { ...f.at }, text: word, color: loud ? "#ffb347" : "#e8f4ff", born: now + (loud ? 0 : 100) });
     }
     for (const h of ev.hits) {
       const u = unitById(state, h.unit);
@@ -716,6 +730,11 @@ function tileInfo(at: Pos): string[] {
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
   if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, "fireInfo")}`);
   if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);
+  if (tile.surface === "oil") out.push(`<b>🛢</b> ${t(lang, "oilInfo")}`);
+  if (tile.surface === "sap") out.push(`<b>◆</b> ${t(lang, "sapInfo")}`);
+  if (tile.sapSource) out.push(`<b>◆</b> ${t(lang, "sapSourceInfo")}`);
+  if (charged(state, tile)) out.push(`⚡ ${t(lang, "chargedInfo")}`);
+  if (tile.steamUntil !== undefined) out.push(`☁ ${t(lang, "steamInfo")}`);
   if (tile.terrain === "bridge") out.push(t(lang, "bridgeInfo"));
   if (tile.terrain === "water") out.push(t(lang, "waterInfo"));
   return out;
@@ -1281,7 +1300,8 @@ function previewMoves(): MovePreview | undefined {
   const u = activeUnit(state), ab = ABILITIES[selected]!;
   const tile = tileAt(state.map, at);
   let out: MovePreview | undefined;
-  if ((ab.push || ab.throwProp || tile?.prop === "barrel" || areaTiles(ab, at).some((p) => tileAt(state.map, p)?.prop === "barrel")) && !castProblem(state, u, selected, at)) {
+  const sets = (p: Pos) => { const q = tileAt(state.map, p); return q?.prop === "barrel" || (ab.element === "fire" && q?.surface === "oil"); };
+  if ((ab.push || ab.throwProp || tile?.prop === "barrel" || areaTiles(ab, at).some(sets)) && !castProblem(state, u, selected, at)) {
     out = previewEffects(state, u, ab, at);
     if (!out.moves.length && !out.blasts.length && !out.splashes.length) out = undefined;
   }

@@ -15,7 +15,7 @@ import { absorb, removeStatus, statusOf, tickDown, POISON_HEAL_FACTOR, type Stat
 import { GridMap, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
 import { routeTo } from "./movement";
 import { rngNext, seedFrom } from "./rng";
-import { fireUnder, updateTiles, type TerrainFx } from "./terrain";
+import { fireUnder, sapUnder, shockNear, updateTiles, type TerrainFx } from "./terrain";
 import { cowering, escapeStateFor, FLEE_LOCK, isBorder, turnMp, yielding, type EscapeState } from "./escape";
 
 export type Team = "heroes" | "foes";
@@ -86,8 +86,8 @@ export interface Unit extends UnitSpec {
   usedThisTurn: Record<string, number>;
   /** Aim was used: the next ranged ability reaches 1 further. */
   aiming?: boolean;
-  /** Dipped in fire: the next attack sets enemies burning. */
-  dipped?: boolean;
+  /** Dipped in fire (burn) or Sap (poison): the next attack gives enemies it hits that status. */
+  dipped?: false | "burn" | "poison";
   rooted: boolean;
   /** Timeline position of the next turn; ties go to the lower `seq`. */
   ct: number;
@@ -124,6 +124,8 @@ export interface BattleState {
   winner: Team | null;
   /** What the players have been doing, so foes can adapt within the fight. */
   habits: { ranged: number; melee: number; elements: Partial<Record<Element, number>> };
+  /** Last round the Sap sources grew (terrain.ts). */
+  sapRound?: number;
 }
 
 export type Command =
@@ -152,7 +154,11 @@ export type BattleEvent =
   | { e: "refused"; unit: string; target: Pos }
   /** A status acting at the start of a turn (Burn, Poison, Regen). */
   | { e: "tick"; unit: string; status: StatusId; damage: number; heal: number; downed: boolean; died: boolean }
-  | { e: "stunned"; unit: string };
+  | { e: "stunned"; unit: string }
+  /** Started a turn next to charged water and was stunned by it. */
+  | { e: "shocked"; unit: string }
+  /** Ended a move or started a turn in Sap: Poison for the party, Regen for foes. */
+  | { e: "sapped"; unit: string; status: "poison" | "regen" };
 
 export type Result =
   | { ok: true; state: BattleState; events: BattleEvent[] }
@@ -184,7 +190,8 @@ export function moveRules(s: BattleState, u: Unit) {
   return {
     mp: u.mp, jump: u.jump,
     blocked: (p: Pos) => { const o = unitAt(s, p); return !!o && o.id !== u.id; },
-    lockAt: (p: Pos) => lockAt(s, u, p),
+    // Oil: one extra MP to walk out of it.
+    lockAt: (p: Pos) => lockAt(s, u, p) + (tileAt(s.map, p)?.surface === "oil" ? 1 : 0),
   };
 }
 
@@ -248,6 +255,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
       continue;
     }
     if (!u.waited) {
+      if (shockNear(s, u)) events.push({ e: "shocked", unit: u.id });
       if (statusOf(u, "stun")) {
         removeStatus(u, "stun"); u.stunGuard = true;
         events.push({ e: "stunned", unit: u.id });
@@ -255,6 +263,8 @@ function advance(s: BattleState, events: BattleEvent[]) {
         continue;
       }
       if (fireUnder(s, u)) events.push({ e: "caughtFire", unit: u.id });
+      const sap = sapUnder(s, u);
+      if (sap) events.push({ e: "sapped", unit: u.id, status: sap });
       if (startOfTurnTicks(s, u, events)) { s.winner = winnerOf(s); u.ct += delayFor(u.speed); u.seq = ++s.seqCounter; continue; }
       u.ap = u.maxAp;
       u.mp = Math.max(0, turnMp(u) - (statusOf(u, "slow")?.power ?? 0));
@@ -324,6 +334,8 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       actor.moved = true;
       events.push({ e: "moved", unit: actor.id, path: route.path });
       if (fireUnder(s, actor)) events.push({ e: "caughtFire", unit: actor.id });
+      const sap = sapUnder(s, actor);
+      if (sap) events.push({ e: "sapped", unit: actor.id, status: sap });
       break;
     }
     case "cast": {

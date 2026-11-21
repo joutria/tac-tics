@@ -723,7 +723,7 @@ describe("quick actions", () => {
   });
   it("Dip needs fire next to you and makes the next attack burn", () => {
     const s = battle(["g0 g0 g0"], [hero({ abilities: ["ray"] }), unit({ id: "f", team: "foes", pos: { x: 2, y: 0 } })]);
-    expect(castProblem(s, unitById(s, "h"), "dip", { x: 0, y: 0 })).toBe("needs fire next to you");
+    expect(castProblem(s, unitById(s, "h"), "dip", { x: 0, y: 0 })).toBe("needs fire or Sap next to you");
     s.map.tiles[1]!.fireUntil = s.clock + 500;
     const a = play(s, [{ t: "cast", unit: "h", ability: "dip", target: { x: 0, y: 0 } }, { t: "cast", unit: "h", ability: "ray", target: { x: 2, y: 0 } }]);
     expect(unitById(a, "f").statuses.some((x) => x.id === "burn")).toBe(true);
@@ -740,5 +740,112 @@ describe("quick actions", () => {
     const zz = play(z, [{ t: "cast", unit: "h", ability: "zip", target: { x: 0, y: 1 } }]);
     expect(unitById(zz, "h").pos).toEqual({ x: 0, y: 1 });
     expect(unitById(zz, "h").mp).toBe(3);
+  });
+});
+
+describe("surfaces", () => {
+  const ab = (id: string, element: Ability["element"], extra: Partial<Ability> = {}): Ability => ({
+    id, element, ap: 1, range: [0, 8], los: false, target: "any", area: "single", cooldown: 0, perTurn: 9, ...extra,
+  });
+  Object.assign(ABILITIES, {
+    sFire: ab("sFire", "fire", { damage: { min: 2, max: 2, stat: "mag" } }), sLight: ab("sLight", "light"), sWater: ab("sWater", "water"), sIce: ab("sIce", "ice"),
+    sBolt: ab("sBolt", "bolt", { target: "foe", damage: { min: 10, max: 10, stat: "mag" } }), sHit: ab("sHit", "neutral", { target: "foe", damage: { min: 4, max: 4, stat: "mag" } }),
+  });
+  const kit = ["sFire", "sLight", "sWater", "sIce", "sBolt", "sHit"];
+  const field = (rows: string[], units: UnitSpec[], seed: string | number = 4) => createBattle({ seed, map: parseMap("t", rows), units });
+  const hero = (pos: { x: number; y: number }, o: Partial<UnitSpec> = {}) => unit({ id: "h", team: "heroes", pos, speed: 90, abilities: kit, ...o });
+  const foe = (id: string, pos: { x: number; y: number }, o: Partial<UnitSpec> = {}) => unit({ id, team: "foes", pos, hp: 60, ...o });
+  const tile = (s: BattleState, x: number, y: number) => s.map.tiles[y * s.map.w + x]!;
+  const cast = (s: BattleState, ability: string, target: { x: number; y: number }) => play(s, [{ t: "cast", unit: "h", ability, target }]);
+
+  it("reads oil, Sap and Sap sources from map rows", () => {
+    const m = parseMap("p", ["d0o g0s g0S g0Co"]);
+    expect(m.tiles.map((t) => [t.surface, !!t.sapSource, t.prop])).toEqual([["oil", false, undefined], ["sap", false, undefined], ["sap", true, undefined], ["oil", false, "crate"]]);
+    expect(() => parseMap("p", ["w0o"])).toThrow();
+    expect(() => parseMap("p", ["g0x"])).toThrow();
+  });
+  it("oil costs 1 extra MP to walk out of", () => {
+    const s = field(["d0o d0 d0 d0 d0 d0"], [hero({ x: 0, y: 0 }), foe("f", { x: 5, y: 0 })]);
+    expect(applyCommand(s, { t: "move", unit: "h", to: { x: 3, y: 0 } }).ok).toBe(false);
+    expect(applyCommand(s, { t: "move", unit: "h", to: { x: 2, y: 0 } }).ok).toBe(true);
+  });
+  it("fire makes the whole oil puddle flare up, hitting everyone next to it once and setting off barrels", () => {
+    let s = field(["d0 d0 d0o d0o d0 d0 d0 d0B", "d0 d0 d0 d0o d0o d0o d0o d0"], [hero({ x: 0, y: 0 }), foe("f", { x: 4, y: 0 }), foe("g", { x: 7, y: 1 }), foe("far", { x: 0, y: 1 })]);
+    s = cast(s, "sFire", { x: 2, y: 0 });
+    expect(unitById(s, "f").hp).toBe(60 - 6); // next to three oil tiles, hit once
+    expect(unitById(s, "f").statuses.some((x) => x.id === "burn")).toBe(true);
+    for (const [x, y] of [[2, 0], [3, 0], [3, 1], [4, 1], [5, 1], [6, 1]] as const) {
+      expect(tile(s, x, y).surface).toBeUndefined();
+      expect(tile(s, x, y).fireUntil).toBeGreaterThan(s.clock);
+    }
+    expect(tile(s, 7, 0).prop).toBeUndefined(); // the barrel by the far end of the puddle went off
+    expect(unitById(s, "g").hp).toBe(60 - 6 - BLAST_DAMAGE);
+    expect(unitById(s, "far").hp).toBe(60);
+    expect(previewEffects(field(["d0 d0 d0o d0"], [hero({ x: 0, y: 0 }), foe("f", { x: 3, y: 0 })]), unitById(s, "h"), ABILITIES.sFire!, { x: 2, y: 0 }).blasts).toEqual([{ x: 2, y: 0 }]);
+  });
+  it("Sap poisons the party and feeds foes; fire burns it to dirt and Light cleanses it", () => {
+    let s = field(["g0 g0s g0 g0s g0s", "g0 g0 g0 g0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 4, y: 0 }, { speed: 10 })]);
+    const r = applyCommand(s, { t: "move", unit: "h", to: { x: 1, y: 0 } });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.events).toContainEqual({ e: "sapped", unit: "h", status: "poison" });
+    s = cast(cast(r.state, "sFire", { x: 3, y: 0 }), "sLight", { x: 1, y: 0 });
+    expect(tile(s, 3, 0).surface).toBeUndefined();
+    expect(tile(s, 3, 0).terrain).toBe("dirt");
+    expect(tile(s, 1, 0).surface).toBeUndefined();
+    expect(tile(s, 1, 0).fireUntil).toBeUndefined();
+    let saw = false;
+    for (let i = 0; i < 6 && !saw; i++) {
+      const e = applyCommand(s, { t: "endTurn", unit: s.active });
+      if (!e.ok) throw new Error(e.error);
+      saw = e.events.some((x) => x.e === "sapped" && x.unit === "f" && x.status === "regen");
+      s = e.state;
+    }
+    expect(saw).toBe(true);
+  });
+  it("a Sap source grows the Sap one tile a round, up to two tiles away", () => {
+    let s = field(["g0S g0 g0 g0 g0 g0 g0", "g0 g0 g0 g0 g0 g0 g0", "g0 g0 g0 g0 g0 g0 g0"], [hero({ x: 6, y: 2 }), foe("f", { x: 6, y: 1 })]);
+    while (s.clock < 900) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    const sap = s.map.tiles.map((t, i) => (t.surface === "sap" ? `${i % s.map.w},${Math.floor(i / s.map.w)}` : "")).filter(Boolean);
+    expect(sap.sort()).toEqual(["0,0", "0,1", "0,2", "1,0", "1,1", "2,0"]);
+  });
+  it("a bolt charges the water it runs through, and starting a turn next to it may stun", () => {
+    let s = field(["g0 g0 g0 g0", "w0 w0 w0 w0"], [hero({ x: 0, y: 0 }), foe("f", { x: 1, y: 0 }), foe("g", { x: 3, y: 0 })]);
+    s = cast(s, "sBolt", { x: 1, y: 0 });
+    expect([0, 1, 2, 3].every((x) => (tile(s, x, 1).chargedUntil ?? 0) > s.clock)).toBe(true);
+    const calmed = cast(s, "sWater", { x: 2, y: 1 });
+    expect(tile(calmed, 2, 1).chargedUntil).toBeUndefined();
+    // Over many seeds, some turns next to charged water are lost and some are not.
+    let shocked = 0;
+    for (let seed = 0; seed < 40; seed++) {
+      let b = field(["g0 g0 g0 g0", "w0 w0 w0 w0"], [hero({ x: 0, y: 0 }), foe("f", { x: 3, y: 0 })], seed);
+      for (const t of b.map.tiles) if (t.terrain === "water") t.chargedUntil = 9999;
+      const r = applyCommand(b, { t: "endTurn", unit: b.active });
+      if (!r.ok) throw new Error(r.error);
+      if (r.events.some((e) => e.e === "shocked")) shocked++;
+      b = r.state;
+    }
+    expect(shocked).toBeGreaterThan(3);
+    expect(shocked).toBeLessThan(30);
+  });
+  it("fire on water makes steam that blocks sight for a round; ice freezes charged water", () => {
+    let s = field(["g0 g0 g0 g0 g0", "g0 g0 w0 g0 g0", "g0 g0 g0 g0 g0"], [hero({ x: 0, y: 1 }), foe("f", { x: 4, y: 1 })]);
+    expect(hasLineOfSight(s.map, { x: 0, y: 1 }, { x: 4, y: 1 })).toBe(true);
+    tile(s, 2, 1).chargedUntil = 9999;
+    s = cast(s, "sFire", { x: 2, y: 1 });
+    expect(tile(s, 2, 1).steamUntil).toBeGreaterThan(s.clock);
+    expect(tile(s, 2, 1).chargedUntil).toBeUndefined();
+    expect(hasLineOfSight(s.map, { x: 0, y: 1 }, { x: 4, y: 1 })).toBe(false);
+    while (s.clock < 300) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(tile(s, 2, 1).steamUntil).toBeUndefined();
+    const t2 = field(["g0 w0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 2, y: 0 })]);
+    tile(t2, 1, 0).chargedUntil = 9999;
+    const iced = cast(t2, "sIce", { x: 1, y: 0 });
+    expect(tile(iced, 1, 0).terrain).toBe("ice");
+    expect(tile(iced, 1, 0).chargedUntil).toBeUndefined();
+  });
+  it("Dip next to Sap makes the next attack poison", () => {
+    const s = field(["g0 g0s g0"], [hero({ x: 0, y: 0 }, { abilities: ["sHit"] }), foe("f", { x: 2, y: 0 })]);
+    const a = play(s, [{ t: "cast", unit: "h", ability: "dip", target: { x: 0, y: 0 } }, { t: "cast", unit: "h", ability: "sHit", target: { x: 2, y: 0 } }]);
+    expect(unitById(a, "f").statuses.some((x) => x.id === "poison")).toBe(true);
   });
 });
