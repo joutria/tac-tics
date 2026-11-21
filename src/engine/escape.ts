@@ -54,3 +54,17 @@ export function turnMp(u: Unit): number {
   if (u.escape === "flee") return u.maxMp + FLEE_MP;
   return u.maxMp;
 }
+
+/* Yielding and sparing (Dofus research doc, "Making mercy worth it"). A foe under a quarter of its HP, or one
+   that is fleeing, raises a white flag. Any member of the party within 1 to 2 tiles can Spare it (1 AP): it kneels
+   and leaves the fight, and it never becomes a rival. Bosses fight to the end and never yield. */
+export const YIELD_BELOW = 0.25;
+
+/** Shows the white flag: can be spared. */
+export const yielding = (u: Unit) =>
+  u.team === "foes" && u.life === "up" && !u.heavy && (u.hp / u.maxHp < YIELD_BELOW || u.escape === "flee");
+
+/** Yielding for good: a foe that is not Savia-marked stops fighting under the flag, and no longer keeps the battle
+    going. A marked foe under the flag still fights, and runs for the edge once it can (it may still become a
+    rival), until the party spares it or puts it down. */
+export const cowering = (u: Unit) => yielding(u) && u.escape === "none" && !u.marked;

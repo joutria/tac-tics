@@ -6,7 +6,7 @@ import type { Element } from "./elements";
 import type { Status } from "../engine/status";
 
 export type Area = "single" | "cross1";
-export type TargetKind = "foe" | "ally" | "downedAlly" | "any" | "emptyTile";
+export type TargetKind = "foe" | "ally" | "downedAlly" | "any" | "emptyTile" | "yielding";
 
 export interface Ability {
   id: string;
@@ -33,6 +33,8 @@ export interface Ability {
   teleport?: boolean;
   /** Stands a downed ally back up. */
   revive?: boolean;
+  /** Spares a yielding foe: it kneels and leaves the fight, and never becomes a rival. */
+  spare?: boolean;
   /** Left on every standing unit it hits (see src/engine/status.ts). */
   status?: Status;
   /** Removes harmful statuses from those it touches. */
@@ -48,6 +50,8 @@ export const ABILITIES: Record<string, Ability> = {
   // Shared by everyone.
   shove: { id: "shove", element: "neutral", ap: 0, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 1, push: 1, shove: true },
   helpUp: { id: "helpUp", element: "neutral", ap: 3, range: [1, 1], los: false, target: "downedAlly", area: "single", cooldown: 0, perTurn: 1, revive: true },
+  // The party only: a foe showing the white flag (under 25% HP, or fleeing) can be let go.
+  spare: { id: "spare", element: "neutral", ap: 1, range: [1, 2], los: false, target: "yielding", area: "single", cooldown: 0, perTurn: 4, spare: true },
 
   // The hero: mid-range, Light, Magic based.
   ray: { id: "ray", element: "light", ap: 3, range: [1, 5], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 7, max: 9, stat: "mag" } },

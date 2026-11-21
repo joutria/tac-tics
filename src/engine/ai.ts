@@ -9,7 +9,7 @@ import { abilityAvailable, areaTiles, damagePreview, maxRange, pushOutcome, shov
 import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, burning } from "./terrain";
 import { reachable } from "./movement";
-import { isBorder } from "./escape";
+import { cowering, isBorder, yielding } from "./escape";
 import { hasLineOfSight } from "./sight";
 import { statusOf, STATUS, type Status } from "./status";
 import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, onMap, roundOf, unitAt, type AiKind, type Unit } from "./state";
@@ -49,7 +49,7 @@ function reaches(s: BattleState, ab: Ability, from: Pos, to: Pos, ignore: string
 function threatAt(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<string, Pos[]>): number {
   let total = 0;
   for (const h of s.units) {
-    if (h.life !== "up" || !isFoe(h, u)) continue;
+    if (h.life !== "up" || !isFoe(h, u) || cowering(h)) continue;
     let best = 0;
     for (const id of h.abilities) {
       const ab = ABILITIES[id]!;
@@ -123,8 +123,12 @@ function blastValue(s: BattleState, u: Unit, at: Pos, from: Pos): number {
   return v;
 }
 
-function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos): number {
+/** How the party's side plays when the AI runs it (the simulator): `mercy` spares yielding foes. */
+export interface AiOptions { mercy?: boolean }
+
+function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos, opts: AiOptions = {}): number {
   let v = 0;
+  if (ab.spare) { const o = unitAt(s, target); return opts.mercy && o && yielding(o) ? 30 : 0; }
   for (const p of areaTiles(ab, target)) {
     if ((ab.damage || ab.element === "fire") && tileAt(s.map, p)?.prop === "barrel") v += blastValue(s, u, p, from);
     const o = unitAt(s, p);
@@ -200,7 +204,7 @@ function enemyReachMap(s: BattleState, u: Unit): Map<string, Pos[]> {
 interface Plan { value: number; moveTo: Pos | null; ability: string | null; target: Pos | null }
 
 /** The best next step for the active unit: a move and a cast, or a final reposition (ability null). */
-export function bestStep(s: BattleState): Plan {
+export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
   const u = activeUnit(s);
   const w = WEIGHTS[u.ai ?? "skirmisher"];
   const enemyReach = enemyReachMap(s, u);
@@ -237,7 +241,8 @@ export function bestStep(s: BattleState): Plan {
         if (ab.target === "foe" && (!occupant || !isFoe(u, occupant))) continue;
         if (ab.target === "ally" && (!occupant || isFoe(u, occupant) || occupant.life !== "up")) continue;
         if (ab.target === "downedAlly" && (!occupant || isFoe(u, occupant) || occupant.life !== "downed")) continue;
-        const act = actionValue(s, u, ab, sp.p, t);
+        if (ab.target === "yielding" && (!occupant || !isFoe(u, occupant) || !yielding(occupant))) continue;
+        const act = actionValue(s, u, ab, sp.p, t, opts);
         if (act <= 0) continue;
         const v = act + bestAfter(sp.p, u.mp - sp.cost);
         if (v > plan.value && v > idle) plan = { value: v, moveTo: samePos(sp.p, u.pos) ? null : sp.p, ability: id, target: t };
@@ -270,18 +275,20 @@ function escapeTurn(start: BattleState, run: (c: Command) => boolean, now: () =>
 }
 
 /** Plays the active unit's whole turn and returns the commands, ending with endTurn (or escape). */
-export function planTurn(start: BattleState): Command[] {
+export function planTurn(start: BattleState, opts: AiOptions = {}): Command[] {
   const cmds: Command[] = [];
   let s = start;
   const id = activeUnit(s).id;
   const run = (c: Command) => { const r = applyCommand(s, c); if (r.ok) { s = r.state; cmds.push(c); return true; } return false; };
+  // Under the white flag and not running: it stops fighting and waits to see what the party does.
+  if (cowering(activeUnit(s))) { run({ t: "endTurn", unit: id }); return cmds; }
   if (activeUnit(s).escape !== "none") {
     escapeTurn(s, run, () => s);
     if (!s.winner && s.active === id) run({ t: "endTurn", unit: id });
     return cmds;
   }
   for (let i = 0; i < 8 && !s.winner && s.active === id; i++) {
-    const plan = bestStep(s);
+    const plan = bestStep(s, opts);
     if (plan.moveTo) run({ t: "move", unit: id, to: plan.moveTo });
     if (!plan.ability || !plan.target) break;
     if (!run({ t: "cast", unit: id, ability: plan.ability, target: plan.target })) break;

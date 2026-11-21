@@ -22,10 +22,14 @@ export type Deed =
   /** Moheda's Sap Cap used on another companion (her "seen it" moment; nobody reacts to it). */
   | "sapRemedy"
   /** The hero took the Beacon or the Blaze job. */
-  | "jobBeacon" | "jobBlaze";
+  | "jobBeacon" | "jobBlaze"
+  /** A yielding or downed foe spared (in the fight, or after the win). */
+  | "spare"
+  /** A yielding foe downed or killed anyway, or finished after the win. */
+  | "finishYielding";
 
 export const DEEDS: Deed[] = ["helpUp", "heal", "finishDowned", "killFleeing", "letEscape", "allyBledOut", "noneDowned",
-  "rivalBeaten", "rivalEscaped", "quickWin", "shardsGained", "spendShards", "destroyShards", "sapRemedy", "jobBeacon", "jobBlaze"];
+  "rivalBeaten", "rivalEscaped", "quickWin", "shardsGained", "spendShards", "destroyShards", "sapRemedy", "jobBeacon", "jobBlaze", "spare", "finishYielding"];
 
 export const QUICK_WIN_ROUNDS = 4;
 
@@ -56,7 +60,7 @@ export const COMPANIONS: Record<string, Companion> = {
       hp: 40, ap: 6, mp: 3, speed: 48, jump: 1, str: 6, mag: 12, agi: 12, res: { water: 20 },
       abilities: ["splash", "undertow", "mend"],
     },
-    reacts: { helpUp: 4, heal: 1, letEscape: 2, jobBeacon: 5, finishDowned: -5, allyBledOut: -5, killFleeing: -20 },
+    reacts: { helpUp: 4, heal: 1, letEscape: 2, jobBeacon: 5, spare: 4, finishDowned: -5, finishYielding: -4, allyBledOut: -5, killFleeing: -20 },
     likeCapPerBattle: 8,
     forbidden: ["killFleeing"],
     remarks: {
@@ -66,6 +70,8 @@ export const COMPANIONS: Record<string, Companion> = {
       jobBeacon: { es: "Remanso sonríe. «Un faro. Eso es lo que necesitaba este valle».", en: "Remanso smiles. \"A beacon. That's what this valley needed.\"" },
       finishDowned: { es: "Remanso: «Ya estaba en el suelo. No hacía falta».", en: "Remanso: \"It was already down. There was no need.\"" },
       killFleeing: { es: "Remanso: «Huía. ¡Huía y lo mataste por la espalda!»", en: "Remanso: \"It was running. It was running and you cut it down from behind!\"" },
+      spare: { es: "Remanso: «Bien. Que vuelva a casa y se lo cuente a los suyos».", en: "Remanso: \"Good. Let it go home and tell its own.\"" },
+      finishYielding: { es: "Remanso: «Tenía la bandera alzada. La viste».", en: "Remanso: \"It had the flag up. You saw it.\"" },
     },
     escalation: {
       cold: { es: "Remanso apenas te habla durante la marcha.", en: "Remanso barely speaks to you on the road." },
@@ -85,7 +91,7 @@ export const COMPANIONS: Record<string, Companion> = {
       hp: 54, ap: 6, mp: 2, speed: 36, jump: 1, str: 11, mag: 4, agi: 6, res: { stone: 25, fire: 10, bolt: 10 },
       abilities: ["slam", "bulwark", "tremor"],
     },
-    reacts: { helpUp: 4, noneDowned: 3, heal: 1, jobBeacon: 5, allyBledOut: -25 },
+    reacts: { helpUp: 4, noneDowned: 3, heal: 1, jobBeacon: 5, spare: 1, allyBledOut: -25 },
     likeCapPerBattle: 8,
     forbidden: ["allyBledOut"],
     remarks: {
@@ -114,10 +120,10 @@ export const COMPANIONS: Record<string, Companion> = {
       hp: 32, ap: 6, mp: 4, speed: 58, jump: 2, str: 9, mag: 11, agi: 16, res: { bolt: 25 },
       abilities: ["spark", "jolt", "dash"],
     },
-    reacts: { rivalBeaten: 5, killFleeing: 3, quickWin: 2, finishDowned: 1, jobBlaze: 5, letEscape: -3, rivalEscaped: -8 },
+    reacts: { rivalBeaten: 5, killFleeing: 3, quickWin: 2, finishDowned: 1, finishYielding: 1, jobBlaze: 5, letEscape: -3, rivalEscaped: -8, spare: -1 },
     likeCapPerBattle: 10,
     forbidden: [],
-    soft: ["letEscape", "rivalEscaped"],
+    soft: ["letEscape", "rivalEscaped", "spare"],
     remarks: {
       rivalBeaten: { es: "Centella: «Uno menos. Así se cierra una cuenta».", en: "Centella: \"One less. That's how you settle a debt.\"" },
       killFleeing: { es: "Centella sacude las chispas de la cola. «No iba a llegar lejos».", en: "Centella shakes the sparks off her tail. \"It wasn't getting far.\"" },
@@ -126,6 +132,7 @@ export const COMPANIONS: Record<string, Companion> = {
       finishDowned: { es: "Centella asiente. «Lo que se empieza, se termina».", en: "Centella nods. \"What you start, you finish.\"" },
       letEscape: { es: "Centella mira hacia donde se fue. «Volverá. Siempre vuelven».", en: "Centella stares where it went. \"It'll be back. They always come back.\"" },
       rivalEscaped: { es: "Centella: «Lo teníamos. Lo teníamos y lo dejaste ir».", en: "Centella: \"We had it. We had it and you let it walk.\"" },
+      spare: { es: "Centella resopla. «Bandera blanca. Ya veremos cuánto le dura».", en: "Centella snorts. \"White flag. We'll see how long that lasts.\"" },
     },
     escalation: {
       cold: { es: "Centella camina por delante, sin esperar a nadie.", en: "Centella walks ahead, waiting for no one." },

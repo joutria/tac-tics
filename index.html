@@ -39,8 +39,17 @@
     #act button { pointer-events: auto; padding: 10px 18px; font-size: 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
     #tip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid #5a5e80; border-radius: 8px; padding: 6px 9px; font-size: 12px; max-width: 240px; display: none; }
     #tip b { color: var(--accent); }
+    #tip .quiet { color: var(--quiet); }
     #overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); flex-direction: column; gap: 16px; }
     #overlay h1 { margin: 0; font-size: 40px; }
+    #mercy { display: flex; flex-direction: column; gap: 8px; align-items: stretch; max-width: min(420px, calc(100vw - 32px)); max-height: 50vh; overflow-y: auto; background: var(--panel); border: 1px solid #5a5e80; border-radius: 12px; padding: 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.6); }
+    #mercy:empty { display: none; }
+    #mercy h2 { margin: 0; font-size: 18px; text-align: center; }
+    #mercy p { margin: 0; font-size: 13px; color: var(--quiet); text-align: center; }
+    #mercy .foe { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06); border-radius: 8px; padding: 6px 8px; }
+    #mercy .foe img { width: 32px; height: 32px; image-rendering: pixelated; }
+    #mercy .foe span { flex: 1; }
+    #mercy .foe button { min-height: 40px; }
     #toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: pre-line; text-align: center; max-width: 90vw; }
     #toast.show { opacity: 1; }
     .esc { color: #ffc85a; }
@@ -103,13 +112,14 @@
     <span class="spacer"></span>
     <button id="rewind"></button>
     <button id="undo"></button>
+    <button id="hold"></button>
     <button id="wait"></button>
     <button id="end" class="primary"></button>
     <span id="hint"></span>
   </div>
   <div id="act"><button id="cancel"></button><button id="confirm" class="go"></button></div>
   <div id="tip"></div>
-  <div id="overlay"><h1 id="result"></h1><p id="resultNote"></p><button id="again" class="primary"></button></div>
+  <div id="overlay"><h1 id="result"></h1><p id="resultNote"></p><div id="mercy"></div><button id="again" class="primary"></button></div>
   <div id="travel">
     <div id="travelTop" class="bar">
       <div id="runHead"></div>

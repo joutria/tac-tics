@@ -19,6 +19,8 @@ import { JOB_LAYER, type Job } from "../data/jobs";
 import type { Line } from "../data/rivals";
 import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, type Member } from "./party";
 import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, type Rival } from "./rivals";
+import { HELP_LINES, MERCY, type HelpKind } from "../data/mercy";
+import { unsettled } from "../engine/state";
 
 export const RUN_VERSION = 5;
 /** Share of max HP a rest node gives back. */
@@ -38,9 +40,11 @@ export type RewardOption = { t: "item"; id: string } | { t: "coins"; n: number }
 
 /** Something the player has to answer before moving on: a reward, a perk, or a shop to browse. */
 export type Offer =
-  | { kind: "reward"; options: RewardOption[] }
+  /** `gift`: handed over by a foe the party spared (its name), instead of the battle's usual reward. */
+  | { kind: "reward"; options: RewardOption[]; gift?: string }
   | { kind: "perk"; options: string[] }
-  | { kind: "shop"; stock: string[] }
+  /** `discount`: a spared foe minds the stall (its name) and takes MERCY.discount off. */
+  | { kind: "shop"; stock: string[]; discount?: string }
   /** A conversation (data/companions.ts TALKS); after a choice, its reply shows until the player moves on. */
   | { kind: "talk"; id: string; reply?: Line }
   /** A rest's cleansing fire: burn shards (choice 0) or keep them (choice 1). */
@@ -80,6 +84,23 @@ export interface RunState {
   over: null | "won" | "lost";
   /** How the run has played, towards the hero's job: Beacon protects and spares, Blaze finishes. */
   leanings?: Record<Job, number>;
+  /** Foes the party spared this run. They never become rivals, and they come back to help (see `helpAt`). */
+  spared?: SparedFoe[];
+  /** Mercy points earned by sparing: a hook for the Mercy/Severity meter, which is not built yet. */
+  mercy?: number;
+  /** A spared foe helping at the stop being entered. */
+  help?: { node: number; region: number; foe: string; kind: HelpKind };
+}
+
+export interface SparedFoe {
+  /** Unit id it had in the battle where it was spared. */
+  id: string;
+  name: string;
+  /** Its spec in that battle, to fight beside the party later. */
+  spec: UnitSpec;
+  region: number;
+  /** Has already come back to help (each spared foe helps once). */
+  helped?: boolean;
 }
 
 export function newRun(seed: string, difficulty: Difficulty = "normal"): RunState {
@@ -162,7 +183,10 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
     }
     units.push(foeSpec(run, pick(), id, pos, depth));
   }
-  if (!isAmbush(run, node)) return { seed: `${rs}:battle:${node.id}`, map: arena.map, units };
+  const help = run.help && run.help.node === nodeId && run.help.region === (run.region ?? 0) ? run.help : undefined;
+  const helper = help?.kind === "join" ? run.spared?.find((f) => f.id === help.foe) : undefined;
+  if (helper) units.push(helperSpec(helper, arena, units));
+  if (!isAmbush(run, node) || help?.kind === "warn") return { seed: `${rs}:battle:${node.id}`, map: arena.map, units };
   placeAmbush(arena.map, units, seedFrom(`${rs}:ambush-spots:${node.id}`));
   return { seed: `${rs}:battle:${node.id}`, map: arena.map, units, ambush: true };
 }
@@ -202,6 +226,47 @@ function placeAmbush(map: GridMap, units: UnitSpec[], seed: number) {
   });
 }
 
+/** A spared foe fighting beside the party for one battle: on a free ally spot, or the free tile nearest the hero. */
+function helperSpec(f: SparedFoe, arena: ReturnType<typeof arenaFor>, units: UnitSpec[]): UnitSpec {
+  const taken = (p: Pos) => units.some((u) => u.pos.x === p.x && u.pos.y === p.y);
+  let pos = arena.allies.find((p) => !taken(p));
+  if (!pos) {
+    let best: { p: Pos; d: number } | null = null;
+    for (let y = 0; y < arena.map.h; y++) for (let x = 0; x < arena.map.w; x++) {
+      const p = { x, y }, d = Math.abs(x - arena.hero.x) + Math.abs(y - arena.hero.y);
+      if (!standable(tileAt(arena.map, p)) || taken(p) || arena.foes.some((q) => q.x === x && q.y === y)) continue;
+      if (!best || d < best.d) best = { p, d };
+    }
+    pos = best?.p ?? arena.hero;
+  }
+  const spec: UnitSpec = { ...structuredClone(f.spec), id: `ally-${f.id}`, team: "heroes", pos: { ...pos } };
+  delete spec.marked; delete spec.rival; delete spec.hunts; delete spec.hpNow; delete spec.refuses;
+  return spec;
+}
+
+/** Which spared foe, if any, comes back to help at `node`, and how. Each helps once; the more the party has spared,
+    the likelier it is. Fights: it warns of an ambush (calling it off) or joins in; shops: it sells cheaper. */
+export function helpAt(run: RunState, node: RunNode): RunState["help"] {
+  const waiting = (run.spared ?? []).filter((f) => !f.helped);
+  if (!waiting.length || relapses(run)) return undefined;
+  const fight = node.kind === "battle" || node.kind === "elite" || node.kind === "rival" || node.kind === "boss";
+  if (!fight && node.kind !== "shop") return undefined;
+  const [v] = rngNext(seedFrom(`${regionSeed(run.seed, run.region ?? 0)}:help:${node.id}`));
+  if (v >= Math.min(MERCY.helpMax, MERCY.helpPer * waiting.length)) return undefined;
+  const kind: HelpKind = node.kind === "shop" ? "discount" : isAmbush(run, node) ? "warn" : "join";
+  return { node: node.id, region: run.region ?? 0, foe: waiting[0]!.id, kind };
+}
+
+/** A spared foe can turn on the party again only when the hero leans towards the Sap (Purity/Sap meter, a later
+    build). Until that meter exists, spared stays spared. */
+export const relapses = (_run: RunState) => false;
+
+/** The line said when a spared foe helps. */
+export function helpLine(run: RunState, lang: keyof Line): string {
+  const h = run.help, f = h && run.spared?.find((x) => x.id === h.foe);
+  return h && f ? HELP_LINES[h.kind][lang].replace("{name}", f.name) : "";
+}
+
 /** Goes to a node the player can go to: rests heal, shops open, battles start. */
 export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): RunState {
   if (!nextNodes(run).some((n) => n.id === nodeId)) throw new Error(`node ${nodeId} is not open`);
@@ -209,6 +274,13 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
   const node = next.map.nodes[nodeId]!;
   delete next.spoils;
   next.remarks = [];
+  delete next.help;
+  const help = helpAt(next, node);
+  if (help) {
+    next.help = help;
+    next.spared!.find((f) => f.id === help.foe)!.helped = true;
+    if (help.kind === "discount") next.remarks.push({ es: helpLine(next, "es"), en: helpLine(next, "en") });
+  }
   if (node.kind === "rest" || node.kind === "shop" || node.kind === "recruit" || node.kind === "quest") {
     if (node.kind === "rest") {
       next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * (REST_HEAL + rulesOf(next).healBonus)));
@@ -220,7 +292,10 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
       if (next.shards >= ALTAR.shards) next.offers.push({ kind: "altar" });
       // Past the town, the camps hold survivors of the storm fire Centella lit.
       if ((next.region ?? 0) >= 1) seeIt(next, "centella");
-    } else if (node.kind === "shop") next.offers.push({ kind: "shop", stock: shopStock(next, nodeId) });
+    } else if (node.kind === "shop") {
+      const by = help?.kind === "discount" ? next.spared!.find((f) => f.id === help.foe)!.name : undefined;
+      next.offers.push({ kind: "shop", stock: shopStock(next, nodeId), ...(by ? { discount: by } : {}) });
+    }
     else if (node.recruit) {
       const talk = TALKS[node.recruit]!;
       if (COMPANIONS[talk.companion] && !next.party.some((m) => m.id === talk.companion)) next.offers.push({ kind: "talk", id: node.recruit });
@@ -238,9 +313,12 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
 }
 
 /** Closes the current battle: spoils, HP, rivals, then the perk picks and the reward to choose. */
-export function finishBattle(run: RunState, end: BattleState): RunState {
+export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   const b = run.battle;
-  if (!b || !end.winner) throw new Error("no finished battle");
+  if (!b || !battleEnd.winner) throw new Error("no finished battle");
+  // Foes left unsettled after a win (no choice was made) are finished.
+  const end = structuredClone(battleEnd);
+  for (const u of unsettled(end)) u.life = "dead";
   const next = structuredClone(run);
   delete next.battle;
   next.rivals = afterBattle(next.rivals, b.setup, b.commands, end);
@@ -251,14 +329,15 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
   const node = next.map.nodes[b.node]!;
   next.at = b.node; next.path.push(b.node);
 
-  const beaten = end.units.filter((u) => u.team === "foes" && (u.life === "dead" || u.life === "downed"));
+  const beaten = end.units.filter((u) => u.team === "foes" && (u.life === "dead" || u.life === "downed" || u.life === "spared"));
+  const spared = end.units.filter((u) => u.team === "foes" && u.life === "spared");
   const shards = node.kind === "boss" ? REWARD.bossShards : node.kind === "elite" ? REWARD.eliteShards
     : node.kind === "rival" && beaten.some((u) => u.rival) ? REWARD.rivalShards : 0;
 
   // Companions: the fallen are lost for the run; the rest carry their HP and react to what they saw.
   const deeds = readDeeds(b.setup, b.commands);
   if (shards > 0) deeds.shardsGained = 1;
-  lean(next, { beacon: deeds.helpUp + deeds.letEscape + deeds.noneDowned, blaze: deeds.killFleeing + deeds.rivalBeaten + deeds.finishDowned });
+  lean(next, { beacon: deeds.helpUp + deeds.letEscape + deeds.noneDowned + deeds.spare, blaze: deeds.killFleeing + deeds.rivalBeaten + deeds.finishDowned + deeds.finishYielding });
   next.remarks = [];
   for (const m of fielded(next)) {
     const u = end.units.find((x) => x.id === m.id);
@@ -316,9 +395,25 @@ export function finishBattle(run: RunState, end: BattleState): RunState {
     for (const r of activeRivals(next.rivals)) placeRival(next.map, null, r.id, `${next.seed}:region:${next.region}:${r.id}`);
   }
   placeQuests(next);
+  // Sparing pays at once: each spared foe hands something over, before the battle's own reward.
+  for (const u of spared) {
+    const spec = b.setup.units.find((x) => x.id === u.id)!;
+    (next.spared ??= []).push({ id: u.id, name: u.name, spec: structuredClone(spec), region: next.region ?? 0 });
+    next.mercy = (next.mercy ?? 0) + MERCY.perSpare;
+    next.offers.push({ kind: "reward", options: giftOptions(next, node), gift: u.name });
+  }
   next.offers.push({ kind: "reward", options: rewardOptions(next, node) });
   offerJob(next);
   return next;
+}
+
+/** What a spared foe hands over: coins, a Savia shard, or a patch-up. */
+function giftOptions(run: RunState, node: RunNode): RewardOption[] {
+  return [
+    { t: "coins", n: Math.round(REWARD.purse * MERCY.giftCoins * (1 + REWARD.perLayer * depthOf(run, node))) },
+    { t: "shards", n: MERCY.giftShards },
+    { t: "heal", n: Math.round(heroMaxHp(run) * MERCY.giftHeal) },
+  ];
 }
 
 /** Companions travelling with the party react to something done on the run map. */
@@ -411,6 +506,13 @@ function shopStock(run: RunState, nodeId: number): string[] {
 /** Epic items cost Savia shards; the rest cost coins. */
 export const priceOf = (itemId: string) => ({ amount: ITEMS[itemId]!.price, currency: ITEMS[itemId]!.rarity === "epic" ? "shards" as const : "coins" as const });
 
+/** The price at the shop the party is in: a spared foe minding the stall takes MERCY.discount off (at least 1). */
+export function priceIn(run: RunState, itemId: string) {
+  const p = priceOf(itemId), shop = run.offers[0];
+  if (shop?.kind !== "shop" || !shop.discount) return p;
+  return { ...p, amount: Math.max(1, Math.round(p.amount * (1 - MERCY.discount))) };
+}
+
 /** Answers the first offer: picks a reward or a perk by its index. */
 export function choose(run: RunState, index: number): RunState {
   const offer = run.offers[0];
@@ -486,7 +588,7 @@ function gainItem(run: RunState, id: string) {
 export function buy(run: RunState, itemId: string): RunState {
   const offer = run.offers[0];
   if (offer?.kind !== "shop" || !offer.stock.includes(itemId)) throw new Error("not for sale here");
-  const { amount, currency } = priceOf(itemId);
+  const { amount, currency } = priceIn(run, itemId);
   if (run[currency] < amount) throw new Error(`not enough ${currency}`);
   const next = structuredClone(run);
   next[currency] -= amount;

@@ -16,12 +16,13 @@ import { GridMap, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
 import { routeTo } from "./movement";
 import { rngNext, seedFrom } from "./rng";
 import { fireUnder, updateTiles, type TerrainFx } from "./terrain";
-import { escapeStateFor, FLEE_LOCK, isBorder, turnMp, type EscapeState } from "./escape";
+import { cowering, escapeStateFor, FLEE_LOCK, isBorder, turnMp, yielding, type EscapeState } from "./escape";
 
 export type Team = "heroes" | "foes";
 export type Facing = "N" | "E" | "S" | "W";
 export type AiKind = "caster" | "bruiser" | "skirmisher";
-export type Life = "up" | "downed" | "dead" | "escaped";
+/** "spared": knelt and left the fight when the party spared it (see escape.ts, yielding). */
+export type Life = "up" | "downed" | "dead" | "escaped" | "spared";
 /** Still on the battlefield (standing or downed). */
 export const onMap = (u: { life: Life }) => u.life === "up" || u.life === "downed";
 
@@ -91,6 +92,8 @@ export interface Unit extends UnitSpec {
   statuses: Status[];
   /** Just lost a turn to a stun: cannot be stunned again until its next turn ends. */
   stunGuard?: boolean;
+  /** Set only while a held-back cast resolves: a hit that would down it leaves it at 1 HP instead. */
+  held?: boolean;
 }
 
 export interface BattleSetup {
@@ -119,11 +122,14 @@ export interface BattleState {
 
 export type Command =
   | { t: "move"; unit: string; to: Pos }
-  | { t: "cast"; unit: string; ability: string; target: Pos }
+  /** `hold`: Hold back. A hit that would down someone stops at 1 HP, and nobody downed is finished off. */
+  | { t: "cast"; unit: string; ability: string; target: Pos; hold?: boolean }
   | { t: "wait"; unit: string }
   | { t: "endTurn"; unit: string }
   /** A retreating or fleeing unit on the edge of the map leaves the battle. */
-  | { t: "escape"; unit: string };
+  | { t: "escape"; unit: string }
+  /** After a win: what the party does with a foe still on the map, downed or yielding. `unit` is that foe. */
+  | { t: "settle"; unit: string; choice: "spare" | "finish" };
 
 export type BattleEvent =
   | { e: "moved"; unit: string; path: Pos[] }
@@ -135,6 +141,8 @@ export type BattleEvent =
   | { e: "died"; unit: string }
   | { e: "escapeState"; unit: string; state: EscapeState }
   | { e: "escaped"; unit: string }
+  /** Knelt and left: spared by the party, during the fight or after it. */
+  | { e: "spared"; unit: string }
   | { e: "refused"; unit: string; target: Pos }
   /** A status acting at the start of a turn (Burn, Poison, Regen). */
   | { e: "tick"; unit: string; status: StatusId; damage: number; heal: number; downed: boolean; died: boolean }
@@ -280,7 +288,18 @@ function facingOf(from: Pos, to: Pos): Facing {
   return dy >= 0 ? "S" : "N";
 }
 
+/** Foes the party can still spare or finish after winning: downed, or yielding and still standing. */
+export const unsettled = (s: BattleState) =>
+  s.winner === "heroes" ? s.units.filter((u) => u.team === "foes" && (u.life === "downed" || yielding(u))) : [];
+
 export function applyCommand(prev: BattleState, cmd: Command): Result {
+  if (cmd.t === "settle") {
+    const s = structuredClone(prev);
+    const u = unsettled(s).find((x) => x.id === cmd.unit);
+    if (!u) return { ok: false, error: "only a downed or yielding foe can be settled, after a win" };
+    u.life = cmd.choice === "spare" ? "spared" : "dead";
+    return { ok: true, state: s, events: [cmd.choice === "spare" ? { e: "spared", unit: u.id } : { e: "died", unit: u.id }] };
+  }
   if (prev.winner) return { ok: false, error: "battle is over" };
   const s = structuredClone(prev);
   const actor = activeUnit(s);
@@ -314,7 +333,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       }
       if (!samePos(cmd.target, actor.pos)) actor.facing = facingOf(actor.pos, cmd.target);
       const fx: TerrainFx[] = [];
-      const hits = resolveCast(s, actor, ab, cmd.target, fx);
+      const hits = resolveCast(s, actor, ab, cmd.target, fx, !!cmd.hold);
       actor.ap -= ab.ap;
       actor.spentAp = true;
       actor.usedThisTurn[ab.id] = (actor.usedThisTurn[ab.id] ?? 0) + 1;
@@ -326,6 +345,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       }
       events.push({ e: "cast", unit: actor.id, ability: ab.id, target: cmd.target, hits, fx });
       for (const h of hits) if (h.died) events.push({ e: "died", unit: h.unit });
+      for (const h of hits) if (h.spared) events.push({ e: "spared", unit: h.unit });
       s.winner = winnerOf(s);
       break;
     }
@@ -382,8 +402,10 @@ function updateEscapes(s: BattleState, events: BattleEvent[]) {
   }
 }
 
+/** A side with nobody standing loses. Foes who yield without running (cowering) no longer count: once only they
+    are left, the party has won, and it decides what to do with them (see `unsettled`). */
 function winnerOf(s: BattleState): Team | null {
-  const standing = (t: Team) => s.units.some((u) => u.team === t && u.life === "up");
+  const standing = (t: Team) => s.units.some((u) => u.team === t && u.life === "up" && !cowering(u));
   if (!standing("heroes")) return "foes";
   if (!standing("foes")) return "heroes";
   return null;

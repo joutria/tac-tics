@@ -16,7 +16,7 @@ import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
 import { inside, manhattan, NEIGHBOURS, Pos, samePos, standable, TERRAIN, tileAt, type Terrain } from "./grid";
 import { rngInt, rngNext } from "./rng";
-import { takenFactor } from "./escape";
+import { takenFactor, yielding } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
 import { EXECUTIONER_FACTOR, GUARD_FACTOR } from "../data/jobs";
 import { hasLineOfSight } from "./sight";
@@ -69,9 +69,14 @@ export interface Hit {
   cleansed?: StatusId[];
   /** Dealt by the terrain rather than the ability itself: a barrel blast or a bolt chained through water. */
   source?: "blast" | "chain";
+  /** Hold back stopped this hit at 1 HP (or kept a downed unit from being finished). */
+  held?: boolean;
+  /** Knelt and left the fight, spared. */
+  spared?: boolean;
 }
 
-export const unitAbilities = (u: Unit) => [...u.abilities, "shove", "helpUp"];
+/** Everyone can Shove and Help up; the party can also Spare a yielding foe. */
+export const unitAbilities = (u: Unit) => [...u.abilities, "shove", "helpUp", ...(u.team === "heroes" ? ["spare"] : [])];
 
 /** Max reach after height: ranged abilities gain 1 per level above the target, lose 1 per level below. */
 export function maxRange(s: BattleState, ab: Ability, from: Pos, to: Pos): number {
@@ -109,6 +114,7 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
       break;
     case "ally": { const t = samePos(target, from) ? u : other; if (!t || isFoe(u, t) || t.life !== "up") return "needs a standing ally"; break; }
     case "downedAlly": if (!other || isFoe(u, other) || other.life !== "downed") return "needs a downed ally"; break;
+    case "yielding": if (!other || !isFoe(u, other) || !yielding(other)) return "needs a yielding foe"; break;
     case "emptyTile": {
       const tile = tileAt(s.map, target);
       if (!standable(tile) || occupant) return "needs an empty tile";
@@ -163,10 +169,24 @@ export function damagePreview(s: BattleState, caster: Unit, target: Unit, ab: Ab
 }
 
 /** Applies a cast to the state (which is already a private copy) and reports what happened. */
-export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: Pos, fx: TerrainFx[] = []): Hit[] {
+export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: Pos, fx: TerrainFx[] = [], hold = false): Hit[] {
+  if (!hold) return resolveCastNow(s, caster, ab, target, fx);
+  // Hold back: everything this cast does (the hit, a push, a fall, a slam, a blast) stops short of downing anyone.
+  for (const u of s.units) u.held = true;
+  try { return resolveCastNow(s, caster, ab, target, fx); } finally { for (const u of s.units) delete u.held; }
+}
+
+function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, fx: TerrainFx[]): Hit[] {
   const hits: Hit[] = [];
   const from = { ...caster.pos };
   if (ab.teleport) { caster.pos = { ...target }; return hits; }
+  if (ab.spare) {
+    const u = unitAt(s, target);
+    if (!u) return hits;
+    u.life = "spared";
+    hits.push({ unit: u.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false, spared: true });
+    return hits;
+  }
   const ground: TerrainHit[] = [];
   const credit = (u: Unit, h: { downed: boolean; died: boolean }) => { if ((h.downed || h.died) && isFoe(caster, u)) caster.downs += 1; };
   const hurtByTerrain = (u: Unit, dmg: number, h: TerrainHit) => { hurt(u, dmg, h); credit(u, h); };
@@ -196,7 +216,9 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
       const raw = Math.max(0, Math.floor(roll * damageFactor(s, caster, u, ab, from) * (hit.crit ? CRIT_MULT : 1)));
       hit.damage = absorb(u, raw);
       if (raw > hit.damage) hit.shielded = raw - hit.damage;
+      const hpBefore = u.hp;
       hurt(u, hit.damage, hit);
+      if (hit.held) hit.damage = hpBefore - u.hp;
     }
     if (ab.root && u.life === "up") { u.rooted = true; hit.rooted = true; }
     // Water puts out fire, on anyone it touches.
@@ -222,9 +244,11 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
   return hits;
 }
 
-export function hurt(u: Unit, dmg: number, hit: Pick<Hit, "downed" | "died">) {
+export function hurt(u: Unit, dmg: number, hit: Pick<Hit, "downed" | "died" | "held">) {
   if (dmg <= 0) return;
+  if (u.held && u.life !== "up") { hit.held = true; return; }
   if (u.life === "downed") { u.life = "dead"; hit.died = true; return; }
+  if (u.held && dmg >= u.hp) { u.hp = Math.min(u.hp, 1); hit.held = true; return; }
   u.hp -= dmg;
   if (u.hp <= 0) {
     u.hp = 0;
@@ -329,8 +353,9 @@ function push(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number, h
     const taken = absorb(u, dmg);
     if (dmg > taken) hit.shielded = (hit.shielded ?? 0) + dmg - taken;
     hit[kind] = taken;
-    hit.damage += Math.min(taken, u.hp);
+    const hpBefore = u.hp;
     hurt(u, taken, hit);
+    hit.damage += hpBefore - u.hp;
   }
   if (!o.at) return;
   const t = tileAt(s.map, o.at);
@@ -347,8 +372,9 @@ function push(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number, h
     const taken = absorb(v, o.splash);
     if (o.splash > taken) h.shielded = o.splash - taken;
     if (o.landedOn) { h.fall = taken; h.crushed = true; } else h.bump = taken;
-    h.damage = Math.min(taken, v.hp);
+    const hpBefore = v.hp;
     hurt(v, taken, h);
+    h.damage = hpBefore - v.hp;
     extra.push(h);
   }
 }
