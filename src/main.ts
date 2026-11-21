@@ -1266,8 +1266,10 @@ function placeSigns() {
   [...box.children].forEach((el, i) => {
     const s = play!.scene.signs[i]!, c = tileCenter(play!.stage.map, s.pos, 0);
     const e = el as HTMLElement;
-    e.style.left = `${(c.x * sceneView.scale + sceneView.ox) / dpr}px`;
-    e.style.top = `${(c.y * sceneView.scale + sceneView.oy) / dpr - 18}px`;
+    // Placed by left/top alone (no transform), so no press or hover style on buttons can shift a sign away
+    // from under the pointer mid-click.
+    e.style.left = `${(c.x * sceneView.scale + sceneView.ox) / dpr - e.offsetWidth / 2}px`;
+    e.style.top = `${(c.y * sceneView.scale + sceneView.oy) / dpr - 18 - e.offsetHeight}px`;
     e.classList.toggle("sel", i === signSel && padUsed);
   });
 }
