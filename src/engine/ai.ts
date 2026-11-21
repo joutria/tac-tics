@@ -7,7 +7,7 @@
 import { ABILITIES, type Ability } from "../data/abilities";
 import { abilityAvailable, areaTiles, damagePreview, maxRange, pushOutcome, shoveDistance, throwOutcome, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
-import { BLAST_DAMAGE, burning } from "./terrain";
+import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain";
 import { reachable } from "./movement";
 import { cowering, isBorder, yielding } from "./escape";
 import { hasLineOfSight } from "./sight";
@@ -100,8 +100,13 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
   const height = (tileAt(s.map, spot)?.h ?? 0) * 3;
   const cover = NEIGHBOURS.some((d) => { const t = tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }); return !!t && sightBlock(t) > 0; }) ? 2 : 0;
   // Fire under its feet, or a barrel next to it that the players could set off.
-  const hazard = (burning(s, tileAt(s.map, spot)) ? 8 : 0)
-    + (nearBarrel(s, spot) ? BLAST_DAMAGE * 0.5 : 0);
+  // Sap hurts the party and feeds foes; oil could go up; charged water may stun.
+  const ground = tileAt(s.map, spot);
+  const hazard = (burning(s, ground) ? 8 : 0)
+    + (nearBarrel(s, spot) ? BLAST_DAMAGE * 0.5 : 0)
+    + (ground?.surface === "sap" ? (u.team === "heroes" ? 6 : -4) : 0)
+    + (ground?.surface === "oil" ? 2 : 0)
+    + (NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }))) ? 4 : 0);
   return -threat * caution + offense - spacing + height + cover - nearest * late - hazard;
 }
 
@@ -113,12 +118,19 @@ const nearBarrel = (s: BattleState, p: Pos) => {
 
 /** Setting off a barrel: the blast's damage on enemies around it, minus on friends (the caster counts too). */
 function blastValue(s: BattleState, u: Unit, at: Pos, from: Pos): number {
+  const area: Pos[] = [];
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) area.push({ x: at.x + dx, y: at.y + dy });
+  return areaValue(s, u, area, from, BLAST_DAMAGE);
+}
+
+/** `dmg` and a Burn to everyone on `area`: plus for enemies, minus for friends (the caster, from `from`, too). */
+function areaValue(s: BattleState, u: Unit, area: Pos[], from: Pos, dmg: number): number {
   let v = 0;
   for (const o of s.units) {
-    if (o.life !== "up" || Math.max(Math.abs(o.pos.x - at.x), Math.abs(o.pos.y - at.y)) > 1) continue;
+    if (o.life !== "up") continue;
     const here = o.id === u.id ? from : o.pos;
-    if (Math.max(Math.abs(here.x - at.x), Math.abs(here.y - at.y)) > 1) continue;
-    v += isFoe(u, o) ? Math.min(BLAST_DAMAGE, o.hp) + 3 + (BLAST_DAMAGE >= o.hp ? 25 : 0) : -(BLAST_DAMAGE * 1.5 + 5);
+    if (!area.some((q) => q.x === here.x && q.y === here.y)) continue;
+    v += isFoe(u, o) ? Math.min(dmg, o.hp) + 3 + (dmg >= o.hp ? 25 : 0) : -(dmg * 1.5 + 5);
   }
   return v;
 }
@@ -137,8 +149,10 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (!hit) return 0;
     return isFoe(u, hit) ? Math.min(o.damage, hit.hp) + (o.damage >= hit.hp ? 25 : 0) : -(o.damage * 1.5 + 5);
   }
+  let flared = false;
   for (const p of areaTiles(ab, target)) {
     if ((ab.damage || ab.element === "fire") && tileAt(s.map, p)?.prop === "barrel") v += blastValue(s, u, p, from);
+    if (ab.element === "fire" && tileAt(s.map, p)?.surface === "oil" && !flared) { flared = true; v += areaValue(s, u, flareArea(s, p), from, OIL_BLAST); }
     const o = unitAt(s, p);
     if (!o) continue;
     const enemy = isFoe(u, o);

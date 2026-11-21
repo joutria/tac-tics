@@ -106,6 +106,14 @@ export function abilityAvailable(u: Unit, id: string): string | null {
 }
 
 /** Why a cast is not allowed, or null when it is. `from` lets the AI test casts from other tiles. */
+/** What a Dip from `p` would coat the next attack with: fire first, then Sap, on the tile or next to it. */
+export function dipSource(s: BattleState, p: Pos): "burn" | "poison" | null {
+  const near = [{ x: 0, y: 0 }, ...NEIGHBOURS].map((d) => tileAt(s.map, { x: p.x + d.x, y: p.y + d.y }));
+  if (near.some((t) => burning(s, t))) return "burn";
+  if (near.some((t) => t?.surface === "sap")) return "poison";
+  return null;
+}
+
 export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, from: Pos = u.pos): string | null {
   const avail = abilityAvailable(u, id);
   if (avail) return avail;
@@ -138,7 +146,7 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
     }
     case "any": break;
   }
-  if (ab.dip && ![{ x: 0, y: 0 }, ...NEIGHBOURS].some((d) => burning(s, tileAt(s.map, { x: from.x + d.x, y: from.y + d.y })))) return "needs fire next to you";
+  if (ab.dip && !dipSource(s, from)) return "needs fire or Sap next to you";
   return null;
 }
 
@@ -213,7 +221,7 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
   const from = { ...caster.pos };
   if (ab.teleport) { caster.pos = { ...target }; return hits; }
   if (ab.aim) { caster.aiming = true; return hits; }
-  if (ab.dip) { caster.dipped = true; return hits; }
+  if (ab.dip) { caster.dipped = dipSource(s, from) ?? false; return hits; }
   if (ab.spare) {
     const u = unitAt(s, target);
     if (!u) return hits;
@@ -262,9 +270,9 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
       for (const id of bad) removeStatus(u, id);
       if (bad.length) hit.cleansed = [...(hit.cleansed ?? []), ...bad];
     }
-    // Dipped in fire: the attack sets enemies it hits burning.
-    if (caster.dipped && ab.damage && hit.damage > 0 && u.life === "up" && isFoe(caster, u) && addStatus(u, { id: "burn", turns: 2, power: 3 }))
-      hit.statuses = [...(hit.statuses ?? []), "burn"];
+    // Dipped in fire or Sap: the attack sets enemies it hits burning, or poisons them.
+    if (caster.dipped && ab.damage && hit.damage > 0 && u.life === "up" && isFoe(caster, u) && addStatus(u, { id: caster.dipped, turns: 2, power: 3 }))
+      hit.statuses = [...(hit.statuses ?? []), caster.dipped];
     if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [ab.status.id];
     const extra: Hit[] = [];
     if (ab.push && u.life === "up") push(s, caster, u, from, ab.shove ? shoveDistance(caster, u) : ab.push, hit, extra, fx, ground, hurtByTerrain);
@@ -494,7 +502,7 @@ export function previewEffects(s: BattleState, caster: Unit, ab: Ability, target
   const before = new Map(copy.units.map((u) => [u.id, { ...u.pos }]));
   const fx: TerrainFx[] = [];
   const hits = resolveCast(copy, me, ab, target, fx);
-  const out: MovePreview = { moves: [], blasts: fx.filter((f) => f.fx === "explode").map((f) => f.at), splashes: [] };
+  const out: MovePreview = { moves: [], blasts: fx.filter((f) => f.fx === "explode" || f.fx === "flare").map((f) => f.at), splashes: [] };
   if (ab.push) for (const h of hits) {
     const from = before.get(h.unit)!, to = h.pushedTo ?? from;
     if (h.unit === caster.id || h.source) continue;

@@ -7,9 +7,19 @@
      everyone else standing next to that same stretch of water (friends too).
    - Barrels blow up when hit: 10 damage and a Burn to everyone in the 3x3 around them, grass set alight, and any
      barrel in the blast goes off too.
-   - Crates block movement and sight. Enough damage breaks them, and pushing abilities slide them. */
+   - Crates block movement and sight. Enough damage breaks them, and pushing abilities slide them.
+
+   Surfaces (Baldur's Gate research, "Surface reactions"):
+   - Oil costs 1 extra MP to walk out of. Fire on it makes the whole puddle flare up: OIL_BLAST damage and a Burn
+     to everyone within one tile of it, fire on the puddle, and grass around it catches. Barrels in the flare go off.
+   - Sap poisons the party and feeds foes (Regen) when they end a move or start a turn in it. Fire burns it away
+     to bare dirt; Light cleanses it. A Sap source grows the Sap by one tile a round, up to SAP_REACH tiles away.
+   - Water a bolt goes through stays charged for 2 rounds: anyone who starts a turn next to it may be stunned.
+     Water or Light calms it, ice freezes it, fire turns it to steam.
+   - Fire on water makes steam, which blocks sight for a round. */
 import type { Ability } from "../data/abilities";
-import { NEIGHBOURS, standable, tileAt, type Pos, type Tile } from "./grid";
+import { NEIGHBOURS, TERRAIN, manhattan, standable, tileAt, type Pos, type Tile } from "./grid";
+import { rngNext } from "./rng";
 import { absorb, addStatus } from "./status";
 import type { BattleState, Unit } from "./state";
 
@@ -18,9 +28,18 @@ export const ICE_TICKS = 300;
 export const BLAST_DAMAGE = 10;
 export const FIRE_BURN = { id: "burn", turns: 2, power: 3 } as const;
 export const CHAIN_SHARE = 0.5;
+export const OIL_BLAST = 6;
+export const CHARGE_TICKS = 200;
+export const STEAM_TICKS = 100;
+/** Chance that starting a turn next to charged water stuns. */
+export const SHOCK_CHANCE = 0.35;
+export const SAP_POISON = { id: "poison", turns: 2, power: 3 } as const;
+export const SAP_REGEN = { id: "regen", turns: 2, power: 3 } as const;
+/** How far from its source the Sap grows (Manhattan distance). */
+export const SAP_REACH = 2;
 
 export type TerrainFx =
-  | { fx: "ignite" | "douse" | "freeze" | "melt" | "explode" | "break"; at: Pos }
+  | { fx: "ignite" | "douse" | "freeze" | "melt" | "explode" | "break" | "flare" | "steam" | "charge" | "calm" | "cleanse"; at: Pos }
   | { fx: "slide"; at: Pos; to: Pos }
   | { fx: "chain"; at: Pos };
 
@@ -29,6 +48,73 @@ export interface TerrainHit { source: "blast" | "chain"; unit: string; damage: n
 
 const unitOn = (s: BattleState, p: Pos) => s.units.find((u) => (u.life === "up" || u.life === "downed") && u.pos.x === p.x && u.pos.y === p.y);
 export const burning = (s: BattleState, t: Tile | undefined) => !!t && (t.fireUntil ?? 0) > s.clock;
+export const charged = (s: BattleState, t: Tile | undefined) => !!t && t.terrain === "water" && (t.chargedUntil ?? 0) > s.clock;
+const chebyshev = (a: Pos, b: Pos) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+
+type Hurt = (u: Unit, dmg: number, h: TerrainHit) => void;
+
+/** Fire reaching a tile (an ability, a blast or a flare): oil flares up, Sap burns away, grass and bridges catch. */
+function burnTile(s: BattleState, p: Pos, fx: TerrainFx[], hits: TerrainHit[], hurt: Hurt, hitIds = new Set<string>()) {
+  const t = tileAt(s.map, p);
+  if (!t) return;
+  if (t.surface === "oil") { flareOil(s, p, fx, hits, hurt, hitIds); return; }
+  if (t.surface === "sap") {
+    delete t.surface; delete t.sapSource;
+    t.fireUntil = s.clock + FIRE_TICKS; if (t.terrain === "grass") t.terrain = "dirt";
+    fx.push({ fx: "ignite", at: p }); return;
+  }
+  if (t.terrain === "grass" || t.terrain === "bridge") { t.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "ignite", at: p }); }
+  else if (t.terrain === "water") steam(s, t, p, fx);
+}
+
+function steam(s: BattleState, t: Tile, p: Pos, fx: TerrainFx[]) {
+  t.steamUntil = s.clock + STEAM_TICKS; delete t.chargedUntil;
+  fx.push({ fx: "steam", at: p });
+}
+
+/** The oil puddle touching `p` (tiles next to each other, not diagonally). */
+export function oilPuddle(s: BattleState, p: Pos): Pos[] {
+  const out: Pos[] = [], seen = new Set<string>(), stack = [p];
+  while (stack.length) {
+    const q = stack.pop()!, k = `${q.x},${q.y}`;
+    if (seen.has(k) || tileAt(s.map, q)?.surface !== "oil") continue;
+    seen.add(k); out.push(q);
+    for (const d of NEIGHBOURS) stack.push({ x: q.x + d.x, y: q.y + d.y });
+  }
+  return out;
+}
+
+/** Tiles a flare of the puddle at `p` reaches: the puddle and every tile next to it, diagonals too. */
+export function flareArea(s: BattleState, p: Pos): Pos[] {
+  const out: Pos[] = [], seen = new Set<string>();
+  for (const o of oilPuddle(s, p)) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const q = { x: o.x + dx, y: o.y + dy }, k = `${q.x},${q.y}`;
+    if (!seen.has(k) && tileAt(s.map, q)) { seen.add(k); out.push(q); }
+  }
+  return out;
+}
+
+/** Oil catching fire: the whole puddle goes up. Each unit near it is hit once, however big the puddle. */
+function flareOil(s: BattleState, p: Pos, fx: TerrainFx[], hits: TerrainHit[], hurt: Hurt, hitIds: Set<string>) {
+  const puddle = oilPuddle(s, p), area = flareArea(s, p);
+  for (const o of puddle) { const t = tileAt(s.map, o)!; delete t.surface; t.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "flare", at: o }); }
+  for (const q of area) {
+    const t = tileAt(s.map, q)!;
+    if (t.prop === "barrel") { explode(s, q, fx, hits, hurt); continue; }
+    if (puddle.some((o) => o.x === q.x && o.y === q.y)) continue;
+    burnTile(s, q, fx, hits, hurt, hitIds);
+  }
+  for (const u of s.units) {
+    if (u.life !== "up" || hitIds.has(u.id) || !area.some((q) => q.x === u.pos.x && q.y === u.pos.y)) continue;
+    hitIds.add(u.id);
+    const h: TerrainHit = { source: "blast", unit: u.id, damage: 0, downed: false, died: false, burned: false };
+    const dealt = absorb(u, OIL_BLAST);
+    if (dealt < OIL_BLAST) h.shielded = OIL_BLAST - dealt;
+    h.damage = dealt; hurt(u, dealt, h);
+    if (u.life === "up") h.burned = addStatus(u, { ...FIRE_BURN });
+    hits.push(h);
+  }
+}
 
 /** What an ability does to the ground and objects on one tile of its area. Runs before it hits the unit there. */
 export function touchTile(s: BattleState, ab: Ability, from: Pos, p: Pos, fx: TerrainFx[], hits: TerrainHit[],
@@ -47,11 +133,16 @@ export function touchTile(s: BattleState, ab: Ability, from: Pos, p: Pos, fx: Te
   if (ab.element === "fire") {
     if (t.terrain === "ice") {
       if (!unitOn(s, p)) { t.terrain = "water"; delete t.thawAt; fx.push({ fx: "melt", at: p }); }
-    } else if (t.terrain === "grass" || t.terrain === "bridge") { t.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "ignite", at: p }); }
+    } else burnTile(s, p, fx, hits, hurt);
   } else if ((ab.element === "water" || ab.element === "ice") && burning(s, t)) {
     delete t.fireUntil; fx.push({ fx: "douse", at: p });
   }
-  if (ab.element === "ice" && t.terrain === "water") { t.terrain = "ice"; t.thawAt = s.clock + ICE_TICKS; fx.push({ fx: "freeze", at: p }); }
+  if ((ab.element === "water" || ab.element === "light") && charged(s, t)) { delete t.chargedUntil; fx.push({ fx: "calm", at: p }); }
+  if (ab.element === "light" && t.surface === "sap") { delete t.surface; delete t.sapSource; fx.push({ fx: "cleanse", at: p }); }
+  if (ab.element === "bolt" && ab.damage && t.terrain === "water" && !charged(s, t)) { t.chargedUntil = s.clock + CHARGE_TICKS; fx.push({ fx: "charge", at: p }); }
+  if (ab.element === "ice" && t.terrain === "water") {
+    t.terrain = "ice"; t.thawAt = s.clock + ICE_TICKS; delete t.chargedUntil; delete t.steamUntil; fx.push({ fx: "freeze", at: p });
+  }
 }
 
 export function explode(s: BattleState, at: Pos, fx: TerrainFx[], hits: TerrainHit[], hurt: (u: Unit, dmg: number, h: TerrainHit) => void) {
@@ -64,7 +155,7 @@ export function explode(s: BattleState, at: Pos, fx: TerrainFx[], hits: TerrainH
     if (!q) continue;
     if (q.prop === "barrel") { explode(s, p, fx, hits, hurt); continue; }
     if (q.prop === "crate") { delete q.prop; delete q.propHp; fx.push({ fx: "break", at: p }); }
-    if (q.terrain === "grass" || q.terrain === "bridge") { q.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "ignite", at: p }); }
+    if (q.terrain !== "water") burnTile(s, p, fx, hits, hurt);
     const u = unitOn(s, p);
     if (!u) continue;
     const h: TerrainHit = { source: "blast", unit: u.id, damage: 0, downed: false, died: false, burned: false };
@@ -100,6 +191,9 @@ export function chainBolt(s: BattleState, caster: Unit, struck: { unit: string; 
     const u = s.units.find((x) => x.id === first.unit)!;
     const water = waterBody(s, u.pos);
     if (!water.length) continue;
+    // The bolt leaves the water it ran through charged.
+    if (!water.some((w) => charged(s, tileAt(s.map, w)))) fx.push({ fx: "charge", at: water[0]! });
+    for (const w of water) tileAt(s.map, w)!.chargedUntil = s.clock + CHARGE_TICKS;
     const share = Math.floor(first.damage * CHAIN_SHARE);
     for (const o of s.units) {
       if (done.has(o.id) || o.life !== "up") continue;
@@ -141,7 +235,43 @@ export function updateTiles(s: BattleState) {
       delete t.fireUntil;
     }
     if (t.thawAt !== undefined && t.thawAt <= s.clock && !unitOn(s, p)) { t.terrain = "water"; delete t.thawAt; }
+    if (t.chargedUntil !== undefined && (t.chargedUntil <= s.clock || t.terrain !== "water")) delete t.chargedUntil;
+    if (t.steamUntil !== undefined && t.steamUntil <= s.clock) delete t.steamUntil;
   }
+  growSap(s);
+}
+
+/** Once a round, each Sap source spreads the Sap to the nearest free ground within SAP_REACH tiles. */
+function growSap(s: BattleState) {
+  const round = Math.floor(s.clock / 100);
+  if (round <= (s.sapRound ?? 0)) return;
+  s.sapRound = round;
+  const free = (q: Pos) => { const t = tileAt(s.map, q); return !!t && TERRAIN[t.terrain].walkable && t.terrain !== "ice" && t.terrain !== "bridge" && !t.prop && !t.surface && !burning(s, t); };
+  for (let i = 0; i < s.map.tiles.length; i++) {
+    if (!s.map.tiles[i]!.sapSource) continue;
+    const src = { x: i % s.map.w, y: Math.floor(i / s.map.w) };
+    let best: Pos | undefined;
+    for (let dy = -SAP_REACH; dy <= SAP_REACH; dy++) for (let dx = -SAP_REACH; dx <= SAP_REACH; dx++) {
+      const q = { x: src.x + dx, y: src.y + dy };
+      if (manhattan(q, src) > SAP_REACH || !free(q) || !NEIGHBOURS.some((d) => tileAt(s.map, { x: q.x + d.x, y: q.y + d.y })?.surface === "sap")) continue;
+      if (!best || manhattan(q, src) < manhattan(best, src)) best = q;
+    }
+    if (best) tileAt(s.map, best)!.surface = "sap";
+  }
+}
+
+/** Starting a turn next to charged water: a SHOCK_CHANCE roll to be stunned. True when it stuns. */
+export function shockNear(s: BattleState, u: Unit): boolean {
+  if (u.life !== "up" || !NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: u.pos.x + d.x, y: u.pos.y + d.y })))) return false;
+  const [roll, rng] = rngNext(s.rng); s.rng = rng;
+  return roll < SHOCK_CHANCE && addStatus(u, { id: "stun", turns: 1, power: 0 });
+}
+
+/** Standing in Sap: Poison for the party, Regen for foes. Returns what it gave, if it took. */
+export function sapUnder(s: BattleState, u: Unit): "poison" | "regen" | null {
+  if (u.life !== "up" || tileAt(s.map, u.pos)?.surface !== "sap") return null;
+  const st = u.team === "heroes" ? SAP_POISON : SAP_REGEN;
+  return addStatus(u, { ...st }) ? st.id : null;
 }
 
 /** Standing in fire: a Burn. True when it took. */

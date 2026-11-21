@@ -2,7 +2,7 @@
    Grid +x runs down-right on screen and +y down-left; each height level lifts a tile by 16 px.
    The view can be turned in 90 degree steps so nothing stays hidden behind a hill or a tree. */
 import { STATUS } from "../engine/status";
-import { GridMap, Pos, PROP_HP, tileAt, type Prop } from "../engine/grid";
+import { GridMap, Pos, PROP_HP, tileAt, type Prop, type Tile } from "../engine/grid";
 import { MAX_REVIVES } from "../engine/combat";
 import { wavering, yielding } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
@@ -243,6 +243,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         if (tile.h > 0) diamond(ctx, c.x, c.y, `rgba(255, 238, 190, ${Math.min(0.32, 0.1 * tile.h)})`, "rgba(0,0,0,0)");
         footShadows(ctx, m, x, k - x, view.rot, tile.h, c);
       }
+      drawSurface(ctx, tile, c, s.clock, opt.time, p);
       const mark = opt.marks.get(k2);
       if (mark) diamond(ctx, c.x, c.y, ...MARK_STYLE[mark], mark === "chosen" ? 2.5 : 1);
       // Danger zone: a dull purple wash (bright colours over many tiles tire the eye), on top of other marks.
@@ -266,6 +267,18 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.fillText("🔥", c.x, c.y + 4 - 2 * Math.abs(Math.sin(opt.time / 160 + p.x)));
       }
       if (tile.prop) drawProp(ctx, tile.prop, c, tile.propHp ?? 0);
+      if (tile.steamUntil !== undefined) {
+        // Steam: pale puffs drifting up, thick enough to read as "can't see through".
+        ctx.globalAlpha = 0.5;
+        diamond(ctx, c.x, c.y, "#e6eef4", "rgba(255,255,255,0.8)");
+        for (let i = 0; i < 4; i++) {
+          const rise = (opt.time / 30 + i * 10 + p.x * 7) % 40;
+          ctx.globalAlpha = 0.85 * (1 - rise / 48);
+          ctx.fillStyle = "#f4f8fb";
+          ctx.beginPath(); ctx.arc(c.x + (i - 1.5) * 8, c.y - 4 - rise, 11 - i, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
       if (!flat && tile.terrain === "rock") ctx.drawImage(img["obj-rock"]!, c.x - 18, c.y - 30, 36, 36);
       if (!flat && tile.terrain === "tree") {
         // See-through when someone stands right behind it, so trees never hide a unit.
@@ -408,6 +421,41 @@ function footShadows(ctx: CanvasRenderingContext2D, m: GridMap, rx: number, ry: 
     g.addColorStop(0, `rgba(10, 8, 20, ${Math.min(0.5, 0.28 + 0.08 * rise)})`); g.addColorStop(1, "rgba(10, 8, 20, 0)");
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(bx + ox, by + oy); ctx.lineTo(ax + ox, ay + oy); ctx.closePath(); ctx.fill();
+  }
+}
+
+/** Oil, Sap and charged water on top of the ground (src/engine/terrain.ts). */
+function drawSurface(ctx: CanvasRenderingContext2D, tile: Tile, c: { x: number; y: number }, clock: number, time: number, p: Pos) {
+  if (tile.surface === "oil") {
+    // A black, glossy slick with a rainbow sheen and a drop, so it never reads as a shadow or mud.
+    diamond(ctx, c.x, c.y, "rgba(14, 12, 18, 0.78)", "rgba(200, 170, 255, 0.55)");
+    const sheen = Math.sin(time / 400 + p.x + p.y * 2);
+    for (const [col, dy] of [["rgba(120, 200, 255, 0.35)", -3], ["rgba(220, 140, 255, 0.32)", 0], ["rgba(255, 220, 120, 0.25)", 3]] as const) {
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.ellipse(c.x - 4 + 4 * sheen, c.y + dy, 12, 2.2, -0.45, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.font = "11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.globalAlpha = 0.85;
+    ctx.fillText("🛢", c.x + 12, c.y + 6); ctx.globalAlpha = 1;
+  }
+  if (tile.surface === "sap") {
+    // Sap: a sickly green ooze that pulses; a source has a glowing shard in the middle.
+    const pulse = 0.5 + 0.5 * Math.sin(time / 300 + p.x * 2 + p.y);
+    diamond(ctx, c.x, c.y, `rgba(120, 190, 50, ${0.38 + 0.12 * pulse})`, "rgba(190, 240, 110, 0.7)");
+    ctx.fillStyle = "rgba(210, 255, 140, 0.55)";
+    for (const [dx, dy] of [[-8, 1], [5, -3], [2, 5]] as const) { ctx.beginPath(); ctx.arc(c.x + dx, c.y + dy, 1.6 + pulse, 0, Math.PI * 2); ctx.fill(); }
+    if (tile.sapSource) {
+      ctx.font = "15px system-ui, sans-serif"; ctx.textAlign = "center";
+      ctx.fillStyle = `rgba(200, 255, 120, ${0.75 + 0.25 * pulse})`;
+      ctx.fillText("◆", c.x, c.y + 4 - 2 * pulse);
+    }
+  }
+  if (tile.terrain === "water" && (tile.chargedUntil ?? 0) > clock) {
+    // Charged water: a crackling yellow-white wash and a bolt.
+    ctx.globalAlpha = 0.3 + 0.25 * Math.abs(Math.sin(time / 70 + p.x * 5 + p.y * 3));
+    diamond(ctx, c.x, c.y, "#fff3a0", "rgba(255, 250, 200, 0.9)");
+    ctx.globalAlpha = 1;
+    ctx.font = "13px system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("⚡", c.x, c.y + 4);
   }
 }
 
