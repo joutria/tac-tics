@@ -30,6 +30,20 @@ function end(run: RunState, how: "win" | "lose", escaped?: string): BattleState 
 }
 
 describe("run map", () => {
+  it("has links that never cross and a fork now and then", () => {
+    let forks = 0;
+    for (let k = 0; k < 60; k++) {
+      const m = generateMap(`cross${k}`);
+      const links = m.nodes.flatMap((n) => n.next.map((id) => ({ layer: n.layer, a: n.col, b: m.nodes[id]!.col })));
+      for (const p of links) for (const q of links) {
+        if (p.layer !== q.layer) continue;
+        // Two links between the same layers cross when their ends swap sides.
+        expect((p.a - q.a) * (p.b - q.b) >= 0).toBe(true);
+      }
+      forks += m.nodes.filter((n) => n.next.length > 1 && n.layer < MAP_LAYERS - 2).length;
+    }
+    expect(forks).toBeGreaterThan(60);
+  });
   it("is the same for the same seed and links every node from the start to the boss", () => {
     for (const seed of ["a", "b", "c", "d", "e"]) {
       const m = generateMap(seed);
@@ -406,8 +420,8 @@ describe("recruits", () => {
 });
 
 describe("personal quests and endings", () => {
-  const joined = (id: string, talk: string) => {
-    let run = newRun("quest");
+  const joined = (id: string, talk: string, seed = "quest") => {
+    let run = newRun(seed);
     const node = run.map.nodes.find((n) => n.recruit === talk)!;
     run = { ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))!.id };
     run = enterNode(run, node.id, "en");
@@ -424,7 +438,8 @@ describe("personal quests and endings", () => {
   });
 
   it("offers the sacrifice only once they are ready, and endings follow the lesson", () => {
-    let { run } = joined("guijo", "guijo.meet");
+    // A seed where a fight still lies ahead of where Guijo joins, so his quest has somewhere to wait.
+    let { run } = joined("guijo", "guijo.meet", "quest3");
     const quest = run.map.nodes.find((n) => n.quest === "guijo")!;
     run = { ...run, at: run.map.nodes.find((n) => n.next.includes(quest.id))!.id };
     const at = enterNode(run, quest.id, "en");

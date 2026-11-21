@@ -21,7 +21,7 @@ import { rivalName, rivalTaunt, rivalTitle } from "./run/rivals";
 import { carriedNemesis, closeRun, hasMilestone, kitOf, newLegacy, type Legacy } from "./run/legacy";
 import { KITS, LORE, MILESTONE_HINT } from "./data/camp";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
-import { choices } from "./run/map";
+import { aheadOf, choices } from "./run/map";
 import { memberSpec } from "./run/party";
 import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
@@ -1313,26 +1313,38 @@ function openMap(open: boolean) {
   tooltip(null);
 }
 
+/** The island's drawn extent in unscaled map pixels: its tiles, the icons over the nodes and their labels. */
+function routeBounds(grid: RouteGrid) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  grid.map.tiles.forEach((t, i) => {
+    if (t.offMap) return;
+    const c = tileCenter(grid.map, { x: i % grid.map.w, y: Math.floor(i / grid.map.w) }, 0);
+    x0 = Math.min(x0, c.x - TW / 2); x1 = Math.max(x1, c.x + TW / 2);
+    y0 = Math.min(y0, c.y - 40); y1 = Math.max(y1, c.y + 16 + (t.h + 1) * 16);
+  });
+  for (const id of grid.tileOf.keys()) y0 = Math.min(y0, iconAt(grid, id).y - 20);
+  return { x0, y0, w: x1 - x0, h: y1 - y0 };
+}
+
 function drawRoute(time: number) {
   const { grid, stage } = routeStage();
   const dpr = window.devicePixelRatio || 1;
   const top = $("routeTop").getBoundingClientRect().height, bottom = $("routeBottom").getBoundingClientRect().height;
-  const size = mapPixelSize(grid.map);
+  // The whole island always fits: it runs up the screen, so it suits a phone held upright as well as a desktop.
+  const box = routeBounds(grid);
   const availW = innerWidth - 16, availH = innerHeight - top - bottom - 16;
-  const fit = Math.min(availW / size.w, availH / size.h);
-  // On a phone the whole map would be too small to read: keep it legible, centre on where the party can go
-  // next, and let the player drag to see the rest.
-  const s = Math.max(innerWidth < 700 ? 0.85 : 0.5, Math.min(2, fit >= 1 ? Math.floor(fit * 2) / 2 : fit));
+  const fit = Math.min(availW / box.w, availH / box.h);
+  const s = Math.min(1.5, fit);
   const scale = s * dpr;
   const open = onMap ? nextNodes(journey) : [];
-  if (s <= fit + 0.01) routeView = { rot: 0, scale, ox: (canvas.width - size.w * scale) / 2 + routePan.x * dpr, oy: (top + 8) * dpr + (availH * dpr - size.h * scale) / 2 + routePan.y * dpr };
-  else {
-    const spots = (open.length ? open.map((n) => grid.tileOf[n.id]!) : [journey.at === null ? grid.start : grid.tileOf[journey.at]!]).map((p) => tileCenter(grid.map, p, 0));
-    const fx = spots.reduce((a, c) => a + c.x, 0) / spots.length, fy = spots.reduce((a, c) => a + c.y, 0) / spots.length - 20;
-    routeView = { rot: 0, scale, ox: canvas.width / 2 - fx * scale + routePan.x * dpr, oy: (top + 8 + availH / 2) * dpr - fy * scale + routePan.y * dpr };
-  }
-  routeIcon = Math.max(1, 0.9 / s);
+  routeView = {
+    rot: 0, scale,
+    ox: canvas.width / 2 - (box.x0 + box.w / 2) * scale + routePan.x * dpr,
+    oy: (top + 8 + availH / 2) * dpr - (box.y0 + box.h / 2) * scale + routePan.y * dpr,
+  };
+  routeIcon = Math.max(1, 0.85 / s);
   const done = new Set(journey.path);
+  const ahead = journey.over ? new Set<number>() : aheadOf(journey.map, journey.at);
   const marks = new Map<string, Mark>();
   for (const n of journey.map.nodes) {
     const p = grid.tileOf[n.id]!;
@@ -1343,19 +1355,49 @@ function drawRoute(time: number) {
   const wasFlat = isFlat(); setFlat(false);
   drawBattle(ctx, stage, images, routeView, { marks, hover: sel ? grid.tileOf[sel.id]! : null, active: null, time, floaters: [], bare: true });
   setFlat(wasFlat);
-  // Icons over the nodes, with names over the ones that can be picked.
   ctx.save();
   ctx.setTransform(scale, 0, 0, scale, routeView.ox, routeView.oy);
+  // The links, drawn over the trails from icon to icon: gold where the party went, bright and moving where it
+  // can go next, plain where it could still go later, and faint where it can no longer go.
+  const startAt = (() => { const c = tileCenter(grid.map, grid.start, 0); return { x: c.x, y: c.y - 14 }; })();
+  const went = new Set<string>();
+  journey.path.forEach((id, i) => went.add(`${i ? journey.path[i - 1] : "s"}>${id}`));
+  const links: { from: { x: number; y: number }; to: { x: number; y: number }; kind: "went" | "next" | "later" | "gone" }[] = [];
+  const kindOf = (from: number | null, to: number) => {
+    if (went.has(`${from ?? "s"}>${to}`)) return "went" as const;
+    if (from === journey.at && open.some((o) => o.id === to)) return "next" as const;
+    if (ahead.has(to) && (from === null ? journey.at === null : ahead.has(from) || from === journey.at)) return "later" as const;
+    return "gone" as const;
+  };
+  for (const n of journey.map.nodes) {
+    if (n.layer === 0) links.push({ from: startAt, to: iconAt(grid, n.id), kind: kindOf(null, n.id) });
+    for (const id of n.next) links.push({ from: iconAt(grid, n.id), to: iconAt(grid, id), kind: kindOf(n.id, id) });
+  }
+  const order = { gone: 0, later: 1, went: 2, next: 3 };
+  links.sort((a, b) => order[a.kind] - order[b.kind]);
+  ctx.lineCap = "round";
+  for (const l of links) {
+    const w = (l.kind === "gone" ? 2 : l.kind === "later" ? 2.5 : 3.5) * Math.min(routeIcon, 1.6);
+    ctx.setLineDash(l.kind === "next" ? [7 * routeIcon, 5 * routeIcon] : l.kind === "gone" ? [2, 5] : []);
+    ctx.lineDashOffset = l.kind === "next" ? -time / 40 : 0;
+    ctx.beginPath(); ctx.moveTo(l.from.x, l.from.y); ctx.lineTo(l.to.x, l.to.y);
+    ctx.strokeStyle = "rgba(20, 16, 30, 0.75)"; ctx.lineWidth = w + 2.5; if (l.kind !== "gone") ctx.stroke();
+    ctx.strokeStyle = l.kind === "went" ? "#ffd86b" : l.kind === "next" ? "#ffffff" : l.kind === "later" ? "rgba(225, 230, 255, 0.85)" : "rgba(160, 165, 190, 0.45)";
+    ctx.lineWidth = w; ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // Icons over the nodes, with names over the ones that can be picked; stops the party can no longer reach fade.
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   for (const n of journey.map.nodes) {
     const c = iconAt(grid, n.id);
     const isOpen = open.some((o) => o.id === n.id), r = (n.kind === "boss" ? 15 : 12) * routeIcon;
-    ctx.globalAlpha = isOpen || done.has(n.id) || n.kind === "boss" ? 1 : 0.75;
+    const live = isOpen || done.has(n.id) || ahead.has(n.id) || n.kind === "boss";
+    ctx.globalAlpha = live ? 1 : 0.4;
     const bob = isOpen ? Math.sin(time / 260 + n.id) * 2 : 0;
     ctx.beginPath(); ctx.arc(c.x, c.y + bob, r, 0, Math.PI * 2);
     ctx.fillStyle = done.has(n.id) ? "#4a4220" : n.kind === "boss" ? "#3d1f2a" : "#2a2c3d"; ctx.fill();
     ctx.lineWidth = isOpen ? 2.5 : 1.5;
-    ctx.strokeStyle = n.rival ? "#d9a0ff" : isOpen || done.has(n.id) ? "#ffd86b" : "#5a5e80"; ctx.stroke();
+    ctx.strokeStyle = n.rival ? "#d9a0ff" : isOpen || done.has(n.id) ? "#ffd86b" : live ? "#9a9ec0" : "#5a5e80"; ctx.stroke();
     const isz = (n.kind === "boss" ? 22 : 18) * routeIcon;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(iconCanvas(n.kind), Math.round(c.x - isz / 2), Math.round(c.y + bob - isz / 2), isz, isz);
@@ -1365,13 +1407,14 @@ function drawRoute(time: number) {
       ctx.strokeText(label, c.x, c.y + r + 9 + bob); ctx.fillText(label, c.x, c.y + r + 9 + bob);
     }
   }
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
 /** Where a node's icon floats, above its tile. */
 function iconAt(grid: RouteGrid, id: number) {
   const c = tileCenter(grid.map, grid.tileOf[id]!, 0);
-  return { x: c.x, y: c.y - 30 };
+  return { x: c.x, y: c.y - 24 };
 }
 
 /** A tap on the route map: the open node whose icon (or tile) is nearest, within reach of a finger. */
