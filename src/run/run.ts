@@ -7,7 +7,7 @@
    Like a battle, a run is deterministic: the map, every battle's seed and foes, every reward and every rival come
    from the run seed and what happened before. The run save keeps the current battle's own save inside it. */
 import { ITEMS, PERKS, REWARD, SHOP, type Rarity } from "../data/gear";
-import { DEPTH_HP, DEPTH_STAT, DIFFICULTY, HERO, REGIONS, regionalSpecies, type Difficulty, type Region, type Species } from "../data/region";
+import { DEPTH_HP, DEPTH_STAT, HERO, rulesFor, SAP_TIERS, REGIONS, regionalSpecies, type Difficulty, type Region, type Species } from "../data/region";
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
 import { standable, tileAt, type GridMap, type Pos } from "../engine/grid";
 import type { BattleSave } from "../engine/save";
@@ -67,6 +67,8 @@ export interface RunState {
   version: number;
   seed: string;
   difficulty: Difficulty;
+  /** Sap tier on top of Hard (data/region.ts SAP_TIERS), 0 or absent for none. */
+  tier?: number;
   /** Index into REGIONS of the region being crossed; `map` is its node map. */
   region: number;
   map: RunMap;
@@ -125,7 +127,7 @@ export interface SparedFoe {
 }
 
 /** What else a run takes from the legacy (run/legacy.ts): a companion back as a rival, and a keepsake perk. */
-export interface Bonds { returning?: Rival; keepsake?: string }
+export interface Bonds { returning?: Rival; keepsake?: string; tier?: number }
 
 /** A new run. `nemesis` is the rival who ended the last one (legacy.ts carriedNemesis): it waits on the map. */
 export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?: Rival, kit?: Kit, bonds: Bonds = {}): RunState {
@@ -145,6 +147,7 @@ export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?
     run.remarks.push(returnLine("arrives", bonds.returning.base.name));
   }
   if (bonds.keepsake && PERKS[bonds.keepsake]?.keepsake) run.hero.perks.push(bonds.keepsake);
+  if (difficulty === "hard" && bonds.tier) run.tier = Math.min(SAP_TIERS.length, bonds.tier);
   // The kit picked at the camp (data/camp.ts): what the hero sets out with.
   if (kit) {
     for (const id of kit.items ?? []) gainItem(run, id);
@@ -200,7 +203,7 @@ export function arenaFor(run: RunState, node: RunNode) {
   return arenas[i]!;
 }
 
-export const rulesOf = (run: RunState) => DIFFICULTY[run.difficulty ?? "normal"];
+export const rulesOf = (run: RunState) => rulesFor(run.difficulty ?? "normal", run.tier ?? 0);
 
 function foeSpec(run: RunState, sp: Species, id: string, pos: UnitSpec["pos"], layer: number): UnitSpec {
   const d = rulesOf(run);
@@ -237,7 +240,7 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
     const pos = arena.foes[i]!;
     const id = run.region ? `r${run.region}n${node.id}-${i}` : `n${node.id}-${i}`;
     const rival = i === 0 && node.rival ? run.rivals.find((r) => r.id === node.rival && !r.settled) : undefined;
-    if (rival) { units.push({ ...rivalSpec(rival, lang, pos) }); continue; }
+    if (rival) { units.push({ ...rivalSpec({ ...rival, level: rival.level + (rulesOf(run).rivalLevel ?? 0) }, lang, pos) }); continue; }
     if (node.kind === "boss" && i === 0) {
       const boss = region.boss, sp = boss.unit ?? species[boss.species]!;
       const f = foeSpec(run, sp, id, pos, depth);

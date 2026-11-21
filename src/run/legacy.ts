@@ -10,7 +10,7 @@ import type { Line } from "../data/rivals";
 import { NEMESIS_LINES, RETURN_LINES } from "../data/rivals";
 import { rivalFromCompanion, rivalName, type Rival } from "./rivals";
 import type { RunState } from "./run";
-import { DEPTH_HP, DEPTH_STAT, HERO } from "../data/region";
+import { DEPTH_HP, DEPTH_STAT, HERO, SAP_TIERS } from "../data/region";
 import { PERKS } from "../data/gear";
 import { KITS, type Kit, type Milestone } from "../data/camp";
 import { endingOf, memberSpec, newMember } from "./party";
@@ -37,6 +37,8 @@ export interface Legacy {
   bonds?: Record<string, { state: "good" | "bad" | "mended" | "finished"; run: number }>;
   /** The keepsake perk picked at the camp (data/gear.ts PERKS with `keepsake`). */
   keepsake?: string;
+  /** Sap tiers open on top of Hard (data/region.ts SAP_TIERS): winning Hard at the highest open tier opens the next. */
+  tiers?: number;
 }
 
 /** A companion back as a rival: the first map layer they can wait on, the companion level their spec is built at,
@@ -77,6 +79,7 @@ export function closeRun(legacy: Legacy, run: RunState): Legacy {
   next.lastRun = run.seed;
   next.runs += 1;
   if (run.over === "won") next.wins += 1;
+  if (run.over === "won" && run.difficulty === "hard" && (run.tier ?? 0) >= (next.tiers ?? 0)) next.tiers = Math.min(SAP_TIERS.length, (run.tier ?? 0) + 1);
   const carried = run.rivals.find((r) => r.nemesis);
   if (carried?.settled) {
     next.settled.push({ name: carried.base.name, epithet: carried.epithet, how: carried.settled, run: next.runs });

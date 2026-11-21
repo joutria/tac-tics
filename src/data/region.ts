@@ -140,9 +140,37 @@ export interface DifficultyRules {
   rewinds: number;
   /** Coins multiplier. */
   coins: number;
+  /** Levels added to every rival when it is fought (Sap tiers). */
+  rivalLevel?: number;
 }
 export const DIFFICULTY: Record<Difficulty, DifficultyRules> = {
   easy: { foeHp: 0.8, foeStat: -4, extraFoes: 0, healBonus: 0.15, rewinds: 3, coins: 1.25 },
   normal: { foeHp: 1, foeStat: 0, extraFoes: 0, healBonus: 0, rewinds: 1, coins: 1 },
   hard: { foeHp: 1.15, foeStat: 3, extraFoes: 1, healBonus: -0.1, rewinds: 0, coins: 0.85 },
 };
+
+/** Sap tiers (M4, plan doc gap 16 C): harder steps on top of Hard, opened one at a time by winning a Hard run at the
+    highest tier open. Each tier keeps the twists of the ones below and adds its own, added to Hard's rules. */
+export interface SapTier { name: Line; twist: Line; add: Partial<DifficultyRules> }
+export const SAP_TIERS: SapTier[] = [
+  { name: { es: "Savia I", en: "Sap I" }, add: { healBonus: -0.05 },
+    twist: { es: "Hogueras frías: descansar y ganar cura un poco menos.", en: "Cold fires: rests and wins heal a little less." } },
+  { name: { es: "Savia II", en: "Sap II" }, add: { foeStat: 2 },
+    twist: { es: "Savia espesa: los enemigos pegan más fuerte.", en: "Thick Sap: foes hit harder." } },
+  { name: { es: "Savia III", en: "Sap III" }, add: { coins: -0.15 },
+    twist: { es: "Bolsas vacías: menos monedas por combate.", en: "Empty purses: fewer coins per battle." } },
+  { name: { es: "Savia IV", en: "Sap IV" }, add: { foeHp: 0.1 },
+    twist: { es: "Pieles duras: los enemigos aguantan más.", en: "Hard hides: foes take more to bring down." } },
+  { name: { es: "Savia V", en: "Sap V" }, add: { rivalLevel: 1 },
+    twist: { es: "Rivales inquietos: cada rival llega un nivel más fuerte.", en: "Restless rivals: every rival arrives a level stronger." } },
+];
+
+/** The rules of a difficulty, with Sap tiers 1..tier added on top (tiers only apply to Hard). */
+export function rulesFor(difficulty: Difficulty, tier = 0): DifficultyRules {
+  const r: DifficultyRules = { ...DIFFICULTY[difficulty] };
+  if (difficulty !== "hard") return r;
+  for (const t of SAP_TIERS.slice(0, tier)) {
+    for (const [k, v] of Object.entries(t.add) as [keyof DifficultyRules, number][]) r[k] = (r[k] ?? 0) + v;
+  }
+  return r;
+}
