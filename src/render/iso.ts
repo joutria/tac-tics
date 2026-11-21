@@ -153,7 +153,7 @@ export interface DrawOptions {
   /** Escape routes of retreating or fleeing foes, drawn as dotted lines to the edge. */
   escapePaths?: Pos[][];
   /** What the chosen ability would move or set off: where pushed units and crates end up, and barrel blasts. */
-  effects?: { moves: { from: Pos; to: Pos; bump: number; fall?: number }[]; blasts: Pos[] };
+  effects?: { moves: { from: Pos; to: Pos; bump: number; fall?: number }[]; blasts: Pos[]; splashes?: { unit: string; damage: number }[] };
   /** Scenery mode (travel scenes, the route map): units without health bars, rings or badges. */
   bare?: boolean;
 }
@@ -312,6 +312,17 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = mv.fall ? "#ff7a6b" : "#ffb347";
       ctx.strokeText(label, b.x, b.y + 16); ctx.fillText(label, b.x, b.y + 16);
     }
+    ctx.restore();
+  }
+  // Units hurt by having someone slammed into them or fallen on them.
+  for (const sp of opt.effects?.splashes ?? []) {
+    const v = s.units.find((x) => x.id === sp.unit);
+    if (!v || !sp.damage) continue;
+    const c = tileCenter(m, v.pos, view.rot);
+    ctx.save();
+    ctx.font = "bold 12px system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#ff7a6b";
+    ctx.strokeText(`💢 -${sp.damage}`, c.x, c.y + 32); ctx.fillText(`💢 -${sp.damage}`, c.x, c.y + 32);
     ctx.restore();
   }
   for (const path of opt.escapePaths ?? []) {
