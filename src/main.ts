@@ -393,7 +393,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
     }
     for (const f of ev.fx) {
       const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡",
-        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "" }[f.fx];
+        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "", regrow: "🌿" }[f.fx];
       const loud = f.fx === "explode" || f.fx === "flare";
       if (word) floaters.push({ pos: { ...f.at }, text: word, color: loud ? "#ffb347" : "#e8f4ff", born: now + (loud ? 0 : 100) });
       const puff = ({ douse: "smoke", break: "smoke", explode: "smoke", steam: "steam", melt: "steam", freeze: "steam" } as const)[f.fx as string];

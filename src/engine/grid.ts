@@ -49,8 +49,12 @@ export interface Tile {
   chargedUntil?: number;
   /** Steam from fire on water: blocks sight until then. */
   steamUntil?: number;
-  /** Scenery the rules ignore, drawn on travel scenes: a tent (instead of the tree on that tile) or a bedroll. */
-  deco?: "tent" | "bedroll";
+  /** Scenery the rules ignore: a tent (instead of the tree on that tile) or a bedroll on travel scenes, or the
+      charred stump a burnt tree leaves. */
+  deco?: "tent" | "bedroll" | "stump";
+  /** Timeline time the ground burnt (drawn darker, with ash). Scorched ground does not catch fire again until it
+      regrows: a water attack on it, or REGROW_TICKS next to water (src/engine/terrain.ts). */
+  scorchedAt?: number;
 }
 
 /** Units can stand on the tile now (terrain and no object in the way). */

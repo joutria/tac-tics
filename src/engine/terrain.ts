@@ -1,7 +1,11 @@
 /* Terrain the player can use (plan doc, "Interactive terrain"). Everything here is deterministic.
 
    - Fire sets grass and bridges alight for 2 rounds. A unit that ends a move or starts a turn in fire catches a
-     Burn. Burnt grass becomes dirt; a burnt bridge falls into the water once nobody stands on it.
+     Burn. Burnt grass becomes scorched dirt, which does not burn, until it grows back into grass: at once when a
+     water attack hits it, or after REGROW_TICKS (3 rounds) next to water. A burnt bridge falls into the water once
+     nobody stands on it. Fire on a tile that is already burning does not make it burn longer.
+   - Crates and trees catch fire too. A burning crate or tree still blocks the way and sight; when the fire goes
+     out the crate is ash and the tree a charred stump on scorched dirt, so the tile opens up.
    - Ice freezes water into a walkable path for 3 rounds. Fire melts it again; water and ice put fire out.
    - Bolt runs through water: a unit hit by a bolt attack while standing next to water passes half the damage to
      everyone else standing next to that same stretch of water (friends too).
@@ -34,6 +38,8 @@ export const CHAIN_SHARE = 0.5;
 export const OIL_BLAST = 6;
 export const CHARGE_TICKS = 200;
 export const STEAM_TICKS = 100;
+/** Scorched ground next to water grows back into grass after this long (3 rounds). */
+export const REGROW_TICKS = 300;
 /** Chance that starting a turn next to charged water stuns. */
 export const SHOCK_CHANCE = 0.35;
 export const SAP_POISON = { id: "poison", turns: 2, power: 3 } as const;
@@ -42,7 +48,7 @@ export const SAP_REGEN = { id: "regen", turns: 2, power: 3 } as const;
 export const SAP_REACH = 2;
 
 export type TerrainFx =
-  | { fx: "ignite" | "douse" | "freeze" | "melt" | "explode" | "break" | "flare" | "steam" | "charge" | "calm" | "cleanse" | "sink" | "impact"; at: Pos }
+  | { fx: "ignite" | "douse" | "freeze" | "melt" | "explode" | "break" | "flare" | "steam" | "charge" | "calm" | "cleanse" | "sink" | "impact" | "regrow"; at: Pos }
   | { fx: "slide"; at: Pos; to: Pos }
   | { fx: "chain"; at: Pos };
 
@@ -52,6 +58,8 @@ export interface TerrainHit { source: "blast" | "chain" | "impact"; unit: string
 const unitOn = (s: BattleState, p: Pos) => s.units.find((u) => (u.life === "up" || u.life === "downed") && u.pos.x === p.x && u.pos.y === p.y);
 export const burning = (s: BattleState, t: Tile | undefined) => !!t && (t.fireUntil ?? 0) > s.clock;
 export const charged = (s: BattleState, t: Tile | undefined) => !!t && t.terrain === "water" && (t.chargedUntil ?? 0) > s.clock;
+/** What fire can catch on: grass, bridges, trees and crates (barrels go off instead). */
+export const flammable = (t: Tile) => t.prop === "crate" || (!t.prop && (t.terrain === "grass" || t.terrain === "bridge" || t.terrain === "tree"));
 const chebyshev = (a: Pos, b: Pos) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
 type Hurt = (u: Unit, dmg: number, h: TerrainHit) => void;
@@ -61,13 +69,20 @@ function burnTile(s: BattleState, p: Pos, fx: TerrainFx[], hits: TerrainHit[], h
   const t = tileAt(s.map, p);
   if (!t) return;
   if (t.surface === "oil") { flareOil(s, p, fx, hits, hurt, hitIds); return; }
+  if (burning(s, t)) return;
   if (t.surface === "sap") {
     delete t.surface; delete t.sapSource;
-    t.fireUntil = s.clock + FIRE_TICKS; if (t.terrain === "grass") t.terrain = "dirt";
+    t.fireUntil = s.clock + FIRE_TICKS; if (t.terrain === "grass") { t.terrain = "dirt"; t.scorchedAt = s.clock; }
     fx.push({ fx: "ignite", at: p }); return;
   }
-  if (t.terrain === "grass" || t.terrain === "bridge") { t.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "ignite", at: p }); }
+  if (flammable(t)) { t.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "ignite", at: p }); }
   else if (t.terrain === "water") steam(s, t, p, fx);
+}
+
+/** Scorched ground grows back into grass (a burnt tree's stump stays). */
+function regrow(t: Tile) {
+  delete t.scorchedAt;
+  if (t.terrain === "dirt") t.terrain = "grass";
 }
 
 function steam(s: BattleState, t: Tile, p: Pos, fx: TerrainFx[]) {
@@ -130,10 +145,12 @@ export function touchTile(s: BattleState, ab: Ability, from: Pos, p: Pos, fx: Te
   if (t.prop === "boulder") { if (ab.push) slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
   if (t.prop === "crate") {
     if (ab.push) { slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
-    if (ab.damage || ab.element === "fire") {
-      t.propHp = (t.propHp ?? 0) - (ab.element === "fire" ? 99 : ab.damage!.max);
-      if (t.propHp <= 0) { delete t.prop; delete t.propHp; fx.push({ fx: "break", at: p }); }
+    if (ab.damage) {
+      t.propHp = (t.propHp ?? 0) - ab.damage.max;
+      if (t.propHp <= 0) { delete t.prop; delete t.propHp; fx.push({ fx: "break", at: p }); return; }
     }
+    if (ab.element === "fire") burnTile(s, p, fx, hits, hurt);
+    else if ((ab.element === "water" || ab.element === "ice") && burning(s, t)) { delete t.fireUntil; fx.push({ fx: "douse", at: p }); }
     return;
   }
   if (ab.element === "fire") {
@@ -144,6 +161,7 @@ export function touchTile(s: BattleState, ab: Ability, from: Pos, p: Pos, fx: Te
     delete t.fireUntil; fx.push({ fx: "douse", at: p });
   }
   if ((ab.element === "water" || ab.element === "light") && charged(s, t)) { delete t.chargedUntil; fx.push({ fx: "calm", at: p }); }
+  if (ab.element === "water" && t.scorchedAt !== undefined && !burning(s, t)) { regrow(t); fx.push({ fx: "regrow", at: p }); }
   if (ab.element === "light" && t.surface === "sap") { delete t.surface; delete t.sapSource; fx.push({ fx: "cleanse", at: p }); }
   if (ab.element === "bolt" && ab.damage && t.terrain === "water" && !charged(s, t)) { t.chargedUntil = s.clock + CHARGE_TICKS; fx.push({ fx: "charge", at: p }); }
   if (ab.element === "ice" && t.terrain === "water") {
@@ -218,16 +236,26 @@ export function slideOutcome(s: BattleState, from: Pos, at: Pos, tiles: number, 
   return out;
 }
 
+/** A burning crate carries its fire when it moves: take it off the old tile... */
+export function takeFire(s: BattleState, t: Tile): number | undefined {
+  if (t.prop !== "crate" || !burning(s, t)) return undefined;
+  const until = t.fireUntil; delete t.fireUntil; return until;
+}
+/** ...and light the tile it lands on (water puts it out). */
+export function giveFire(t: Tile, until: number | undefined) {
+  if (until !== undefined && t.terrain !== "water" && t.prop === "crate") t.fireUntil = Math.max(t.fireUntil ?? 0, until);
+}
+
 /** Pushes an object (see slideOutcome). The unit it hits takes the impact through its Shield; a crate takes the same
     and may break; a barrel goes off where it stops if it hit a unit or fell a level or more. */
 function slideProp(s: BattleState, from: Pos, at: Pos, tiles: number, fx: TerrainFx[], hits: TerrainHit[], hurt: Hurt, str: number) {
   const o = slideOutcome(s, from, at, tiles, str);
-  const src = tileAt(s.map, at)!, hp = src.propHp;
+  const src = tileAt(s.map, at)!, hp = src.propHp, fire = takeFire(s, src);
   delete src.prop; delete src.propHp;
   if (o.rolled) fx.push({ fx: "slide", at, to: o.to });
   const end = tileAt(s.map, o.to)!;
   if (o.sinks) { fx.push({ fx: "sink", at: o.to }); return; }
-  end.prop = o.kind; end.propHp = hp;
+  end.prop = o.kind; end.propHp = hp; giveFire(end, fire);
   if (o.barrel) explode(s, o.barrel, fx, hits, hurt);
   if (o.crushes) { const c = tileAt(s.map, o.crushes)!; delete c.prop; delete c.propHp; fx.push({ fx: "break", at: o.crushes }); }
   if (o.kind === "barrel") {
@@ -299,12 +327,16 @@ export function updateTiles(s: BattleState) {
       if (t.terrain === "bridge") {
         if (unitOn(s, p)) continue;
         t.terrain = "water";
-      } else if (t.terrain === "grass") t.terrain = "dirt";
+      } else if (t.prop === "crate") { delete t.prop; delete t.propHp; if (t.terrain === "grass") { t.terrain = "dirt"; t.scorchedAt = s.clock; } }
+      else if (t.terrain === "tree") { t.terrain = "dirt"; t.scorchedAt = s.clock; t.deco = "stump"; }
+      else if (t.terrain === "grass") { t.terrain = "dirt"; t.scorchedAt = s.clock; }
       delete t.fireUntil;
     }
     if (t.thawAt !== undefined && t.thawAt <= s.clock && !unitOn(s, p)) { t.terrain = "water"; delete t.thawAt; }
     if (t.chargedUntil !== undefined && (t.chargedUntil <= s.clock || t.terrain !== "water")) delete t.chargedUntil;
     if (t.steamUntil !== undefined && t.steamUntil <= s.clock) delete t.steamUntil;
+    if (t.scorchedAt !== undefined && !burning(s, t) && s.clock - t.scorchedAt >= REGROW_TICKS
+      && NEIGHBOURS.some((d) => tileAt(s.map, { x: p.x + d.x, y: p.y + d.y })?.terrain === "water")) regrow(t);
   }
   growSap(s);
 }
