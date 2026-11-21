@@ -278,7 +278,7 @@ export interface DrawOptions {
   bare?: boolean;
 }
 
-const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
+const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", tallgrass: "#5f9a3a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
 
 const FACING_FRAME = { S: { col: 0, flip: false }, N: { col: 2, flip: false }, E: { col: 4, flip: false }, W: { col: 4, flip: true } } as const;
 const SHEET_ROW: Record<string, number> = { lumo: 1 };
@@ -415,7 +415,11 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.drawImage(img["obj-tree"]!, c.x - 32, c.y - 56, 64, 64);
         ctx.globalAlpha = 1;
       }
+      const here = places.some((pl) => !pl.moving && pl.slot.x === p.x && pl.slot.y === p.y);
+      if (tile.terrain === "tallgrass") tallGrass(ctx, c, p.x * 7 + p.y * 3, opt.time, false, flat);
       for (const pl of places) if (!pl.moving && pl.slot.x === p.x && pl.slot.y === p.y) drawPlace(pl);
+      // A front fringe over whoever stands in it, so they read as hidden in the grass.
+      if (tile.terrain === "tallgrass" && here) tallGrass(ctx, c, p.x * 5 + p.y * 11, opt.time, true, flat);
     }
     // A unit between two tiles goes after the whole diagonal it is entering, so nothing on that row covers it.
     for (const pl of places) if (pl.moving && depth(pl.slot) === k) drawPlace(pl);
@@ -552,6 +556,26 @@ function footShadows(ctx: CanvasRenderingContext2D, m: GridMap, rx: number, ry: 
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(bx + ox, by + oy); ctx.lineTo(ax + ox, ay + oy); ctx.closePath(); ctx.fill();
   }
+}
+
+/** Tall grass: swaying blades over the tile; `front` draws a shorter fringe in front of a unit standing in it. */
+function tallGrass(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, seed: number, time: number, front: boolean, flat: boolean) {
+  if (flat) { if (!front) diamond(ctx, c.x, c.y, "rgba(40, 110, 40, 0.55)", "rgba(150, 230, 110, 0.7)"); return; }
+  const blades = front ? 14 : 22;
+  for (let i = 0; i < blades; i++) {
+    const r = ((seed * 9301 + i * 49297) % 233280) / 233280;
+    const r2 = ((seed * 4271 + i * 7919) % 1000) / 1000;
+    const bx = c.x + (r - 0.5) * (TW * 0.7), by = c.y + (front ? 4 + r2 * 8 : (r2 - 0.5) * TH * 0.6);
+    const h = front ? 14 + r2 * 10 : 20 + r2 * 16;
+    const sway = Math.sin(time / 500 + seed + i) * 2.5;
+    ctx.globalAlpha = front ? 0.9 : 1;
+    // A dark outline under each blade keeps it readable on any ground, in the game's pixel style.
+    for (const [col, w] of [["#1f4a18", 4], [i % 3 === 0 ? "#a6e060" : i % 3 === 1 ? "#6cbc40" : "#479a30", 2.2]] as const) {
+      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.quadraticCurveTo(bx + sway, by - h / 2, bx + sway * 2, by - h); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 /** Oil, Sap and charged water on top of the ground (src/engine/terrain.ts). */

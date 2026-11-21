@@ -490,7 +490,7 @@ function dangerTiles(): Set<string> | undefined {
 function explain(why: string): string {
   const map: [string, TextKey][] = [
     ["outside the map", "err.outside"], ["out of range", "err.range"], ["no line of sight", "noSight"],
-    ["needs an enemy", "err.foe"], ["needs a standing ally", "err.ally"], ["needs a downed ally", "err.downedAlly"],
+    ["needs an enemy", "err.foe"], ["needs a standing ally", "err.ally"], ["needs a downed", "err.downedAlly"], ["hidden in tall grass", "err.hidden"],
     ["needs an empty tile", "err.empty"], ["needs a yielding foe", "err.yielding"], ["not enough AP", "err.ap"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
   ];
   const hit = map.find(([k]) => why.startsWith(k));
@@ -879,6 +879,7 @@ function tileInfo(at: Pos): string[] {
   if (tile.steamUntil !== undefined) out.push(`☁ ${t(lang, "steamInfo")}`);
   if (tile.terrain === "bridge") out.push(t(lang, "bridgeInfo"));
   if (tile.terrain === "water") out.push(t(lang, "waterInfo"));
+  if (tile.terrain === "tallgrass") out.push(`<b>🌾</b> ${t(lang, "tallGrassInfo")}`);
   return out;
 }
 
@@ -1533,7 +1534,7 @@ function frame(time: number) {
 
 async function start() {
   const base = import.meta.env.BASE_URL;
-  const tiles = ["top-grass", "top-dirt", "top-water", "top-rock", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-rock", "obj-tree"];
+  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-rock", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-rock", "obj-tree"];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
