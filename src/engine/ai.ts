@@ -5,14 +5,14 @@
    with line of sight and height (so they hide behind obstacles and look for high ground). It also reads how the
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
 import { ABILITIES, type Ability } from "../data/abilities";
-import { abilityAvailable, areaTiles, damagePreview, directionBonus, guardAbility, hiddenFrom, maxRange, previewEffects, pushOutcome, shoveDistance, stuck, throwOutcome, unitAbilities } from "./combat";
-import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
+import { abilityAvailable, areaTiles, damagePreview, directionBonus, guardAbility, hiddenFrom, maxRange, previewEffects, pushOutcome, pushTiles, stuck, throwOutcome, unitAbilities } from "./combat";
+import { bodyGap, cellsOf, coversPos, manhattan, NEIGHBOURS, nearestCell, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain";
 import { reachable } from "./movement";
 import { cowering, isBorder, yielding } from "./escape";
 import { hasLineOfSight } from "./sight";
 import { statusOf, STATUS, type Status } from "./status";
-import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, onMap, roundOf, unitAt, type AiKind, type Temper, type Unit } from "./state";
+import { activeUnit, applyCommand, BattleState, bodiesInWay, Command, isFoe, moveRules, nearestOf, onMap, roundOf, sizeOf, unitAt, unitGap, type AiKind, type Temper, type Unit } from "./state";
 
 interface Weights {
   /** How much a point of expected incoming damage hurts a standing spot. */
@@ -56,16 +56,19 @@ export const BOLD_FROM_ROUND = 3;
 const key = (p: Pos) => `${p.x},${p.y}`;
 const avg = (r: { min: number; max: number }) => (r.min + r.max) / 2;
 
-/** Can an ability cast from `from` reach `to` (range with height, line of sight)? Ignores who stands there. */
-function reaches(s: BattleState, ab: Ability, from: Pos, to: Pos, ignore: string[]): boolean {
+/** Can an ability cast from `at` reach `to` (range with height, line of sight)? Ignores who stands there. A caster
+    of `size` 2 (a giant, `at` its corner) casts from its tile closest to `to`. */
+function reaches(s: BattleState, ab: Ability, at: Pos, to: Pos, ignore: string[], size = 1): boolean {
+  const from = nearestCell(at, size, to);
   const d = manhattan(from, to);
   if (d < ab.range[0] || d > maxRange(s, ab, from, to)) return false;
   if (!ab.los || d === 0) return true;
-  return hasLineOfSight(s.map, from, to, (p) => {
-    const o = unitAt(s, p);
-    return !!o && o.life === "up" && !ignore.includes(o.id) && !samePos(p, to);
-  });
+  return hasLineOfSight(s.map, from, to, bodiesInWay(s, ignore, to));
 }
+
+/** Can it reach any tile of a body of `size` standing at `spot`? */
+const reachesBody = (s: BattleState, ab: Ability, at: Pos, spot: Pos, size: number, ignore: string[], casterSize = 1) =>
+  cellsOf(spot, size).some((c) => reaches(s, ab, at, c, ignore, casterSize));
 
 /** Expected damage the players could deal to `u` if it stood on `spot`, on their next turns. */
 function threatAt(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<string, Pos[]>): number {
@@ -78,7 +81,7 @@ function threatAt(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<string, Po
       if (!ab.damage || h.cooldowns[id]) continue; // learned: abilities on cooldown are not a threat next turn
       const dummy = { ...u, pos: spot };
       for (const from of enemyReach.get(h.id) ?? [h.pos]) {
-        if (!reaches(s, ab, from, spot, [h.id, u.id]) || hiddenFrom(s, h, dummy, from)) continue;
+        if (!reachesBody(s, ab, from, spot, sizeOf(u), [h.id, u.id], sizeOf(h)) || hiddenFrom(s, h, dummy, from)) continue;
         const hitsPerTurn = Math.min(ab.perTurn, Math.floor(h.maxAp / ab.ap));
         best = Math.max(best, avg(damagePreview(s, h, dummy, ab, from)) * hitsPerTurn);
       }
@@ -97,8 +100,8 @@ function offenseAt(s: BattleState, u: Unit, spot: Pos): number {
     for (const o of s.units) {
       if (o.life !== "up" || !isFoe(u, o)) continue;
       const dmg = avg(damagePreview(s, u, o, ab, spot));
-      if (reaches(s, ab, spot, o.pos, [u.id])) best = Math.max(best, dmg);
-      else if (manhattan(spot, o.pos) <= u.maxMp + ab.range[1]) best = Math.max(best, dmg * 0.6);
+      if (reachesBody(s, ab, spot, o.pos, sizeOf(o), [u.id], sizeOf(u))) best = Math.max(best, dmg);
+      else if (bodyGap(spot, sizeOf(u), o.pos, sizeOf(o)) <= u.maxMp + ab.range[1]) best = Math.max(best, dmg * 0.6);
     }
   }
   return best;
@@ -112,11 +115,12 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
   const late = Math.max(0, roundOf(s) - BOLD_FROM_ROUND);
   const enemies = s.units.filter((h) => h.life === "up" && isFoe(h, u));
   // When a friend is already trading blows, the rest commit instead of hanging back.
-  const engaged = s.units.some((f) => f.id !== u.id && f.life === "up" && !isFoe(f, u) && enemies.some((h) => manhattan(h.pos, f.pos) <= 1));
+  const engaged = s.units.some((f) => f.id !== u.id && f.life === "up" && !isFoe(f, u) && enemies.some((h) => unitGap(h, f) <= 1));
+  const gapTo = (h: Unit) => bodyGap(h.pos, sizeOf(h), spot, sizeOf(u));
   const caution = w.caution * tr.caution * (hpRatio < 0.5 ? 1.6 : 1) * Math.max(0.1, 1 - late * 0.15) * (engaged && u.temper ? 0.7 : 1);
   const offense = offenseAt(s, u, spot) * w.offense;
-  const near = enemies.reduce<Unit | undefined>((b, h) => (!b || manhattan(h.pos, spot) < manhattan(b.pos, spot) ? h : b), undefined);
-  const nearest = near ? manhattan(near.pos, spot) : 99;
+  const near = enemies.reduce<Unit | undefined>((b, h) => (!b || gapTo(h) < gapTo(b) ? h : b), undefined);
+  const nearest = near ? gapTo(near) : 99;
   // Adapting: against players who keep fighting from range, everyone presses in; against melee, casters back off.
   const style = s.habits.ranged - s.habits.melee;
   let ideal = w.idealDistance;
@@ -129,7 +133,7 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
   const cover = !tr.hides ? 0 : (NEIGHBOURS.some((d) => { const t = tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }); return !!t && sightBlock(t) > 0; }) ? 2 : 0)
     + (tileAt(s.map, spot)?.terrain === "tallgrass" ? 1 : 0);
   // Flankers work round to the back or side of the nearest enemy.
-  const flank = near && nearest <= Math.max(2, ideal) ? (directionBonus(near, spot) - 1) * 4 * tr.flank : 0;
+  const flank = near && nearest <= Math.max(2, ideal) ? (directionBonus(near, nearestCell(spot, sizeOf(u), nearestOf(near, spot))) - 1) * 4 * tr.flank : 0;
   // Fire under its feet, or a barrel next to it that the players could set off.
   // Sap hurts the party and feeds foes; oil could go up; charged water may stun.
   const ground = tileAt(s.map, spot);
@@ -146,8 +150,8 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
 function guardDanger(s: BattleState, u: Unit, spot: Pos): number {
   let v = 0;
   for (const g of s.units) {
-    if (!g.guard || g.life !== "up" || !isFoe(g, u) || Math.abs(g.pos.x - spot.x) + Math.abs(g.pos.y - spot.y) !== 1) continue;
-    if (Math.abs(g.pos.x - u.pos.x) + Math.abs(g.pos.y - u.pos.y) === 1) continue; // already next to it: no hit
+    if (!g.guard || g.life !== "up" || !isFoe(g, u) || bodyGap(g.pos, sizeOf(g), spot, sizeOf(u)) !== 1) continue;
+    if (unitGap(g, u) === 1) continue; // already next to it: no hit
     const d = ABILITIES[g.guard]?.damage;
     if (d) v += (d.min + d.max) / 2;
   }
@@ -173,7 +177,7 @@ function areaValue(s: BattleState, u: Unit, area: Pos[], from: Pos, dmg: number)
   for (const o of s.units) {
     if (o.life !== "up") continue;
     const here = o.id === u.id ? from : o.pos;
-    if (!area.some((q) => q.x === here.x && q.y === here.y)) continue;
+    if (!area.some((q) => coversPos(here, sizeOf(o), q))) continue;
     v += isFoe(u, o) ? Math.min(dmg, o.hp) + 3 + (dmg >= o.hp ? 25 : 0) : -(dmg * 1.5 + 5);
   }
   return v;
@@ -195,11 +199,13 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
   }
   if (ab.push && ab.area === "single" && tileAt(s.map, target)?.prop && !unitAt(s, target)) return objectPushValue(s, u, ab, from, target);
   let flared = false;
+  const seen = new Set<string>(); // a giant under several tiles of the area counts once
   for (const p of areaTiles(ab, target)) {
     if ((ab.damage || ab.element === "fire") && tileAt(s.map, p)?.prop === "barrel") v += blastValue(s, u, p, from);
     if (ab.element === "fire" && tileAt(s.map, p)?.surface === "oil" && !flared) { flared = true; v += areaValue(s, u, flareArea(s, p), from, OIL_BLAST); }
     const o = unitAt(s, p);
-    if (!o) continue;
+    if (!o || seen.has(o.id)) continue;
+    seen.add(o.id);
     const enemy = isFoe(u, o);
     if (ab.alliesOnly && enemy) continue;
     if (ab.foesOnly && !enemy) continue;
@@ -217,7 +223,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (ab.root && enemy && o.life === "up") v += 6;
     if (ab.push && enemy && o.life === "up") {
       // What the push itself does: a fall or a slam is damage (and can down), and a shove that moves nothing is worthless.
-      const out = pushOutcome(s, u, o, from, ab.shove ? shoveDistance(u, o) : ab.push);
+      const out = pushOutcome(s, u, o, nearestCell(from, sizeOf(u), target), pushTiles(ab, u, o));
       const extra = Math.min(out.fall + out.bump, o.hp);
       const moved = !samePos(out.to, o.pos);
       v += extra + (out.fall + out.bump >= o.hp ? 25 : 0) + (ab.shove ? (moved ? 1 : -1) : 4);
@@ -272,7 +278,8 @@ function candidateTargets(s: BattleState, ab: Ability): Pos[] {
   const spots = new Map<string, Pos>();
   for (const o of s.units) {
     if (!onMap(o)) continue;
-    spots.set(key(o.pos), o.pos);
+    // Every tile of a giant can be aimed at (the closest one may be the only one in reach).
+    for (const c of cellsOf(o.pos, sizeOf(o))) spots.set(key(c), c);
     if (ab.area === "square1") for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const p = { x: o.pos.x + dx, y: o.pos.y + dy }; spots.set(key(p), p); }
     else if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }
@@ -328,7 +335,7 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
     const targets = candidateTargets(s, ab);
     for (const sp of spots) {
       for (const t of targets) {
-        if (!reaches(s, ab, sp.p, t, [u.id])) continue;
+        if (!reaches(s, ab, sp.p, t, [u.id], sizeOf(u))) continue;
         const occupant = unitAt(s, t);
         if (occupant && hiddenFrom(s, u, occupant, sp.p)) continue;
         const pushable = !occupant && !!ab.push && ab.area === "single" && !!tileAt(s.map, t)?.prop;
@@ -371,8 +378,7 @@ function escapeTurn(start: BattleState, run: (c: Command) => boolean, now: () =>
 
 function guardWorth(s: BattleState, me: Unit): boolean {
   if (!guardAbility(me)) return false;
-  return s.units.some((o) => o.life === "up" && isFoe(me, o) && Math.abs(o.pos.x - me.pos.x) + Math.abs(o.pos.y - me.pos.y) > 1
-    && Math.abs(o.pos.x - me.pos.x) + Math.abs(o.pos.y - me.pos.y) <= o.maxMp + 1);
+  return s.units.some((o) => o.life === "up" && isFoe(me, o) && unitGap(o, me) > 1 && unitGap(o, me) <= o.maxMp + 1);
 }
 
 /** Plays the active unit's whole turn and returns the commands, ending with endTurn (or escape). */

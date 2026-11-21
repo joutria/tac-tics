@@ -8,6 +8,7 @@ import type { UnitSpec } from "../engine/state";
 import { MEADOW } from "./maps/meadow";
 import { RUINS } from "./maps/ruins";
 import { SHORE, SPILLWAY } from "./maps/reservoir";
+import { HOLLOW } from "./maps/hollow";
 import { TEST_UNITS } from "./units";
 import type { Element } from "./elements";
 import type { Line } from "./rivals";
@@ -34,9 +35,24 @@ export interface BossRule {
   species: number; hp: number; stat: number; mp: number; name: Line;
   /** ...or a unit of its own (a guardian), used as it is apart from depth scaling. */
   unit?: Species;
+  /** A giant: its body is size x size tiles (see UnitSpec.size). Giants resist pushes instead of being heavy. */
+  size?: number;
+  /** Abilities the boss gains on top of its species'. */
+  abilities?: string[];
+  /** Its own lair, fought in instead of the region's arenas. foes[0] is the boss's corner. */
+  arena?: Arena;
 }
-/** The boss: a species swollen by the Sap. */
-export const BOSS: BossRule = { species: 1, hp: 1.5, stat: 4, mp: 1, name: { es: "{name} Hinchado de Savia", en: "Sap-Swollen {name}" } };
+
+/** The Sap Hollow, the first region's boss lair (see maps/hollow.ts). */
+export const HOLLOW_ARENA: Arena = {
+  map: HOLLOW, hero: { x: 4, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 5, y: 8 }, { x: 4, y: 9 }],
+  foes: [{ x: 4, y: 1 }, { x: 2, y: 1 }, { x: 7, y: 1 }, { x: 6, y: 4 }],
+};
+/** The boss: a species swollen by the Sap into a 2x2 giant, waiting in its lair. */
+export const BOSS: BossRule = {
+  species: 1, hp: 1.3, stat: 4, mp: 1, name: { es: "{name} Hinchado de Savia", en: "Sap-Swollen {name}" },
+  size: 2, abilities: ["stomp"], arena: HOLLOW_ARENA,
+};
 
 /** How a region changes a species it borrows: "{name}" in `name` is the original name. */
 export interface VariantRule {

@@ -13,8 +13,9 @@ import { ABILITIES } from "../data/abilities";
 import type { Element } from "../data/elements";
 import { abilityAvailable, castProblem, guardAbility, hurt, resolveCast, type Hit } from "./combat";
 import { absorb, removeStatus, statusOf, tickDown, POISON_HEAL_FACTOR, type Status, type StatusId } from "./status";
-import { GridMap, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
+import { bodyGap, cellsOf, coversPos, GridMap, NEIGHBOURS, nearestCell, Pos, samePos, standable, tileAt } from "./grid";
 import { routeTo } from "./movement";
+import { BIG_BODY } from "./sight";
 import { rngNext, seedFrom } from "./rng";
 import { fireUnder, sapUnder, shockNear, updateTiles, type TerrainFx } from "./terrain";
 import { cowering, escapeStateFor, FLEE_LOCK, isBorder, turnMp, yielding, type EscapeState } from "./escape";
@@ -73,6 +74,10 @@ export interface UnitSpec {
   hpNow?: number;
   /** Too heavy to shove (bosses). */
   heavy?: boolean;
+  /** A giant: its body is size x size tiles, with `pos` the corner with the lowest x and y (see grid.ts cellsOf).
+      Giants are hit from any side, block sight like a wall, take a stronger push to move, crush crates and
+      trample tall grass as they walk. */
+  size?: number;
   /** This character's own quick action (data/abilities.ts), on top of the shared ones. */
   quick?: string;
   /** A rival's learned habit: it goes for units that can heal first. */
@@ -186,7 +191,9 @@ export type BattleEvent =
   /** Started a turn next to charged water and was stunned by it. */
   | { e: "shocked"; unit: string }
   /** Ended a move or started a turn in Sap: Poison for the party, Regen for foes. */
-  | { e: "sapped"; unit: string; status: "poison" | "regen" };
+  | { e: "sapped"; unit: string; status: "poison" | "regen" }
+  /** A giant walked over crates (crushed) and tall grass (flattened). */
+  | { e: "trampled"; unit: string; crushed: Pos[]; flattened: Pos[] };
 
 export type Result =
   | { ok: true; state: BattleState; events: BattleEvent[] }
@@ -200,14 +207,37 @@ export const roundOf = (s: BattleState) => Math.floor(s.clock / 100) + 1;
 export const unitById = (s: BattleState, id: string) => s.units.find((u) => u.id === id)!;
 export const activeUnit = (s: BattleState): Unit => unitById(s, s.active);
 /** The unit on a tile, standing or downed (bodies block the tile). */
-export const unitAt = (s: BattleState, p: Pos) => s.units.find((u) => onMap(u) && samePos(u.pos, p));
+export const unitAt = (s: BattleState, p: Pos) => s.units.find((u) => onMap(u) && ((u.size ?? 1) <= 1 ? samePos(u.pos, p) : coversPos(u.pos, u.size!, p)));
+/** Tiles per side of a unit's body: 1, or 2 for a giant. */
+export const sizeOf = (u: { size?: number }) => u.size ?? 1;
+/** Every tile a unit's body covers. */
+export const cellsOfUnit = (u: Unit | UnitSpec) => cellsOf(u.pos, sizeOf(u));
+/** Steps between two units' bodies: 1 = next to each other. */
+export const unitGap = (a: { pos: Pos; size?: number }, b: { pos: Pos; size?: number }) => bodyGap(a.pos, sizeOf(a), b.pos, sizeOf(b));
+/** The tile of `u` closest to `p` (its own tile, for a unit of one tile). */
+export const nearestOf = (u: { pos: Pos; size?: number }, p: Pos) => nearestCell(u.pos, sizeOf(u), p);
 export const isFoe = (a: Unit, b: Unit) => a.team !== b.team;
+/** For line of sight: standing units in the way, apart from `ignore` and whoever is on `target`. A giant's body
+    rises BIG_BODY levels (it blocks like a wall). */
+export const bodiesInWay = (s: BattleState, ignore: string[], target: Pos) => {
+  const at = unitAt(s, target)?.id;
+  return (p: Pos): boolean | number => {
+    const o = unitAt(s, p);
+    if (!o || o.life !== "up" || o.id === at || ignore.includes(o.id)) return false;
+    return sizeOf(o) > 1 ? BIG_BODY : true;
+  };
+};
 
 export function lockAt(s: BattleState, mover: Unit, p: Pos): number {
   let n = 0;
-  for (const d of NEIGHBOURS) {
-    const u = unitAt(s, { x: p.x + d.x, y: p.y + d.y });
-    if (!u || u.life !== "up" || !isFoe(u, mover)) continue;
+  const size = sizeOf(mover), seen = new Set<string>();
+  for (const c of cellsOf(p, size)) for (const d of NEIGHBOURS) {
+    const q = { x: c.x + d.x, y: c.y + d.y };
+    if (size > 1 && coversPos(p, size, q)) continue;
+    const u = unitAt(s, q);
+    // A giant touches the same foe along two tiles; it still pins only once.
+    if (!u || u.life !== "up" || !isFoe(u, mover) || seen.has(u.id)) continue;
+    seen.add(u.id);
     // A fleeing unit is pinned by every adjacent enemy, hard; otherwise only by enemies at least as agile.
     if (mover.escape === "flee") n += FLEE_LOCK; else if (u.agi >= mover.agi) n++;
   }
@@ -216,7 +246,7 @@ export function lockAt(s: BattleState, mover: Unit, p: Pos): number {
 
 export function moveRules(s: BattleState, u: Unit) {
   return {
-    mp: u.mp, jump: u.jump,
+    mp: u.mp, jump: u.jump, size: sizeOf(u),
     blocked: (p: Pos) => { const o = unitAt(s, p); return !!o && o.id !== u.id; },
     // Oil: one extra MP to walk out of it.
     lockAt: (p: Pos) => lockAt(s, u, p) + (tileAt(s.map, p)?.surface === "oil" ? 1 : 0),
@@ -229,8 +259,7 @@ export function createBattle(setup: BattleSetup): BattleState {
     if (ids.has(u.id)) throw new Error(`duplicate unit id ${u.id}`);
     ids.add(u.id);
     for (const a of u.abilities) if (!ABILITIES[a]) throw new Error(`unit ${u.id} has unknown ability ${a}`);
-    const tile = tileAt(setup.map, u.pos);
-    if (!standable(tile)) throw new Error(`unit ${u.id} starts on a tile it cannot stand on`);
+    if (!cellsOf(u.pos, u.size ?? 1).every((p) => standable(tileAt(setup.map, p)))) throw new Error(`unit ${u.id} starts on a tile it cannot stand on`);
   }
   let rng = seedFrom(setup.seed);
   const rolls = new Map<string, number>();
@@ -248,6 +277,8 @@ export function createBattle(setup: BattleSetup): BattleState {
     version: 2, rng, map: structuredClone(setup.map), units, clock: 0, seqCounter: units.length,
     active: "", turns: 0, winner: null, habits: { ranged: 0, melee: 0, elements: {} },
   };
+  // A giant flattens the grass it starts on.
+  for (const u of s.units) if (sizeOf(u) > 1) trample(s, u, []);
   advance(s, []);
   return s;
 }
@@ -377,6 +408,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
         const was = actor.pos;
         actor.pos = { ...step };
         prevPos = step;
+        if (sizeOf(actor) > 1) trample(s, actor, after);
         guardHits(s, actor, was, after);
         if (actor.life !== "up") break;
       }
@@ -402,7 +434,8 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
         if (!r.ok) return r;
         return { ok: true, state: r.state, events: [{ e: "refused", unit: actor.id, target: cmd.target }, ...r.events] };
       }
-      if (!samePos(cmd.target, actor.pos)) actor.facing = facingOf(actor.pos, cmd.target);
+      const origin = nearestOf(actor, cmd.target);
+      if (!samePos(cmd.target, origin)) actor.facing = facingOf(origin, cmd.target);
       const fx: TerrainFx[] = [];
       const hits = resolveCast(s, actor, ab, cmd.target, fx, !!cmd.hold);
       actor.ap -= ab.ap;
@@ -414,7 +447,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       if (ab.quick) actor.usedThisTurn.quick = 1;
       if (ab.cooldown > 0) actor.cooldowns[ab.id] = ab.cooldown + 1;
       if (actor.team === "heroes" && (ab.damage || ab.root || ab.push)) {
-        const dist = Math.abs(cmd.target.x - actor.pos.x) + Math.abs(cmd.target.y - actor.pos.y);
+        const dist = Math.abs(cmd.target.x - origin.x) + Math.abs(cmd.target.y - origin.y);
         if (dist <= 1) s.habits.melee++; else s.habits.ranged++;
         s.habits.elements[ab.element] = (s.habits.elements[ab.element] ?? 0) + 1;
       }
@@ -461,20 +494,33 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
   return { ok: true, state: s, events };
 }
 
+/** A giant's body on the ground: crates under it are crushed and tall grass is trampled flat. */
+function trample(s: BattleState, giant: Unit, events: BattleEvent[]) {
+  const crushed: Pos[] = [], flattened: Pos[] = [];
+  for (const p of cellsOfUnit(giant)) {
+    const t = tileAt(s.map, p);
+    if (!t) continue;
+    if (t.prop === "crate") { delete t.prop; delete t.propHp; crushed.push(p); }
+    if (t.terrain === "tallgrass") { t.terrain = "grass"; flattened.push(p); }
+  }
+  if (crushed.length || flattened.length) events.push({ e: "trampled", unit: giant.id, crushed, flattened });
+}
+
 /** Enemies on Guard that `mover` just stepped next to (from `was`) strike it, each once. */
 function guardHits(s: BattleState, mover: Unit, was: Pos, events: BattleEvent[]) {
   for (const g of s.units) {
     if (!g.guard || g.life !== "up" || !isFoe(g, mover) || statusOf(g, "stun") || mover.life !== "up") continue;
-    const near = (p: Pos) => Math.abs(p.x - g.pos.x) + Math.abs(p.y - g.pos.y) === 1;
+    const near = (p: Pos) => bodyGap(p, sizeOf(mover), g.pos, sizeOf(g)) === 1;
     if (!near(mover.pos) || near(was)) continue;
     const ab = ABILITIES[g.guard]!;
     delete g.guard;
-    g.facing = facingOf(g.pos, mover.pos);
+    const at = nearestOf(mover, nearestOf(g, mover.pos));
+    g.facing = facingOf(g.pos, at);
     const fx: TerrainFx[] = [];
     g.guardStrike = true;
     let hits: Hit[];
-    try { hits = resolveCast(s, g, ab, { ...mover.pos }, fx); } finally { delete g.guardStrike; }
-    events.push({ e: "guardHit", unit: g.id, target: mover.id }, { e: "cast", unit: g.id, ability: ab.id, target: { ...mover.pos }, hits, fx });
+    try { hits = resolveCast(s, g, ab, { ...at }, fx); } finally { delete g.guardStrike; }
+    events.push({ e: "guardHit", unit: g.id, target: mover.id }, { e: "cast", unit: g.id, ability: ab.id, target: { ...at }, hits, fx });
     for (const h of hits) if (h.died) events.push({ e: "died", unit: h.unit });
   }
 }

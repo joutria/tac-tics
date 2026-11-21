@@ -2,7 +2,7 @@
    Grid +x runs down-right on screen and +y down-left; each height level lifts a tile by 16 px.
    The view can be turned in 90 degree steps so nothing stays hidden behind a hill or a tree. */
 import { STATUS } from "../engine/status";
-import { GridMap, Pos, PROP_HP, tileAt, type Prop, type Tile } from "../engine/grid";
+import { cellsOf, GridMap, Pos, PROP_HP, tileAt, type Prop, type Tile } from "../engine/grid";
 import { MAX_REVIVES } from "../engine/combat";
 import { wavering, yielding } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
@@ -333,10 +333,13 @@ export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: numbe
   let best: { p: Pos; depth: number } | null = null;
   for (const u of units) {
     if (u.life === "dead" || u.life === "escaped" || u.life === "spared") continue;
-    const c = tileCenter(m, u.pos, rot);
-    if (Math.abs(px - c.x) > 18 || py < c.y - 58 || py > c.y + 10) continue;
-    const r = rotate(m, u.pos, rot), depth = r.x + r.y;
-    if (!best || depth > best.depth) best = { p: u.pos, depth };
+    const k = u.size ?? 1, c = bodyCenter(m, u.pos, k, rot), front = frontCell(m, u.pos, k, rot);
+    if (Math.abs(px - c.x) > 18 * k || py < c.y - 58 * k || py > c.y + 10 * k) continue;
+    const r = rotate(m, front, rot), depth = r.x + r.y;
+    // A giant is picked on the tile of its body under the pointer when there is one, else its front tile.
+    const under = k > 1 ? pickTile(m, px, py, rot) : null;
+    const p = under && under.x >= u.pos.x && under.y >= u.pos.y && under.x < u.pos.x + k && under.y < u.pos.y + k ? under : k > 1 ? front : u.pos;
+    if (!best || depth > best.depth) best = { p, depth };
   }
   if (best) return best.p;
   const exact = pickTile(m, px, py, rot);
@@ -364,24 +367,42 @@ const facingOf = (a: Pos, b: Pos): Facing => {
   return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? "E" : "W") : dy >= 0 ? "S" : "N";
 };
 
+/** Where a body of `size` with its corner at `p` stands on screen: the middle of its tiles (one tile: its centre).
+    Its slot is its front tile in this rotation, so it is painted after every tile it covers. */
+export function bodyCenter(m: GridMap, p: Pos, size: number, rot: number): { x: number; y: number } {
+  if (size <= 1) return tileCenter(m, p, rot);
+  const cs = cellsOf(p, size).filter((c) => tileAt(m, c)).map((c) => tileCenter(m, c, rot));
+  if (!cs.length) return tileCenter(m, p, rot);
+  return { x: cs.reduce((a, c) => a + c.x, 0) / cs.length, y: cs.reduce((a, c) => a + c.y, 0) / cs.length };
+}
+function frontCell(m: GridMap, p: Pos, size: number, rot: number): Pos {
+  if (size <= 1) return p;
+  let best = p, bd = -Infinity;
+  for (const c of cellsOf(p, size)) { const r = rotate(m, c, rot), d = r.x + r.y; if (d > bd) { bd = d; best = c; } }
+  return best;
+}
+
 /** Where to draw a unit right now: the screen point, the tile it is painted with (so it sorts in front of the
     tiles it passes) and the way it faces. */
 function placeOf(m: GridMap, u: Unit, mo: Motion | undefined, time: number, rot: number) {
-  const still = { c: tileCenter(m, u.pos, rot), slot: u.pos, facing: u.facing, alpha: 1 };
+  const size = u.size ?? 1;
+  const at = (p: Pos) => bodyCenter(m, p, size, rot), slotOf = (p: Pos) => frontCell(m, p, size, rot);
+  const still = { c: at(u.pos), slot: slotOf(u.pos), facing: u.facing, alpha: 1 };
   if (!mo || mo.points.length < 2) return still;
   const e = (time - mo.born) / mo.stepMs, last = mo.points.length - 1;
   if (e >= last) return still;
-  if (e < 0) return { ...still, c: tileCenter(m, mo.points[0]!, rot), slot: mo.points[0]! };
+  if (e < 0) return { ...still, c: at(mo.points[0]!), slot: slotOf(mo.points[0]!) };
   if (mo.kind === "blink") {
-    const at = e < 0.5 ? mo.points[0]! : mo.points[last]!;
-    return { c: tileCenter(m, at, rot), slot: at, facing: u.facing, alpha: Math.abs(1 - 2 * e) };
+    const p = e < 0.5 ? mo.points[0]! : mo.points[last]!;
+    return { c: at(p), slot: slotOf(p), facing: u.facing, alpha: Math.abs(1 - 2 * e) };
   }
   const i = Math.floor(e), f = e - i, a = mo.points[i]!, b = mo.points[i + 1]!;
-  const ca = tileCenter(m, a, rot), cb = tileCenter(m, b, rot);
+  const ca = at(a), cb = at(b);
   const dh = Math.abs((tileAt(m, a)?.h ?? 0) - (tileAt(m, b)?.h ?? 0));
   const lift = mo.kind === "walk" ? Math.sin(Math.PI * f) * (dh ? 10 + 6 * dh : 3) : 0;
-  const ra = rotate(m, a, rot), rb = rotate(m, b, rot);
-  const slot = rb.x + rb.y >= ra.x + ra.y ? b : a;
+  const fa = slotOf(a), fb = slotOf(b);
+  const ra = rotate(m, fa, rot), rb = rotate(m, fb, rot);
+  const slot = rb.x + rb.y >= ra.x + ra.y ? fb : fa;
   return {
     c: { x: ca.x + (cb.x - ca.x) * f, y: ca.y + (cb.y - ca.y) * f - lift },
     slot, facing: mo.kind === "walk" ? facingOf(a, b) : u.facing, alpha: 1,
@@ -450,7 +471,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
   const places = s.units.filter((v) => v.life === "up" || v.life === "downed").map((v) => {
     const mo = opt.motions?.get(v.id);
     const moving = !!mo && opt.time < mo.born + motionMs(mo);
-    return { u: v, moving, ...placeOf(m, v, mo, opt.time, view.rot) };
+    return { u: v, moving, big: (v.size ?? 1) > 1, ...placeOf(m, v, mo, opt.time, view.rot) };
   });
   const round = roundOf(s);
   const depth = (p: Pos) => { const r = rotate(m, p, view.rot); return r.x + r.y; };
@@ -563,12 +584,13 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       }
       const here = places.some((pl) => !pl.moving && pl.slot.x === p.x && pl.slot.y === p.y);
       if (tile.terrain === "tallgrass") tallGrass(ctx, c, p.x * 7 + p.y * 3, opt.time, false, flat);
-      for (const pl of places) if (!pl.moving && pl.slot.x === p.x && pl.slot.y === p.y) drawPlace(pl);
+      for (const pl of places) if (!pl.moving && !pl.big && pl.slot.x === p.x && pl.slot.y === p.y) drawPlace(pl);
       // A front fringe over whoever stands in it, so they read as hidden in the grass.
       if (tile.terrain === "tallgrass" && here) tallGrass(ctx, c, p.x * 5 + p.y * 11, opt.time, true, flat);
     }
-    // A unit between two tiles goes after the whole diagonal it is entering, so nothing on that row covers it.
-    for (const pl of places) if (pl.moving && depth(pl.slot) === k) drawPlace(pl);
+    // A unit between two tiles goes after the whole diagonal it is entering, so nothing on that row covers it; so
+    // does a giant, whose body spills over the tiles beside its front one.
+    for (const pl of places) if ((pl.moving || pl.big) && depth(pl.slot) === k) drawPlace(pl);
   }
   // Camp fires light up what is around them.
   for (let i = 0; i < m.tiles.length; i++) {
@@ -762,12 +784,14 @@ function drawUnit(
   const sheet = img[`unit-${u.look}`];
   const team = u.team === "heroes" ? "#ffe680" : "#ff8a7a";
   const base = ctx.globalAlpha; // lets a blinking unit fade as a whole
+  // A giant (size 2) is drawn twice as big, centred on its four tiles, with its shadow and ring over all of them.
+  const k = u.size ?? 1, ring = k > 1 ? 1.9 * k / 2 : 1;
   ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
-  ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 16, 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 16 * ring * (k > 1 ? 1.6 : 1), 7 * ring * (k > 1 ? 1.6 : 1), 0, 0, Math.PI * 2); ctx.fill();
   if (!bare) {
     ctx.strokeStyle = team; ctx.lineWidth = active ? 2.5 : 1;
     ctx.globalAlpha = base * (active ? 1 : 0.6);
-    ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 20, 9, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 20 * ring * (k > 1 ? 1.6 : 1), 9 * ring * (k > 1 ? 1.6 : 1), 0, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = base;
   }
   if (!sheet) return;
@@ -776,17 +800,20 @@ function drawUnit(
   const frame = downed ? 9 : f.col + (Math.floor(time / 450) % 2); // column 9 is the asleep pose
   const row = Math.min(SHEET_ROW[u.look] ?? 0, sheet.height / 64 - 1);
   ctx.save();
-  ctx.translate(c.x, c.y + 6);
+  ctx.translate(c.x, c.y + 6 * k);
   if (f.flip && !downed) ctx.scale(-1, 1);
   if (downed) ctx.globalAlpha = base * 0.6;
   // Just hit: a white flash (browsers without canvas filters simply skip it), and a small knock back.
   if (flash) { ctx.filter = "brightness(2.6) saturate(0.3)"; ctx.translate(Math.round(Math.sin(time / 18) * 2), 0); }
-  ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32, -64, 64, 64);
+  ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32 * k, -64 * k, 64 * k, 64 * k);
   ctx.filter = "none";
   ctx.restore();
   if (bare) return;
+  // Everything over the head sits higher on a giant.
+  const foot = c.y;
+  c = { x: c.x, y: c.y - 44 * (k - 1) };
   // Health bar over the head; downed units show the turns they have left.
-  const w = 30, ratio = u.hp / u.maxHp;
+  const w = 30 + 14 * (k - 1), ratio = u.hp / u.maxHp;
   ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(c.x - w / 2 - 1, c.y - 62, w + 2, 5);
   ctx.fillStyle = u.team === "heroes" ? "#7ed957" : "#e85a4f"; ctx.fillRect(c.x - w / 2, c.y - 61, w * ratio, 3);
   // Revives left, as small pips under the bar: bright = can still be helped up, dark = used.
@@ -805,7 +832,7 @@ function drawUnit(
   }
   if (focus) {
     ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.globalAlpha = base * ((Math.sin(time / 150) + 1) / 2);
-    ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 24 + 3 * Math.sin(time / 150), 11, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(c.x, foot + 2, (24 + 3 * Math.sin(time / 150)) * ring * (k > 1 ? 1.6 : 1), 11 * ring * (k > 1 ? 1.6 : 1), 0, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = base;
   }
   if (downed) drawRich(ctx, `✚ ${u.downedTurns}`, c.x, c.y - 70, 12, "#fff");

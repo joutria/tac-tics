@@ -4,6 +4,8 @@
 import { GridMap, Pos, sightBlock, tileAt } from "./grid";
 
 const EYE = 1;
+/** How many levels a giant's body rises: as tall as a tree, so nothing sees past it. */
+export const BIG_BODY = 2;
 
 /** The tiles the straight line from the centre of a to the centre of b passes through, ends excluded, in order.
     Each step is one tile, or two when the line passes exactly through a corner (a perfect diagonal): then it
@@ -25,7 +27,9 @@ export function tilesBetween(a: Pos, b: Pos): Pos[][] {
   return out;
 }
 
-export function hasLineOfSight(m: GridMap, a: Pos, b: Pos, occupied: (p: Pos) => boolean = () => false): boolean {
+/** `occupied` says whether a unit's body stands on a tile in between: true for one of normal height, or a number of
+    levels (a giant is BIG_BODY tall, so it blocks sight like a wall). */
+export function hasLineOfSight(m: GridMap, a: Pos, b: Pos, occupied: (p: Pos) => boolean | number = () => false): boolean {
   const ta = tileAt(m, a), tb = tileAt(m, b);
   if (!ta || !tb) return false;
   const from = ta.h + EYE, to = tb.h + EYE;
@@ -36,7 +40,8 @@ export function hasLineOfSight(m: GridMap, a: Pos, b: Pos, occupied: (p: Pos) =>
     const t = Math.hypot(p.x - a.x, p.y - a.y) / dist;
     const lineH = from + (to - from) * t;
     let top = tile.h + sightBlock(tile);
-    if (occupied(p)) top = Math.max(top, tile.h + EYE);
+    const body = occupied(p);
+    if (body) top = Math.max(top, tile.h + (typeof body === "number" ? body : EYE));
     return top >= lineH;
   };
   for (const step of tilesBetween(a, b)) if (step.every(blocks)) return false;
