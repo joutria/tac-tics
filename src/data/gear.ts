@@ -43,7 +43,11 @@ export const ITEMS: Record<string, Item> = {
   hourglass: { id: "hourglass", slot: "charm", rarity: "epic", name: { es: "Reloj de arena roto", en: "Broken Hourglass" }, mods: { ap: 1 }, price: 4 },
 };
 
-export interface Perk { id: string; name: Line; desc: Line; mods: Mods }
+export interface Perk {
+  id: string; name: Line; desc: Line; mods: Mods;
+  /** A keepsake (M4): left by this companion's good ending for later runs, picked at the camp, never offered at a level-up. */
+  keepsake?: string;
+}
 
 /** Every second level the hero picks 1 of 2 perks. */
 export const PERKS: Record<string, Perk> = {
@@ -53,6 +57,10 @@ export const PERKS: Record<string, Perk> = {
   stride: { id: "stride", name: { es: "Zancada", en: "Stride" }, desc: { es: "+1 PM.", en: "+1 MP." }, mods: { mp: 1 } },
   quick: { id: "quick", name: { es: "Reflejos", en: "Reflexes" }, desc: { es: "+8 Velocidad: actúas antes y más a menudo.", en: "+8 Speed: you act sooner and more often." }, mods: { speed: 8 } },
   slip: { id: "slip", name: { es: "Escurridizo", en: "Slippery" }, desc: { es: "+6 Agilidad: cuesta más bloquearte.", en: "+6 Agility: harder to pin down." }, mods: { agi: 6 } },
+  keepRemanso: { id: "keepRemanso", keepsake: "remanso", name: { es: "Nudo de pescador", en: "Fisher's Knot" }, desc: { es: "De Remanso: +8 PV máximos.", en: "From Remanso: +8 max HP." }, mods: { hp: 8 } },
+  keepGuijo: { id: "keepGuijo", keepsake: "guijo", name: { es: "Piedra con nombre", en: "Name Stone" }, desc: { es: "De Guijo: +10% de resistencia a la piedra, la sombra y el hielo.", en: "From Guijo: +10% resistance to stone, shadow and ice." }, mods: { res: { stone: 10, shadow: 10, ice: 10 } } },
+  keepCentella: { id: "keepCentella", keepsake: "centella", name: { es: "Carta de tormenta", en: "Storm Letter" }, desc: { es: "De Centella: +5 Velocidad.", en: "From Centella: +5 Speed." }, mods: { speed: 5 } },
+  keepMoheda: { id: "keepMoheda", keepsake: "moheda", name: { es: "Seta seca", en: "Dried Cap" }, desc: { es: "De Moheda: +5 Magia.", en: "From Moheda: +5 Magic." }, mods: { mag: 5 } },
   ward: { id: "ward", name: { es: "Amparo", en: "Ward" }, desc: { es: "+15% de resistencia al fuego, la planta y el agua.", en: "+15% resistance to fire, plant and water." }, mods: { res: { fire: 15, plant: 15, water: 15 } } },
 };
 

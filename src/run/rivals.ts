@@ -46,6 +46,8 @@ export interface Rival {
   settled?: "finished" | "spared";
   /** A nemesis: it ended an earlier run and followed the hero into this one (runs it has carried over). */
   nemesis?: number;
+  /** A companion (its id) whose ending went badly in an earlier run, back as a rival (run/legacy.ts carriedReturn). */
+  returned?: string;
   /** How deep (run/run.ts depthOf) the node was where it ended a run: its stats carry that depth's scaling. */
   depth?: number;
 }
@@ -145,7 +147,7 @@ export const rivalName = (r: Rival, lang: keyof Line) => `${r.base.name} ${EPITH
 
 const fill = (text: string, vars: Record<string, string>) => text.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? `{${k}}`);
 
-export const rivalTitle = (r: Rival, lang: keyof Line) => fill(TITLES[r.nemesis ? "nemesis" : r.cause.kind][lang], { hero: r.cause.hero });
+export const rivalTitle = (r: Rival, lang: keyof Line) => fill(TITLES[r.nemesis ? "nemesis" : r.returned ? "returned" : r.cause.kind][lang], { hero: r.cause.hero });
 
 /** Who ended a lost run, as a rival: a rival standing at the end of the last battle (the highest level, then the
     one with most downs), or else the standing foe with most downs, made a rival now even if it bore no Sap mark.

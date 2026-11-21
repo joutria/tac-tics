@@ -6,7 +6,7 @@ import { ITEMS, PERKS, SHOP, xpToNext, type Mods } from "../data/gear";
 import { abilityDesc, abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
-import { NEMESIS } from "../run/legacy";
+import { NEMESIS, returnLine } from "../run/legacy";
 import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
 import { JOBS } from "../data/jobs";
 import { ALTAR, questView, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
@@ -127,15 +127,24 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
       const end = endingOf(m);
       const p = document.createElement("p"); p.className = `say ending ${end}`;
       p.innerHTML = `<b>${html(COMPANIONS[m.id]!.spec.name)} · ${html(t(lang, `ending.${end}`))}</b><br>${html(q.endings[end][lang])}`;
+      // What this ending carries into the next journey (run/legacy.ts bonds).
+      const name = COMPANIONS[m.id]!.spec.name;
+      const keep = Object.values(PERKS).find((k) => k.keepsake === m.id);
+      const settledRival = run.rivals.some((r) => r.cause.kind === "betrayed" && r.id === m.id && r.settled);
+      const carry = end === "good" && keep ? returnLine("keepsake", name, keep.name) : end === "bad" && !settledRival ? returnLine("carries", name) : null;
+      if (carry) p.innerHTML += `<br><em>${html(carry[lang])}</em>`;
       list.append(p);
     }
     // The nemesis: who follows the hero into the next run, or the one settled at last.
     const ender = run.endedBy ? run.rivals.find((r) => r.id === run.endedBy) : undefined;
-    if (ender) {
+    if (ender && !ender.returned && ender.cause.kind !== "betrayed") {
       const p = document.createElement("p"); p.className = "say ending nemesis";
       p.innerHTML = `<b>★ ${html(t(lang, "nemesisTitle"))} · ${html(rivalName(ender, lang))}</b><br>${html(t(lang, "nemesisCarries", { n: Math.max(1, ender.level - NEMESIS.levelDrop) }))}`;
       list.append(p);
     }
+    // A companion back as a rival and still unsettled keeps waiting for the next journey.
+    const back = run.rivals.find((r) => r.returned && !r.settled);
+    if (back) { const p = document.createElement("p"); p.className = "say ending bad"; p.textContent = returnLine("carries", back.base.name)[lang]; list.append(p); }
     if (act.newRun) foot.append(button(t(lang, "newRun"), act.newRun, "primary"));
   } else if (offer?.kind === "job") {
     title.textContent = t(lang, "pickJob");

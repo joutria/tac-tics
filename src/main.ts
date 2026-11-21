@@ -18,7 +18,7 @@ import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape"
 import { STATUS } from "./engine/status";
 import { charged } from "./engine/terrain";
 import { rivalName, rivalTaunt, rivalTitle } from "./run/rivals";
-import { carriedNemesis, closeRun, hasMilestone, kitOf, newLegacy, type Legacy } from "./run/legacy";
+import { carriedNemesis, carriedReturn, closeRun, hasMilestone, keepsakeOf, keepsakesOpen, kitOf, newLegacy, type Legacy } from "./run/legacy";
 import { KITS, LORE, MILESTONE_HINT } from "./data/camp";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
 import { aheadOf, choices } from "./run/map";
@@ -148,7 +148,7 @@ function closeLegacy() {
 
 function pickDifficulty(d: Difficulty) {
   const legacy = loadLegacy();
-  journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy));
+  journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy), { returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy) });
   choosingDifficulty = false;
   record(logRunStart(PLAYER, journey));
   showMap();
@@ -193,7 +193,18 @@ function renderCamp(panel: HTMLElement) {
   const go = el("button", "", t(lang, "campSetOut"));
   // Leaving the camp: what was new has been seen.
   go.onclick = () => { saveLegacy((l) => { l.fresh = []; }); atCamp = false; showMap(); };
-  parts.push(go, el("h3", "", t(lang, "campKits")), kits, el("h3", "", t(lang, "campLore")), lore);
+  // Keepsakes: one perk carried from a companion's good ending; and who waits on the road from a bad one.
+  const keeps = el("div", "cards"), worn = keepsakeOf(legacy), back = carriedReturn(legacy);
+  for (const p of keepsakesOpen(legacy)) {
+    const b = card(true, false, p.name[lang], p.desc[lang], "");
+    if (p.id === worn) { b.classList.add("worn"); b.setAttribute("aria-pressed", "true"); }
+    b.dataset.keep = p.id;
+    b.onclick = () => { saveLegacy((l) => { l.keepsake = p.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-keep="${p.id}"]`)?.focus(); };
+    keeps.append(b);
+  }
+  if (!keeps.childElementCount) keeps.append(el("p", "spoils", t(lang, "campNoKeepsake")));
+  if (back) parts.push(el("p", "say down", t(lang, "campReturning", { name: back.base.name })));
+  parts.push(go, el("h3", "", t(lang, "campKits")), kits, el("h3", "", t(lang, "campKeepsakes")), keeps, el("h3", "", t(lang, "campLore")), lore);
   panel.replaceChildren(...parts);
   go.focus();
 }

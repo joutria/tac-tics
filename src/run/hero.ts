@@ -68,7 +68,7 @@ export function gainXp(p: HeroProgress, xp: number, seed: string): { progress: H
 
 /** Two perks the hero does not have yet (and not already offered in the same batch), picked with the seed. */
 function perkPair(p: HeroProgress, seed: string, offered: string[]): string[] {
-  const pool = Object.keys(PERKS).filter((id) => !p.perks.includes(id) && !offered.includes(id));
+  const pool = Object.keys(PERKS).filter((id) => !PERKS[id]!.keepsake && !p.perks.includes(id) && !offered.includes(id));
   let rng = seedFrom(seed);
   const pair: string[] = [];
   while (pair.length < 2 && pool.length) {

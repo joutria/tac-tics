@@ -16,7 +16,7 @@ import { endingOf } from "../src/run/party";
 import { alignmentOf, alignOf } from "../src/run/alignment";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, simContext, type PlayEvent } from "../src/run/playlog";
 import { KITS } from "../src/data/camp";
-import { carriedNemesis, closeRun, newLegacy } from "../src/run/legacy";
+import { carriedNemesis, carriedReturn, closeRun, keepsakeOf, newLegacy } from "../src/run/legacy";
 import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceIn, shopHeal, type RunState } from "../src/run/run";
 
 const args = process.argv.slice(2);
@@ -35,7 +35,7 @@ const kitId = kitAt >= 0 ? args.splice(kitAt, 2)[1] : undefined;
 const kit = kitId ? KITS.find((k) => k.id === kitId) : undefined;
 if (kitAt >= 0 && !kit) throw new Error(`no such kit; try ${KITS.map((k) => k.id).join(", ")}`);
 let legacy = newLegacy();
-let nemesisRuns = 0, nemesisWins = 0;
+let nemesisRuns = 0, nemesisWins = 0, returnRuns = 0, returnsSettled = 0, keepsakeRuns = 0;
 const runs = Number(args[0] ?? 100);
 const difficulty = (args[1] ?? "normal") as Difficulty;
 const ctx = simContext();
@@ -48,8 +48,11 @@ const alignments = new Map<string, number>();
 const started = Date.now();
 const pace = new PaceStats();
 for (let i = 1; i <= runs; i++) {
-  let run = newRun(`sim-${i}`, difficulty, useLegacy ? carriedNemesis(legacy) : undefined, kit);
+  let run = newRun(`sim-${i}`, difficulty, useLegacy ? carriedNemesis(legacy) : undefined, kit, useLegacy ? { returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy) } : {});
   const hadNemesis = run.rivals.some((r) => r.nemesis);
+  const back = run.rivals.find((r) => r.returned);
+  if (back) returnRuns++;
+  if (run.hero.perks.length) keepsakeRuns++;
   keep(logRunStart(ctx, run));
   while (!run.over) {
     run = answerOffers(run);
@@ -87,6 +90,7 @@ for (let i = 1; i <= runs; i++) {
   }
   keep(logRunEnd(ctx, run, run.over === "won" ? "won" : "lost"));
   if (hadNemesis) { nemesisRuns++; if (run.over === "won") nemesisWins++; }
+  if (run.rivals.some((r) => r.returned && r.settled)) returnsSettled++;
   legacy = closeRun(legacy, run);
   if (run.over === "won") won++;
   if (run.region > 0 || run.over === "won") cleared1++;
@@ -104,6 +108,7 @@ console.log(`first region cleared ${cleared1} (${((100 * cleared1) / runs).toFix
 console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
+if (useLegacy) console.log(`bonds: ${keepsakeRuns} runs began with a keepsake, ${returnRuns} with a companion back as a rival (${returnsSettled} settled)`);
 if (useLegacy) console.log(`nemesis: ${nemesisRuns} runs began with one (${nemesisWins} won), ${legacy.settled.length} settled (${legacy.settled.filter((x) => x.how === "spared").length} spared)`);
 console.log(`foes spared ${sparedAll}, came back to help ${helped}`);
 console.log(pace.report());

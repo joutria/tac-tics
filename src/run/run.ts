@@ -19,7 +19,7 @@ import { JOB_LAYER, type Job } from "../data/jobs";
 import type { Line } from "../data/rivals";
 import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, type Member } from "./party";
 import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, runEnder, type Rival } from "./rivals";
-import { NEMESIS, nemesisLine } from "./legacy";
+import { NEMESIS, nemesisLine, RETURN, returnLine } from "./legacy";
 import type { Kit } from "../data/camp";
 import { HELP_LINES, MERCY, type HelpKind } from "../data/mercy";
 import { unsettled } from "../engine/state";
@@ -124,8 +124,11 @@ export interface SparedFoe {
   helped?: boolean;
 }
 
+/** What else a run takes from the legacy (run/legacy.ts): a companion back as a rival, and a keepsake perk. */
+export interface Bonds { returning?: Rival; keepsake?: string }
+
 /** A new run. `nemesis` is the rival who ended the last one (legacy.ts carriedNemesis): it waits on the map. */
-export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?: Rival, kit?: Kit): RunState {
+export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?: Rival, kit?: Kit, bonds: Bonds = {}): RunState {
   const run: RunState = {
     version: RUN_VERSION, seed, difficulty, region: 0, map: regionMap(seed, 0), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
     coins: 0, shards: 0, rivals: [], party: [], remarks: [], offers: [], over: null,
@@ -135,6 +138,13 @@ export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?
     placeRival(run.map, null, nemesis.id, `${seed}:nemesis`, NEMESIS.layer);
     run.remarks.push(nemesisLine("arrives", nemesis));
   }
+  // A companion whose story ended badly last time waits further on, Sap-marked.
+  if (bonds.returning) {
+    run.rivals.push(structuredClone(bonds.returning));
+    placeRival(run.map, null, bonds.returning.id, `${seed}:returned`, RETURN.layer);
+    run.remarks.push(returnLine("arrives", bonds.returning.base.name));
+  }
+  if (bonds.keepsake && PERKS[bonds.keepsake]?.keepsake) run.hero.perks.push(bonds.keepsake);
   // The kit picked at the camp (data/camp.ts): what the hero sets out with.
   if (kit) {
     for (const id of kit.items ?? []) gainItem(run, id);
@@ -389,7 +399,9 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
     }
     else if (node.recruit) {
       const talk = TALKS[node.recruit]!;
-      if (COMPANIONS[talk.companion] && !next.party.some((m) => m.id === talk.companion)) next.offers.push({ kind: "talk", id: node.recruit });
+      // Not while they wait ahead as a rival: once spared, they can be asked along again.
+      const away = activeRivals(next.rivals).some((r) => r.returned === talk.companion);
+      if (COMPANIONS[talk.companion] && !away && !next.party.some((m) => m.id === talk.companion)) next.offers.push({ kind: "talk", id: node.recruit });
     } else if (node.quest) {
       const m = next.party.find((x) => x.id === node.quest);
       if (m && m.status === "with" && !m.lesson) next.offers.push({ kind: "quest", companion: m.id });
@@ -436,6 +448,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   next.at = b.node; next.path.push(b.node);
   // A nemesis settled at last: the chase is over, and its Sap mark crumbles into shards.
   const nemesisDone = next.rivals.find((r) => r.nemesis && r.settled && !run.rivals.find((o) => o.id === r.id)?.settled);
+  const returnDone = next.rivals.find((r) => r.returned && r.settled && !run.rivals.find((o) => o.id === r.id)?.settled);
 
   const beaten = end.units.filter((u) => u.team === "foes" && (u.life === "dead" || u.life === "downed" || u.life === "spared"));
   const spared = end.units.filter((u) => u.team === "foes" && u.life === "spared");
@@ -493,6 +506,11 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   next.spoils = { coins, xp, shards, levels: grown.levels, align: { mercy: after.mercy - alignBefore.mercy, purity: after.purity - alignBefore.purity } };
   next.remarks.push(...crossed);
   if (nemesisDone) { next.shards += NEMESIS.shards; next.remarks.push(nemesisLine("settled", nemesisDone)); }
+  if (returnDone) next.remarks.push(returnLine(returnDone.settled === "spared" ? "spared" : "finished", returnDone.base.name));
+  // Spared, they walk with the hero again, warily (starting approval, their lines known from last time).
+  if (returnDone?.settled === "spared" && COMPANIONS[returnDone.returned!] && !next.party.some((m) => m.id === returnDone.returned)) {
+    next.party.push(newMember(returnDone.returned!, 0, true)); placeQuests(next);
+  }
   // Catching your breath after a win gives a little back; levels raise max HP and current HP alike.
   const max = heroMaxHp(next);
   next.heroHp = Math.min(max, hero.hp + (max - before) + Math.round(max * Math.max(0, AFTER_WIN_HEAL + rulesOf(next).healBonus)));
