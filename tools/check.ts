@@ -11,6 +11,7 @@ import { REGIONS } from "../src/data/region";
 import { ITEMS, PERKS } from "../src/data/gear";
 import { COMPANIONS, TALKS } from "../src/data/companions";
 import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
+import { HELP_LINES } from "../src/data/mercy";
 
 const problems: string[] = [];
 const fail = (msg: string) => problems.push(msg);
@@ -22,7 +23,7 @@ for (const k of en) if (!es.includes(k)) fail(`text "${k}" is missing in Spanish
 for (const [lang, table] of Object.entries(TEXT)) for (const [k, v] of Object.entries(table)) if (!v) fail(`text "${k}" is empty in ${lang}`);
 
 // Rival lines: filled in both languages, and placeholders match.
-for (const [where, line] of [...EPITHETS.map((l, i) => [`epithet ${i}`, l] as const), ...Object.entries(TITLES), ...Object.entries(TAUNTS)]) {
+for (const [where, line] of [...EPITHETS.map((l, i) => [`epithet ${i}`, l] as const), ...Object.entries(TITLES), ...Object.entries(TAUNTS), ...Object.entries(HELP_LINES)]) {
   if (!line.es || !line.en) fail(`rival ${where}: empty in a language`);
   const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join();
   if (vars(line.es) !== vars(line.en)) fail(`rival ${where}: placeholders differ between languages`);

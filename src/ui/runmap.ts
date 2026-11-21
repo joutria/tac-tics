@@ -8,7 +8,7 @@ import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
 import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
 import { JOBS } from "../data/jobs";
-import { ALTAR, questChoices, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceOf, type RewardOption, type RunState } from "../run/run";
+import { ALTAR, questChoices, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
 import { endingOf, readyForLesson, type Member } from "../run/party";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛" };
@@ -127,12 +127,12 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     title.textContent = t(lang, "pickPerk");
     offer.options.forEach((id, i) => list.append(button(`<b>${html(PERKS[id]!.name[lang])}</b><span>${html(PERKS[id]!.desc[lang])}</span>`, () => act.choose(i))));
   } else if (offer?.kind === "reward") {
-    title.textContent = t(lang, "pickReward");
+    title.textContent = offer.gift ? t(lang, "giftFrom", { name: offer.gift }) : t(lang, "pickReward");
     offer.options.forEach((r, i) => list.append(button(rewardCard(r, lang), () => act.choose(i))));
   } else if (offer?.kind === "shop") {
-    title.textContent = t(lang, "shopTitle");
+    title.textContent = offer.discount ? `${t(lang, "shopTitle")} · ${t(lang, "shopDiscount", { name: offer.discount })}` : t(lang, "shopTitle");
     for (const id of offer.stock) {
-      const p = priceOf(id);
+      const p = priceIn(run, id);
       const cost = p.currency === "coins" ? `🪙 ${p.amount}` : `◆ ${p.amount}`;
       list.append(button(itemCard(id, lang, `<em>${t(lang, "buy")} · ${cost}</em>`), () => act.buy(id), "card", run[p.currency] < p.amount));
     }

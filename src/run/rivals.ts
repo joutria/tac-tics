@@ -1,6 +1,6 @@
 /* Rivals: foes who remember you (plan doc, "Rivals").
 
-   A Savia-marked foe becomes a rival when it escapes a battle, or when it is still standing after downing one
+   A Savia-marked foe becomes a rival when it escapes a battle on its own (one the party spares never does), or when it is still standing after downing one
    of the party in a battle the party lost. It keeps the spec it had, gets an epithet and a title from what
    happened, and reads how the party fought: the element used most, near or far, the opening move, and whether
    anyone was healed. Each time it meets the party again it brings one counter to what it read last time, and it
@@ -42,8 +42,8 @@ export interface Rival {
   memory: Style[];
   /** One per meeting, in order. Each is applied once (resist stacks per element). */
   counters: { kind: Counter; element?: Element }[];
-  /** Set once the party settles it. Sparing and cleansing come with companions (M2 step 6). */
-  settled?: "finished";
+  /** Set once the party settles it: beaten and finished, or beaten and spared (it never comes back as a rival). */
+  settled?: "finished" | "spared";
 }
 
 export const RIVAL_LEVEL_HP = 0.1, RIVAL_LEVEL_STAT = 5;
@@ -104,7 +104,7 @@ export function afterBattle(rivals: Rival[], setup: BattleSetup, commands: Comma
       known.meetings += 1;
       known.memory.push(style);
       if (getsAway) { known.level += 1; known.counters.push(pickCounter(known, style)); }
-      else known.settled = "finished";
+      else known.settled = u.life === "spared" ? "spared" : "finished";
       continue;
     }
     if (!getsAway) continue;

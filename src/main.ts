@@ -11,10 +11,10 @@ import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damag
 import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
-import { isBorder, turnMp, wavering } from "./engine/escape";
+import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { buy, choose, enterNode, fielded, finishBattle, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
+import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
 import { choices } from "./run/map";
 import { memberSpec } from "./run/party";
 import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
@@ -25,7 +25,7 @@ import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
 import {
-  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns, type Unit, type UnitSpec,
+  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, unsettled, upcomingTurns, type Unit, type UnitSpec,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
@@ -34,6 +34,7 @@ import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Mo
 const RUN_KEY = "tac-tics.run.v1";
 const LANG_KEY = "tac-tics.lang";
 const VIEW_KEY = "tac-tics.view";
+const HOLD_KEY = "tac-tics.hold";
 const FOE_STEP_MS = 380;
 const WALK_STEP_MS = 190, PUSH_STEP_MS = 90, BLINK_MS = 320;
 const MIN_TILE_PX = 58; // a tile narrower than this is hard to hit with a finger
@@ -61,6 +62,8 @@ let inspect: string | null = null;
 let dangerAll = false;
 let focus: { id: string; until: number } | null = null;
 let rewindArmed = 0;
+/** Hold back: hits that would down a foe stop at 1 HP (sent with each cast). Remembered between battles. */
+let holdBack = false;
 const floaters: Floater[] = [];
 const motions = new Map<string, Motion>();
 let animUntil = 0; // input waits until units have finished moving
@@ -212,6 +215,7 @@ function startBattle(announce: boolean) {
   const rivals = journey.rivals.filter((r) => !r.settled && save.setup.units.some((u) => u.id === r.id));
   if (announce && rivals.length && !save.commands.length) toast(rivals.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
   else if (save.setup.ambush && !save.commands.length) toast(t(lang, "ambush"), 2600);
+  else if (journey.help && journey.help.node === journey.battle!.node && !save.commands.length) toast(helpLine(journey, lang), 3200);
   maybeFoeTurn();
 }
 
@@ -308,6 +312,12 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       toast(t(lang, "refused", { name: u.name }), 2600);
       continue;
     }
+    if (ev.e === "spared") {
+      const u = unitById(state, ev.unit);
+      floaters.push({ pos: { ...u.pos }, text: t(lang, "sparedTag"), color: "#ffffff", born: now });
+      if (!state.winner || !unsettled(state).length) toast(t(lang, "sparedToast", { name: u.name }));
+      continue;
+    }
     if (ev.e === "escaped") {
       const u = unitById(state, ev.unit);
       floaters.push({ pos: { ...u.pos }, text: t(lang, "escapedTag"), color: "#ffc85a", born: now });
@@ -353,6 +363,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       if (h.shielded) add(`${STATUS.shield.icon} ${h.shielded}`, STATUS.shield.colour, 150);
       for (const id of h.statuses ?? []) add(`${STATUS[id].icon} ${t(lang, `st.${id}` as TextKey)}`, STATUS[id].colour, 450);
       for (const id of h.cleansed ?? []) add(`${STATUS[id].icon} ✕`, "#8fd0ff", 450);
+      if (h.held) add("🤚 1", "#ffffff", 300);
       if (h.downed) add(t(lang, "downed"), "#ffffff", 300);
       if (h.died) add(t(lang, "dead"), "#ffffff", 300);
     }
@@ -432,7 +443,7 @@ function explain(why: string): string {
   const map: [string, TextKey][] = [
     ["outside the map", "err.outside"], ["out of range", "err.range"], ["no line of sight", "noSight"],
     ["needs an enemy", "err.foe"], ["needs a standing ally", "err.ally"], ["needs a downed ally", "err.downedAlly"],
-    ["needs an empty tile", "err.empty"], ["not enough AP", "err.ap"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
+    ["needs an empty tile", "err.empty"], ["needs a yielding foe", "err.yielding"], ["not enough AP", "err.ap"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
   ];
   const hit = map.find(([k]) => why.startsWith(k));
   return hit ? t(lang, hit[1]) : why;
@@ -476,7 +487,7 @@ function refresh() {
     const chip = document.createElement("button");
     chip.className = `chip ${v.team}${i === 0 ? " now" : ""}`;
     const face = portrait(images, v.look);
-    chip.innerHTML = `${face ? `<img src="${face}" alt="">` : ""}<span>${v.life === "downed" ? `${v.name} ✚` : v.name}</span>`;
+    chip.innerHTML = `${face ? `<img src="${face}" alt="">` : ""}<span>${v.life === "downed" ? `${v.name} ✚` : yielding(v) ? `🏳 ${v.name}` : v.name}</span>`;
     chip.onclick = () => {
       // Find the unit: pan to it and make it pulse; for a foe, also show its reach.
       focus = { id: v.id, until: performance.now() + 1800 };
@@ -493,7 +504,7 @@ function refresh() {
     const ab = ABILITIES[id]!;
     const b = document.createElement("button");
     b.className = `ab${selected === id ? " on" : ""}`;
-    const why = abilityAvailable(u, id);
+    const why = abilityAvailable(u, id) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
     const dmg = ab.damage ? `${ab.damage.min}–${ab.damage.max}` : ab.heal ? `+${ab.heal.min}–${ab.heal.max}` : "";
@@ -515,6 +526,10 @@ function refresh() {
   const fl = $("flat"); fl.textContent = `▦ ${t(lang, "flat")}`; fl.title = t(lang, "flatHint"); fl.classList.toggle("on", isFlat());
   $("end").textContent = t(lang, "endTurn");
   $("wait").textContent = t(lang, "wait");
+  const hold = $<HTMLButtonElement>("hold");
+  hold.textContent = t(lang, "holdBack"); hold.title = t(lang, "holdHint");
+  hold.classList.toggle("on", holdBack); hold.setAttribute("aria-pressed", String(holdBack));
+  hold.disabled = !mine;
   $("wait").title = t(lang, "waitHint");
   $("undo").textContent = t(lang, "undo");
   for (const [id, dir, key] of [["rotateL", "rotateLeft", "Q"], ["rotateR", "rotateRight", "E"]] as const) {
@@ -536,10 +551,42 @@ function refresh() {
   over.style.display = state.winner && !onMap ? "flex" : "none";
   $("result").textContent = state.winner === "heroes" && !lost ? t(lang, "victory") : t(lang, "defeat");
   const escaped = state.units.filter((x) => x.team === "foes" && x.life === "escaped").length;
-  $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", lost ? t(lang, "runLost") : ""].filter(Boolean).join(" ");
+  const spared = state.units.filter((x) => x.team === "foes" && x.life === "spared").length;
+  $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", spared ? t(lang, "sparedNote", { n: spared }) : "", lost ? t(lang, "runLost") : ""].filter(Boolean).join(" ");
+  renderMercy();
   document.documentElement.lang = lang;
   layout();
 }
+
+/** After a win, foes still on the map (downed or under the white flag) wait for the party's choice. The button to
+    move on shows once every one of them has been spared or finished. */
+function renderMercy() {
+  const box = $("mercy"), left = state.winner && !onMap ? unsettled(state) : [];
+  $("again").style.display = left.length ? "none" : "";
+  const key = left.map((u) => u.id).join(",") + lang;
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  if (!left.length) { box.replaceChildren(); return; }
+  const settle = (id: string, choice: "spare" | "finish") => { run({ t: "settle", unit: id, choice }); refresh(); focusOverlay(); };
+  const title = document.createElement("h2"); title.textContent = t(lang, "mercyTitle");
+  const hint = document.createElement("p"); hint.textContent = t(lang, "mercyHint");
+  const rows = left.map((u) => {
+    const row = document.createElement("div"); row.className = "foe";
+    const face = portrait(images, u.look);
+    row.innerHTML = `${face ? `<img src="${face}" alt="">` : ""}<span>${u.name} · ${t(lang, u.life === "downed" ? "mercyDowned" : "mercyYields")}</span>`;
+    const spare = document.createElement("button"); spare.className = "go"; spare.textContent = t(lang, "spareBtn"); spare.onclick = () => settle(u.id, "spare");
+    const finish = document.createElement("button"); finish.textContent = t(lang, "finishBtn"); finish.onclick = () => settle(u.id, "finish");
+    row.append(spare, finish);
+    return row;
+  });
+  const all = document.createElement("button"); all.className = "go"; all.textContent = t(lang, "spareAll");
+  all.onclick = () => { for (const u of unsettled(state)) run({ t: "settle", unit: u.id, choice: "spare" }); refresh(); focusOverlay(); };
+  box.replaceChildren(title, hint, ...rows, ...(left.length > 1 ? [all] : []));
+}
+
+/** Buttons on the end-of-battle overlay, for the keyboard and the controller. */
+const overlayButtons = () => [...$("overlay").querySelectorAll<HTMLButtonElement>("button")].filter((b) => !b.disabled && b.offsetParent !== null);
+function focusOverlay() { if (padUsed) overlayButtons()[0]?.focus(); }
 
 /** Shows what is on a tile, with the damage the selected ability would deal there. Near the pointer for a mouse;
     above the tile for a finger, so the finger does not cover it. */
@@ -571,6 +618,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   }
   for (const st of target.statuses) lines.push(`<span style="color:${STATUS[st.id].colour}">${STATUS[st.id].icon} ${t(lang, `st.${st.id}` as TextKey)}</span> · ${t(lang, `st.${st.id}.d` as TextKey, { n: st.power })} · ${t(lang, "turnsLeft", { n: st.turns })}`);
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
+  if (yielding(target)) lines.push(`<b>${t(lang, "yieldingTag")}</b> · ${cowering(target) ? `${t(lang, "cowerInfo")} ` : ""}${t(lang, "yieldInfo")}`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
     const mvAll = previewMoves()?.moves.find((x) => x.unit === target.id);
@@ -591,10 +639,13 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       const dir = directionBonus(target, u.pos);
       lines.push(`${abilityName(lang, selected)}: <b>${r.min}–${r.max}</b>${m > 1 ? ` · ${t(lang, "strong")}` : m < 1 ? ` · ${t(lang, "weak")}` : ""}`);
       // Forecast: what is left of the target, and whether this can put it down.
-      const lo = Math.max(0, target.hp - r.max), hi = Math.max(0, target.hp - r.min);
+      // Holding back, nobody standing drops under 1 HP.
+      const floor = holdBack && target.life === "up" ? 1 : 0;
+      const lo = Math.max(floor, target.hp - r.max), hi = Math.max(floor, target.hp - r.min);
       lines.push(t(lang, "hpAfter", { a: lo === hi ? `${lo}` : `${lo}–${hi}` }));
-      if (r.min >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "downsIt")}</b>`);
-      else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b>`);
+      if (holdBack && Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<b>${t(lang, "holdOn")}</b>`);
+      else if (r.min >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "downsIt")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
+      else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
       else if (Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<span class="down">${t(lang, "critDown")}</span>`);
       if (dir > 1.2) lines.push(t(lang, "back")); else if (dir > 1) lines.push(t(lang, "side"));
       heightLines(lines, u, target, ab);
@@ -606,7 +657,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       pushLines();
       if (pushDmg) {
         lines.push(t(lang, "hpAfter", { a: `${Math.max(0, target.hp - pushDmg)}` }));
-        if (pushDmg >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "downsIt")}</b>`);
+        if (pushDmg >= target.hp) lines.push(holdBack ? `<b>${t(lang, "holdOn")}</b>` : `<b class="down">✖ ${t(lang, "downsIt")}</b>`);
       }
     } else if (ab.heal) lines.push(`${abilityName(lang, selected)}: <b>+${ab.heal.min}–${ab.heal.max}</b>`);
   } else if (u && selected && target.team !== u.team && castProblem(state, u, selected, hover) === "too heavy to shove") {
@@ -979,7 +1030,7 @@ function routeTap(ev: { clientX: number; clientY: number }) {
 /** True once a controller or the arrow keys have been used, so the selection outline shows. */
 let padUsed = false;
 let cursor: Pos | null = null;
-type Input = "up" | "down" | "left" | "right" | "confirm" | "back" | "map" | "next" | "end" | "rotL" | "rotR" | "danger";
+type Input = "up" | "down" | "left" | "right" | "confirm" | "back" | "map" | "next" | "end" | "rotL" | "rotR" | "danger" | "hold";
 
 /** Buttons the player can move between in the panel that is in front. */
 function panelButtons(): HTMLButtonElement[] {
@@ -1027,7 +1078,20 @@ function input(k: Input) {
     return;
   }
   // In battle.
-  if ($("overlay").style.display === "flex") { if (k === "confirm") afterBattleButton(); return; }
+  if ($("overlay").style.display === "flex") {
+    // After a battle: move between the Spare / Finish buttons and the button to go on; A presses the one in focus.
+    const list = overlayButtons();
+    if (k === "up" || k === "left") moveFocus(list, -1);
+    else if (k === "down" || k === "right") moveFocus(list, 1);
+    else if (k === "confirm") {
+      const f = document.activeElement;
+      if (f instanceof HTMLButtonElement && list.includes(f)) f.click();
+      else if (unsettled(state).length) list[0]?.focus();
+      else afterBattleButton();
+    }
+    return;
+  }
+  if (k === "hold") { toggleHold(); return; }
   if (k === "rotL" || k === "rotR") { view.rot = (view.rot + (k === "rotL" ? -1 : 1) + 4) % 4; hover = cursor; tooltip(cursor); return; }
   if (k === "danger") { dangerAll = !dangerAll; refresh(); return; }
   if (!heroTurn() || busy || animating()) return;
@@ -1055,7 +1119,13 @@ function input(k: Input) {
 }
 
 /** Standard-mapping gamepad: buttons and the left stick become the same inputs as the keyboard. */
-const PAD_BUTTONS: Partial<Record<number, Input>> = { 0: "confirm", 1: "back", 2: "next", 3: "danger", 4: "rotL", 5: "rotR", 8: "map", 9: "end", 12: "up", 13: "down", 14: "left", 15: "right" };
+const PAD_BUTTONS: Partial<Record<number, Input>> = { 0: "confirm", 1: "back", 2: "next", 3: "danger", 4: "rotL", 5: "rotR", 6: "hold", 8: "map", 9: "end", 12: "up", 13: "down", 14: "left", 15: "right" };
+
+function toggleHold() {
+  holdBack = !holdBack;
+  safeSet(HOLD_KEY, holdBack ? "1" : "");
+  refresh(); tooltip(cursor ?? hover);
+}
 const padHeld = new Map<string, number>();
 function pollPads(now: number) {
   const pads = navigator.getGamepads?.() ?? [];
@@ -1140,7 +1210,9 @@ function actionAt(p: Pos): { cmd: Command } | { why: string } | null {
   const u = activeUnit(state);
   if (selected) {
     const why = castProblem(state, u, selected, p);
-    return why ? { why: explain(why) } : { cmd: { t: "cast", unit: u.id, ability: selected, target: p } };
+    const ab = ABILITIES[selected]!;
+    const hold = holdBack && !!(ab.damage || ab.push);
+    return why ? { why: explain(why) } : { cmd: { t: "cast", unit: u.id, ability: selected, target: p, ...(hold ? { hold: true } : {}) } };
   }
   if (p.x === u.pos.x && p.y === u.pos.y) return null;
   if (reachable(state.map, u.pos, moveRules(state, u)).has(`${p.x},${p.y}`)) return { cmd: { t: "move", unit: u.id, to: p } };
@@ -1203,7 +1275,9 @@ function previewHit() {
   const u = activeUnit(state), target = unitAt(state, at), ab = ABILITIES[selected]!;
   if (!target || !(ab.damage || ab.push) || target.team === u.team || castProblem(state, u, selected, at)) return undefined;
   const r = damagePreview(state, u, target, ab), mv = previewMoves()?.moves.find((m) => m.unit === target.id), bump = (mv?.bump ?? 0) + (mv?.fall ?? 0);
-  return { unit: target.id, min: r.min + bump, max: r.max + bump };
+  // Holding back, the bar shows the foe left on 1 HP at worst.
+  const cap = (n: number) => (holdBack && target.life === "up" ? Math.min(n, target.hp - 1) : n);
+  return { unit: target.id, min: cap(r.min + bump), max: cap(r.max + bump) };
 }
 
 /** For each foe backing off or running: the way it would take to the nearest edge tile. */
@@ -1261,6 +1335,7 @@ async function start() {
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   images = await loadImages(srcs);
   setFlat(safeGet(VIEW_KEY) === "flat");
+  holdBack = safeGet(HOLD_KEY) === "1";
   // Until a battle starts (the map screen comes first), the battle screen holds the test fight, never shown.
   state = createBattle({ seed: 0, map: MEADOW, units: TEST_UNITS });
   loadOrNew();
@@ -1333,6 +1408,7 @@ async function start() {
   $("danger").addEventListener("click", () => { dangerAll = !dangerAll; refresh(); });
   $("flat").addEventListener("click", () => { setFlat(!isFlat()); safeSet(VIEW_KEY, isFlat() ? "flat" : "iso"); tooltip(null); refresh(); });
   $("undo").addEventListener("click", undo);
+  $("hold").addEventListener("click", toggleHold);
   $("confirm").addEventListener("click", confirmPending);
   $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
   $("again").addEventListener("click", afterBattleButton);
@@ -1361,6 +1437,7 @@ async function start() {
     else if (k === "e") { if (onMap) return; turn(1); }
     else if (k === "tab" && !onMap && !mapOpen && heroTurn()) { ev.preventDefault(); input("next"); }
     else if (k === "t" && !onMap) input("end");
+    else if (k === "h" && !onMap) input("hold");
     else if (/^[1-9]$/.test(k) && !onMap && heroTurn()) {
       const id = unitAbilities(activeUnit(state))[Number(k) - 1];
       if (id && !abilityAvailable(activeUnit(state), id)) { selected = selected === id ? null : id; pending = null; refresh(); }

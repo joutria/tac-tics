@@ -4,7 +4,7 @@
 import { STATUS } from "../engine/status";
 import { GridMap, Pos, PROP_HP, tileAt, type Prop } from "../engine/grid";
 import { MAX_REVIVES } from "../engine/combat";
-import { wavering } from "../engine/escape";
+import { wavering, yielding } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
 
 export const TW = 64, TH = 32, LEVEL = 16;
@@ -81,7 +81,7 @@ export function pickTile(m: GridMap, px: number, py: number, rot: number): Pos |
 export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: number, rot: number, slack = 0): Pos | null {
   let best: { p: Pos; depth: number } | null = null;
   for (const u of units) {
-    if (u.life === "dead" || u.life === "escaped") continue;
+    if (u.life === "dead" || u.life === "escaped" || u.life === "spared") continue;
     const c = tileCenter(m, u.pos, rot);
     if (Math.abs(px - c.x) > 18 || py < c.y - 58 || py > c.y + 10) continue;
     const r = rotate(m, u.pos, rot), depth = r.x + r.y;
@@ -486,8 +486,20 @@ function drawUnit(
     ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#d9a0ff";
     ctx.strokeText("★", c.x, c.y - 76); ctx.fillText("★", c.x, c.y - 76);
   }
-  // Escape states: a shield badge while retreating, running feet (pulsing) while fleeing, "!" while wavering.
-  const badge = u.escape === "retreat" ? "🛡" : u.escape === "flee" ? "💨" : shaky ? "!" : "";
+  // Yielding: a white flag over its head (it can be spared).
+  if (yielding(u)) {
+    const fx = c.x + (u.rival ? 12 : 0), fy = c.y - 70;
+    ctx.globalAlpha = base * (0.8 + 0.2 * Math.sin(time / 260));
+    ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(fx - 5, fy + 9); ctx.lineTo(fx - 5, fy - 9); ctx.stroke();
+    const wave = Math.sin(time / 180) * 1.5;
+    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(fx - 4, fy - 9); ctx.quadraticCurveTo(fx + 1, fy - 11 + wave, fx + 7, fy - 8);
+    ctx.lineTo(fx + 7, fy - 1); ctx.quadraticCurveTo(fx + 1, fy - 4 + wave, fx - 4, fy - 2); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.globalAlpha = base;
+  }
+  // Escape states: a running figure while retreating (steady) or fleeing (pulsing), "!" while wavering.
+  const badge = u.escape !== "none" ? "🏃" : shaky ? "!" : "";
   if (badge) {
     const pulse = u.escape === "flee" || shaky ? 0.6 + 0.4 * Math.sin(time / 140) : 1;
     ctx.globalAlpha = base * pulse;

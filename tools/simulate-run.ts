@@ -1,25 +1,28 @@
 /* Run simulator: plays whole runs of the first region with the AI on both sides, always taking the first open
    node (or a rest when the hero is under half HP). Run with `npm run simulate:run [-- <runs> <easy|normal|hard>]`.
    Add `--log <file>` to write the runs as a play log (src/run/playlog.ts), the same format players export, so
-   `npm run analyze -- <file>` can compare AI runs with real ones. */
+   `npm run analyze -- <file>` can compare AI runs with real ones. Add `--mercy` for a party that spares every
+   yielding foe it can (in the fight and after the win) instead of finishing them, to compare the two. */
 import { writeFileSync } from "node:fs";
 import { planTurn } from "../src/engine/ai";
-import { applyCommand, createBattle } from "../src/engine/state";
+import { activeUnit, applyCommand, createBattle, unsettled } from "../src/engine/state";
 import type { Difficulty } from "../src/data/region";
 import { MAP_LAYERS } from "../src/run/map";
 import { endingOf } from "../src/run/party";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, simContext, type PlayEvent } from "../src/run/playlog";
-import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceOf, shopHeal, type RunState } from "../src/run/run";
+import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceIn, shopHeal, type RunState } from "../src/run/run";
 
 const args = process.argv.slice(2);
 const logAt = args.indexOf("--log");
 const logFile = logAt >= 0 ? args.splice(logAt, 2)[1] : undefined;
+const mercyAt = args.indexOf("--mercy");
+const mercy = mercyAt >= 0 && !!args.splice(mercyAt, 1).length;
 const runs = Number(args[0] ?? 100);
 const difficulty = (args[1] ?? "normal") as Difficulty;
 const ctx = simContext();
 const log: PlayEvent[] = [];
 const keep = (...e: (PlayEvent | null)[]) => { if (logFile) for (const x of e) if (x) log.push(x); };
-let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0, cleared1 = 0;
+let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0, cleared1 = 0, sparedAll = 0, helped = 0;
 const deaths = new Map<number, number>();
 const endings = new Map<string, number>();
 const started = Date.now();
@@ -37,13 +40,18 @@ for (let i = 1; i <= runs; i++) {
     if (!run.battle) continue;
     let s = createBattle(run.battle.setup);
     while (!s.winner && s.turns < 300) {
-      for (const c of planTurn(s)) {
+      for (const c of planTurn(s, { mercy: mercy && activeUnit(s).team === "heroes" })) {
         const r = applyCommand(s, c);
         if (!r.ok) throw new Error(`run ${i}: illegal AI command ${JSON.stringify(c)}: ${r.error}`);
         s = r.state; run.battle.commands.push(c);
       }
     }
     if (!s.winner) { run.over = "lost"; break; }
+    for (const u of mercy ? unsettled(s) : []) {
+      const c = { t: "settle" as const, unit: u.id, choice: "spare" as const };
+      const r = applyCommand(s, c);
+      if (r.ok) { s = r.state; run.battle.commands.push(c); }
+    }
     const layer = run.map.nodes[run.battle.node]!.layer + 10 * run.region;
     const fought = run;
     run = finishBattle(run, s);
@@ -56,14 +64,17 @@ for (let i = 1; i <= runs; i++) {
   levels += run.hero.level;
   nodes += run.path.length + MAP_LAYERS * run.region;
   rivalsMade += run.rivals.length;
+  sparedAll += run.spared?.length ?? 0;
+  helped += run.spared?.filter((f) => f.helped).length ?? 0;
   for (const m of run.party) { const k = `${m.id} ${endingOf(m)}`; endings.set(k, (endings.get(k) ?? 0) + 1); }
 }
-console.log(`${runs} ${difficulty} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+console.log(`${runs} ${difficulty}${mercy ? " mercy" : ""} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 console.log(`runs won ${won} (${((100 * won) / runs).toFixed(0)}%), average nodes cleared ${(nodes / runs).toFixed(1)}`);
 console.log(`first region cleared ${cleared1} (${((100 * cleared1) / runs).toFixed(0)}%)`);
 console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
+console.log(`foes spared ${sparedAll}, came back to help ${helped}`);
 console.log(`endings: ${[...endings.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);
 if (logFile) { writeFileSync(logFile, JSON.stringify({ game: "tac-tics", log: 1, events: log })); console.log(`play log: ${log.length} events -> ${logFile}`); }
 
@@ -80,7 +91,7 @@ function answerOffers(run: RunState): RunState {
       run = choose(run, Math.max(0, i));
     } else if (o.kind === "shop") {
       if (run.heroHp < heroMaxHp(run) * 0.6) try { const b = run; run = shopHeal(run); keep(logShopHeal(ctx, b)); } catch { /* too poor */ }
-      for (const id of o.stock) { const p = priceOf(id); if (run[p.currency] >= p.amount) { keep(logBuy(ctx, run, id)); run = buy(run, id); } }
+      for (const id of o.stock) { const p = priceIn(run, id); if (run[p.currency] >= p.amount) { keep(logBuy(ctx, run, id)); run = buy(run, id); } }
       keep(logShopLeave(ctx, run));
       run = leaveShop(run);
     }

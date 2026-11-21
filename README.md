@@ -19,6 +19,24 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 - **Enemy AI** scores every tile and ability with one turn of lookahead: it counts the damage you could deal next turn (ignoring your abilities on cooldown), hides out of your line of sight, takes high ground, focuses wounded or downed units, and adapts if you keep fighting from range or up close.
 - **View:** rotate in 90 degree steps, zoom, drag to pan, and undo moves until you use an ability.
 
+### Sparing and mercy
+
+- **Yielding.** A foe under 25% of its HP, or one that is fleeing, shows a white flag (over its head and in the turn
+  bar). Bosses never yield. A foe that is not Savia-marked stops fighting under the flag; once only such foes are left,
+  the party has won. A marked foe under the flag keeps fighting and runs for the edge when it can.
+- **Spare** (1 AP, 1 to 2 tiles, the party only): the yielding foe kneels and leaves. A spared foe never becomes a
+  rival; only foes that get away on their own do (they show a running figure while they head for the edge).
+- **Hold back** (the 🤚 button, H, or the left trigger): while it is on, a hit that would down a foe stops at 1 HP
+  instead, falls and slams included, and nobody downed is finished off. The forecast says so.
+- **After a win**, every foe still on the map, downed or yielding, gets a Spare or Finish choice.
+- **What it pays.** Each spared foe hands over a gift at once (coins, a Savia shard or a heal), and joins the run's
+  spared list. At later stops one of them may come back, once each: it fights beside the party for one battle, warns
+  of an ambush (which is then called off), or minds a shop stall at 25% off. The more you spare, the likelier.
+  Numbers in `MERCY` (`src/data/mercy.ts`). Remanso likes sparing and dislikes finishing a yielding foe.
+- **Hooks for later:** each spare adds 5 to `run.mercy` for the Mercy/Severity meter, and `relapses()` in
+  `src/run/run.ts` is where a spared foe may turn on a hero who leans towards the Sap. Neither is shown yet.
+- `npm run simulate:run -- 100 normal --mercy` plays runs that spare every foe they can, to compare with the default.
+
 ### Between battles: travel scenes and the route map
 
 - **Travel scenes.** Between two stops the party walks a strip of terrain made for the region they are in, drawn in
@@ -48,6 +66,8 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 | Battle: end turn | T | Start |
 | Battle: rotate the view | Q / E | LB / RB |
 | Battle: danger zone | | Y |
+| Battle: Hold back on or off | H | LT |
+| After a win: Spare / Finish | Arrow keys, Enter | D-pad, A |
 | Pick a sign at the fork | 1 to 3 | |
 
 ## Run it

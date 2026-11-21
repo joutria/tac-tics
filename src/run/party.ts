@@ -5,6 +5,7 @@ import { SAP_RICH } from "../data/abilities";
 import { APPROVAL, COMPANIONS, DEEDS, LESSON_APPROVAL, QUESTS, QUICK_WIN_ROUNDS, type Companion, type Deed, type Ending, type Lesson } from "../data/companions";
 import { GROWTH } from "../data/gear";
 import type { Line } from "../data/rivals";
+import { yielding } from "../engine/escape";
 import { applyCommand, createBattle, type BattleSetup, type Command, type UnitSpec } from "../engine/state";
 
 export interface Member {
@@ -69,6 +70,14 @@ export function readDeeds(setup: BattleSetup, commands: Command[]): Deeds {
     const r = applyCommand(s, c);
     if (!r.ok) throw new Error(`readDeeds: command refused: ${r.error}`);
     s = r.state;
+    // After the win: each downed or yielding foe is spared or finished.
+    if (c.t === "settle") {
+      const was = before.units.find((u) => u.id === c.unit)!;
+      if (c.choice === "spare") seen.spare++;
+      else if (was.life === "downed") seen.finishDowned++;
+      else seen.finishYielding++;
+      continue;
+    }
     // Deaths that no hit or tick caused are the downed countdown running out: an ally nobody helped up.
     const struck = new Set<string>();
     for (const e of r.events) {
@@ -82,10 +91,12 @@ export function readDeeds(setup: BattleSetup, commands: Command[]): Deeds {
         if (!was) continue;
         if ((e.ability === "sapCap" || e.ability === "sapCapRich") && was.team === "heroes" && was.id !== caster.id) seen.sapRemedy++;
         if (h.revived) seen.helpUp++;
+        if (h.spared) seen.spare++;
         if (h.heal > 0) seen.heal++;
         if (was.team === "heroes") continue;
         if (was.life === "downed" && h.died) seen.finishDowned++;
         if (was.escape === "flee" && (h.downed || h.died)) seen.killFleeing++;
+        else if (yielding(was) && (h.downed || h.died)) seen.finishYielding++;
       }
     }
     for (const e of r.events) {
