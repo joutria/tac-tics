@@ -9,6 +9,7 @@ import { activeUnit, applyCommand, createBattle, unsettled } from "../src/engine
 import type { Difficulty } from "../src/data/region";
 import { MAP_LAYERS } from "../src/run/map";
 import { endingOf } from "../src/run/party";
+import { alignmentOf, alignOf } from "../src/run/alignment";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, simContext, type PlayEvent } from "../src/run/playlog";
 import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceIn, shopHeal, type RunState } from "../src/run/run";
 
@@ -25,6 +26,7 @@ const keep = (...e: (PlayEvent | null)[]) => { if (logFile) for (const x of e) i
 let won = 0, levels = 0, nodes = 0, rivalsMet = 0, rivalsMade = 0, cleared1 = 0, sparedAll = 0, helped = 0;
 const deaths = new Map<number, number>();
 const endings = new Map<string, number>();
+const alignments = new Map<string, number>();
 const started = Date.now();
 for (let i = 1; i <= runs; i++) {
   let run = newRun(`sim-${i}`, difficulty);
@@ -66,6 +68,7 @@ for (let i = 1; i <= runs; i++) {
   rivalsMade += run.rivals.length;
   sparedAll += run.spared?.length ?? 0;
   helped += run.spared?.filter((f) => f.helped).length ?? 0;
+  { const k = alignmentOf(alignOf(run)); alignments.set(k, (alignments.get(k) ?? 0) + 1); }
   for (const m of run.party) { const k = `${m.id} ${endingOf(m)}`; endings.set(k, (endings.get(k) ?? 0) + 1); }
 }
 console.log(`${runs} ${difficulty}${mercy ? " mercy" : ""} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
@@ -75,6 +78,7 @@ console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
 console.log(`foes spared ${sparedAll}, came back to help ${helped}`);
+console.log(`hero alignment at the end: ${[...alignments.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);
 console.log(`endings: ${[...endings.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);
 if (logFile) { writeFileSync(logFile, JSON.stringify({ game: "tac-tics", log: 1, events: log })); console.log(`play log: ${log.length} events -> ${logFile}`); }
 

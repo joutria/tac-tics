@@ -68,7 +68,7 @@ export interface Hit {
   statuses?: StatusId[];
   cleansed?: StatusId[];
   /** Dealt by the terrain rather than the ability itself: a barrel blast or a bolt chained through water. */
-  source?: "blast" | "chain";
+  source?: "blast" | "chain" | "sap";
   /** Hold back stopped this hit at 1 HP (or kept a downed unit from being finished). */
   held?: boolean;
   /** Knelt and left the fight, spared. */
@@ -236,6 +236,12 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
     for (const e of extra) { credit(s.units.find((x) => x.id === e.unit)!, e); hits.push(e); }
   }
   if (ab.element === "bolt" && ab.damage) chainBolt(s, caster, hits, fx, ground, hurtByTerrain);
+  // Sap-fed cards cost the caster some HP, never the last one.
+  if (ab.selfHurt && caster.life === "up" && caster.hp > 1) {
+    const cost = Math.min(ab.selfHurt, caster.hp - 1);
+    caster.hp -= cost;
+    hits.push({ unit: caster.id, damage: cost, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false, source: "sap" });
+  }
   for (const g of ground) {
     hits.push({ unit: g.unit, damage: g.damage, heal: 0, crit: false, downed: g.downed, died: g.died, revived: false, rooted: false,
       source: g.source,

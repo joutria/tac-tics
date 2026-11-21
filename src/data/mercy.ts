@@ -3,7 +3,7 @@
 import type { Line } from "./rivals";
 
 export const MERCY = {
-  /** Points towards the Mercy side of the future Mercy/Severity meter per foe spared (stored, not shown yet). */
+  /** Points towards the Mercy side of the Mercy/Severity meter per foe spared (data/alignment.ts SHIFT.spare). */
   perSpare: 5,
   /** The gift a spared foe hands over at once: coins (times REWARD.purse, scaled by depth like it), a shard, or a heal
       (share of the hero's max HP). */

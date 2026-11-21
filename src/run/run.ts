@@ -21,6 +21,9 @@ import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, ty
 import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, type Rival } from "./rivals";
 import { HELP_LINES, MERCY, type HelpKind } from "../data/mercy";
 import { unsettled } from "../engine/state";
+import { ALIGN, SHIFT, type Align, type Meter, type Side } from "../data/alignment";
+import { alignOf, battleShift, lockIn, shiftAlign, twinBar } from "./alignment";
+import { twinOf } from "../data/twins";
 
 export const RUN_VERSION = 5;
 /** Share of max HP a rest node gives back. */
@@ -80,13 +83,17 @@ export interface RunState {
   /** The battle being fought, if any. */
   battle?: BattleSave & { node: number };
   /** What the last battle gave, for the screen. */
-  spoils?: { coins: number; xp: number; shards: number; levels: number };
+  spoils?: { coins: number; xp: number; shards: number; levels: number; align?: Align };
   over: null | "won" | "lost";
   /** How the run has played, towards the hero's job: Beacon protects and spares, Blaze finishes. */
   leanings?: Record<Job, number>;
   /** Foes the party spared this run. They never become rivals, and they come back to help (see `helpAt`). */
   spared?: SparedFoe[];
-  /** Mercy points earned by sparing: a hook for the Mercy/Severity meter, which is not built yet. */
+  /** The hero's alignment meters, Mercy/Severity and Purity/Sap, each -100..100 (run/alignment.ts). */
+  align?: Align;
+  /** Sides locked in so far (ALIGN.lockAt): the other side's signature twins stay closed for the run. */
+  alignLock?: Partial<Record<Meter, Side>>;
+  /** Saves from before the meters: Mercy points from sparing. Moved into `align` on load. */
   mercy?: number;
   /** A spared foe helping at the stop being entered. */
   help?: { node: number; region: number; foe: string; kind: HelpKind };
@@ -122,11 +129,17 @@ export const depthOf = (run: RunState, node: RunNode) => node.layer + (run.regio
 
 /** A save from before regions existed: it was in the first one. */
 export function upgradeRun(saved: RunState): RunState {
-  if (saved.version === 4) return { ...saved, version: RUN_VERSION, region: 0 };
-  return saved;
+  let run = saved.version === 4 ? { ...saved, version: RUN_VERSION, region: 0 } : saved;
+  // Sparing counted Mercy points before the meters existed: they become the Mercy meter.
+  if (run.mercy !== undefined && !run.align) {
+    run = { ...run, align: { mercy: Math.min(ALIGN.max, run.mercy), purity: 0 } };
+    delete run.mercy;
+  }
+  return run;
 }
 
-export const heroOf = (run: RunState) => heroSpec(HERO, run.hero);
+/** The hero as it fights: worn twins swap in only while the meters (and level and job) allow them. */
+export const heroOf = (run: RunState) => heroSpec(HERO, run.hero, (tw, abilities) => !twinBar(run, tw, abilities));
 /** Companions who fight in the next battle. */
 export const fielded = (run: RunState) => run.party.filter((m) => m.status === "with" || m.status === "leaving").slice(0, MAX_FIELDED);
 export const memberMaxHp = (run: RunState, m: Member) => memberSpec(m, run.hero.level, { x: 0, y: 0 }).hp;
@@ -257,9 +270,9 @@ export function helpAt(run: RunState, node: RunNode): RunState["help"] {
   return { node: node.id, region: run.region ?? 0, foe: waiting[0]!.id, kind };
 }
 
-/** A spared foe can turn on the party again only when the hero leans towards the Sap (Purity/Sap meter, a later
-    build). Until that meter exists, spared stays spared. */
-export const relapses = (_run: RunState) => false;
+/** A spared foe can be pulled back by the Sap only when the hero is Sap-touched (Purity/Sap meter at -ALIGN.mark
+    or lower): then spared foes stop coming back to help. With Purity, spared stays spared. */
+export const relapses = (run: RunState) => alignOf(run).purity <= -ALIGN.mark;
 
 /** The line said when a spared foe helps. */
 export function helpLine(run: RunState, lang: keyof Line): string {
@@ -339,6 +352,10 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   if (shards > 0) deeds.shardsGained = 1;
   lean(next, { beacon: deeds.helpUp + deeds.letEscape + deeds.noneDowned + deeds.spare, blaze: deeds.killFleeing + deeds.rivalBeaten + deeds.finishDowned + deeds.finishYielding });
   next.remarks = [];
+  // The alignment meters: sparing and helping up against finishing, the tagged twins used, rivals settled.
+  const alignBefore = alignOf(next);
+  const crossed = shiftAlign(next, battleShift(b.setup, b.commands, end, deeds));
+  const after = alignOf(next);
   for (const m of fielded(next)) {
     const u = end.units.find((x) => x.id === m.id);
     if (!u) continue;
@@ -369,7 +386,8 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   const before = heroMaxHp(next);
   const grown = gainXp(next.hero, xp, `${next.seed}:${b.node}`);
   next.hero = grown.progress;
-  next.spoils = { coins, xp, shards, levels: grown.levels };
+  next.spoils = { coins, xp, shards, levels: grown.levels, align: { mercy: after.mercy - alignBefore.mercy, purity: after.purity - alignBefore.purity } };
+  next.remarks.push(...crossed);
   // Catching your breath after a win gives a little back; levels raise max HP and current HP alike.
   const max = heroMaxHp(next);
   next.heroHp = Math.min(max, hero.hp + (max - before) + Math.round(max * Math.max(0, AFTER_WIN_HEAL + rulesOf(next).healBonus)));
@@ -385,6 +403,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
     placeRival(next.map, next.at, r.id, `${next.seed}:${next.region ?? 0}:${next.path.length}`);
   }
   if (node.kind === "boss") {
+    if (ALIGN.lockAt === "regionEnd") next.remarks.push(...lockIn(next));
     if (isLastRegion(next)) { next.over = "won"; next.offers = []; return next; }
     // On to the next region: a fresh map, the party and everything carried, and a breather.
     next.region = (next.region ?? 0) + 1;
@@ -399,7 +418,6 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   for (const u of spared) {
     const spec = b.setup.units.find((x) => x.id === u.id)!;
     (next.spared ??= []).push({ id: u.id, name: u.name, spec: structuredClone(spec), region: next.region ?? 0 });
-    next.mercy = (next.mercy ?? 0) + MERCY.perSpare;
     next.offers.push({ kind: "reward", options: giftOptions(next, node), gift: u.name });
   }
   next.offers.push({ kind: "reward", options: rewardOptions(next, node) });
@@ -527,6 +545,7 @@ export function choose(run: RunState, index: number): RunState {
     for (const m of next.party) if (m.status === "with") m.hp = memberMaxHp(next, m);
     witness(next, { destroyShards: 1 });
     lean(next, { beacon: 2, blaze: 0 });
+    next.remarks.push(...shiftAlign(next, { purity: SHIFT.burnShards }));
     offerJob(next);
     return next;
   }
@@ -592,7 +611,7 @@ export function buy(run: RunState, itemId: string): RunState {
   if (run[currency] < amount) throw new Error(`not enough ${currency}`);
   const next = structuredClone(run);
   next[currency] -= amount;
-  if (currency === "shards") witness(next, { spendShards: 1 });
+  if (currency === "shards") { witness(next, { spendShards: 1 }); next.remarks.push(...shiftAlign(next, { purity: SHIFT.spendShards })); }
   (next.offers[0] as { stock: string[] }).stock = offer.stock.filter((x) => x !== itemId);
   gainItem(next, itemId);
   return next;
@@ -621,5 +640,20 @@ export function wear(run: RunState, itemId: string): RunState {
   const before = heroMaxHp(next);
   next.hero = equip(next.hero, itemId);
   next.heroHp = Math.max(1, Math.min(heroMaxHp(next), next.heroHp + heroMaxHp(next) - before));
+  return next;
+}
+
+/** Swaps a card for its twin (`on`) or back, for free, between stops. A twin the meters do not allow yet can't be
+    picked; one already worn falls back to its original in battle until they allow it again (see heroOf). */
+export function wearTwin(run: RunState, base: string, on: boolean): RunState {
+  const tw = twinOf(base);
+  if (!tw) throw new Error(`${base} has no twin`);
+  if (run.battle) throw new Error("twins can only be swapped between stops");
+  const abilities = heroSpec(HERO, run.hero).abilities;
+  if (on && twinBar(run, tw, abilities)) throw new Error(`${tw.twin} is not open`);
+  const next = structuredClone(run);
+  const list = (next.hero.twins ?? []).filter((x) => x !== base);
+  if (on) list.push(base);
+  next.hero.twins = list;
   return next;
 }

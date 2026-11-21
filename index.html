@@ -72,7 +72,7 @@
   .sign.rival { border-color: #d9a0ff; } .sign.boss { border-color: #ff8a7a; }
   .sign.sel, .sign:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   button:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
-  #runPanel { position: fixed; inset: 0; z-index: 6; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(15, 16, 24, 0.94); padding: 16px; overflow-y: auto; }
+  #runPanel { position: fixed; inset: 0; z-index: 6; display: none; flex-direction: column; align-items: center; justify-content: safe center; gap: 12px; background: rgba(15, 16, 24, 0.94); padding: 16px; overflow-y: auto; }
   #runPanel .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
   #runPanel .say { margin: 0; line-height: 1.45; }
   #runPanel .say, #runPanel pre.stats { max-width: 560px; }
@@ -90,6 +90,28 @@
   #runPanel .card small { color: var(--quiet); font-size: 11px; }
   #runPanel .card em { color: var(--accent); font-style: normal; font-size: 12px; }
   #runPanel .card.worn { border-color: var(--accent); }
+  /* Alignment meters: minus side left, plus side right, ticks at 20 and 50. */
+  .meters { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; align-items: center; font-size: 11px; color: var(--quiet); }
+  .meters .alignName b { color: var(--accent); }
+  .meter { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .meter small { font-size: 10px; }
+  .meter em { font-style: normal; color: var(--ink); min-width: 2.6em; }
+  .meter .track { position: relative; display: inline-block; width: 92px; height: 7px; background: rgba(255,255,255,0.12); border-radius: 4px; }
+  .meter .fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+  .meter.mercy .fill { background: #7ed957; } .meter.mercy .fill.neg { background: #ff8a7a; }
+  .meter.purity .fill { background: #ffe680; } .meter.purity .fill.neg { background: #b0603c; }
+  .meter .tick { position: absolute; top: -2px; bottom: -2px; width: 1px; background: rgba(255,255,255,0.35); }
+  .meter .tick.sig { background: rgba(255,255,255,0.7); width: 2px; }
+  .meter .zero { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--ink); }
+  #runPanel .say .meters { font-size: 12px; }
+  #runPanel .say .meter .track { width: 120px; }
+  #runPanel h3 { margin: 6px 0 0; font-size: 15px; color: var(--accent); }
+  #runPanel .card.locked { opacity: 0.6; }
+  #runPanel .card.locked em { color: var(--quiet); }
+  .tag { display: inline-block; font-size: 10px; font-weight: normal; padding: 1px 6px; margin-left: 4px; border-radius: 8px; vertical-align: middle; color: #15161f; }
+  .tag.mercy { background: #7ed957; } .tag.severity { background: #ff8a7a; } .tag.purity { background: #ffe680; } .tag.sap { background: #c07a52; }
+  #runPanel .say.ending.hero { border-color: var(--accent); }
+  @media (max-width: 420px) { .meter .track { width: 64px; } #runPanel .say .meter .track { width: 84px; } }
   .r-common { color: var(--ink); } .r-rare { color: #7fc4ff; } .r-epic { color: #d9a0ff; }
   #toast { z-index: 7; } #overlay { z-index: 4; }
   #resultNote { color: #ffc85a; margin: 0 16px; text-align: center; }

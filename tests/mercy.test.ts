@@ -7,6 +7,7 @@ import { parseMap } from "../src/engine/grid";
 import { activeUnit, applyCommand, createBattle, unitById, unsettled, type BattleSetup, type BattleState, type Command, type UnitSpec } from "../src/engine/state";
 import { COMPANIONS } from "../src/data/companions";
 import { MERCY } from "../src/data/mercy";
+import { ALIGN } from "../src/data/alignment";
 import { ITEMS } from "../src/data/gear";
 import { newMember, react, readDeeds } from "../src/run/party";
 import { activeRivals, afterBattle } from "../src/run/rivals";
@@ -203,7 +204,7 @@ describe("what mercy pays", () => {
     const run = winSparing(before);
     const n = run.spared!.length;
     expect(n).toBeGreaterThan(0);
-    expect(run.mercy).toBe(n * MERCY.perSpare);
+    expect(run.align!.mercy).toBe(Math.min(ALIGN.perFight, n * MERCY.perSpare));
     const gifts = run.offers.filter((o) => o.kind === "reward" && o.gift);
     expect(gifts).toHaveLength(n);
     expect(run.offers.at(-1)!.kind === "reward" && !(run.offers.at(-1) as { gift?: string }).gift).toBe(true);
