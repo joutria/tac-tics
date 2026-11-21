@@ -1,10 +1,12 @@
 /* M4: the nemesis, the rival who ended a run, carried into the next one until it is settled. */
 import { describe, expect, it } from "vitest";
 import { createBattle, type BattleState } from "../src/engine/state";
-import { carriedNemesis, closeRun, hasMilestone, kitOf, NEMESIS, newLegacy } from "../src/run/legacy";
+import { carriedNemesis, carriedReturn, closeRun, hasMilestone, keepsakeOf, kitOf, NEMESIS, newLegacy, RETURN } from "../src/run/legacy";
+import { newMember } from "../src/run/party";
+import { PERKS } from "../src/data/gear";
 import { KITS, LORE, MILESTONE_HINT } from "../src/data/camp";
 import { ITEMS } from "../src/data/gear";
-import { enterNode, finishBattle, newRun, type RunState } from "../src/run/run";
+import { enterNode, finishBattle, heroMaxHp, newRun, type RunState } from "../src/run/run";
 import { DEPTH_STAT } from "../src/data/region";
 import { rivalTitle } from "../src/run/rivals";
 
@@ -123,5 +125,64 @@ describe("the camp between runs", () => {
   it("every kit and page names a milestone with a hint, and every kit's items exist", () => {
     for (const k of KITS) { if (k.needs) expect(MILESTONE_HINT[k.needs]).toBeTruthy(); for (const i of k.items ?? []) expect(ITEMS[i]).toBeTruthy(); }
     for (const p of LORE) expect(MILESTONE_HINT[p.needs].en.length).toBeGreaterThan(0);
+  });
+});
+
+describe("companion endings carry over", () => {
+  /** A finished run whose party is these members. */
+  const ended = (seed: string, ...party: ReturnType<typeof newMember>[]): RunState => ({ ...newRun(seed), party, over: "won" });
+  const good = () => ({ ...newMember("remanso", 30, true), lesson: "sacrifice" as const });
+  const bad = (id = "guijo") => ({ ...newMember(id, 0, true), status: "fallen" as const });
+
+  it("a good ending leaves a keepsake perk, never offered at a level-up, that the next run starts with", () => {
+    const legacy = closeRun(newLegacy(), ended("g1", good()));
+    expect(legacy.bonds?.remanso?.state).toBe("good");
+    const keep = keepsakeOf(legacy)!;
+    expect(PERKS[keep]!.keepsake).toBe("remanso");
+    const run = newRun("g2", "normal", undefined, undefined, { keepsake: keep });
+    expect(run.hero.perks).toEqual([keep]);
+    expect(heroMaxHp(run)).toBe(heroMaxHp(newRun("g3")) + PERKS[keep]!.mods.hp!);
+  });
+
+  it("a bad ending brings them back as a rival on layer 3, and they can't be recruited while it stands", () => {
+    const legacy = closeRun(newLegacy(), ended("b1", bad("remanso")));
+    expect(legacy.bonds?.remanso?.state).toBe("bad");
+    const back = carriedReturn(legacy)!;
+    expect(back.id).toBe(RETURN.id);
+    expect(back.returned).toBe("remanso");
+    expect(rivalTitle(back, "en")).toContain("another journey");
+    let run = newRun("b2", "normal", undefined, undefined, { returning: back });
+    const node = run.map.nodes.find((n) => n.rival === RETURN.id)!;
+    expect(node.layer).toBeGreaterThanOrEqual(RETURN.layer);
+    expect(run.remarks.some((l) => l.en.includes("Remanso travelled with you once"))).toBe(true);
+    const meet = run.map.nodes.find((n) => n.recruit === "remanso.meet")!;
+    run = enterNode({ ...run, at: run.map.nodes.find((n) => n.next.includes(meet.id))?.id ?? null }, meet.id, "en");
+    expect(run.offers.some((o) => o.kind === "talk")).toBe(false);
+  });
+
+  it("spared, they walk with the hero again and the bond is mended; finished, they never return", () => {
+    const legacy = closeRun(newLegacy(), ended("s1", bad("remanso")));
+    let run = newRun("s2", "normal", undefined, undefined, { returning: carriedReturn(legacy) });
+    const node = run.map.nodes.find((n) => n.rival === RETURN.id)!;
+    run = enterNode({ ...run, at: run.map.nodes.find((n) => n.next.includes(node.id))?.id ?? null }, node.id, "en");
+    const s = createBattle(run.battle!.setup);
+    for (const u of s.units) if (u.team === "foes") u.life = u.id === RETURN.id ? "spared" : "dead";
+    s.winner = "heroes";
+    const after = finishBattle(run, s);
+    expect(after.rivals.find((r) => r.returned)!.settled).toBe("spared");
+    expect(after.party.map((m) => m.id)).toContain("remanso");
+    expect(closeRun(legacy, { ...after, over: "lost" }).bonds?.remanso?.state).not.toBe("bad");
+    const finished = { ...after, over: "won" as const, party: [], rivals: after.rivals.map((r) => (r.returned ? { ...r, settled: "finished" as const } : r)) };
+    const closed = closeRun(legacy, finished);
+    expect(closed.bonds?.remanso?.state).toBe("finished");
+    expect(carriedReturn(closed)).toBeUndefined();
+  });
+
+  it("the newest ending wins, and only one companion returns at a time", () => {
+    let legacy = closeRun(newLegacy(), ended("n1", bad("guijo"), bad("centella")));
+    expect(carriedReturn(legacy)).toBeTruthy();
+    legacy = closeRun(legacy, ended("n2", { ...newMember("guijo", 30, true), lesson: "sacrifice" }));
+    expect(legacy.bonds?.guijo?.state).toBe("good");
+    expect(carriedReturn(legacy)!.returned).toBe("centella");
   });
 });

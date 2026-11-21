@@ -16,7 +16,8 @@ export const EPITHETS: Line[] = [
 ];
 
 /** Why it is a rival, shown under its name. */
-export const TITLES: Record<"escaped" | "felled" | "betrayed" | "nemesis", Line> = {
+export const TITLES: Record<"escaped" | "felled" | "betrayed" | "nemesis" | "returned", Line> = {
+  returned: { es: "Viajó con {hero} en otro viaje", en: "Walked with {hero} on another journey" },
   nemesis: { es: "Acabó con el último viaje de {hero}", en: "Ended {hero}'s last journey" },
   escaped: { es: "Huyó de {hero} y no lo olvida", en: "Fled from {hero} and never forgot" },
   felled: { es: "Derribó a {hero}", en: "Felled {hero}" },
@@ -37,4 +38,13 @@ export const NEMESIS_LINES = {
   arrives: { es: "{name} te ha seguido desde tu último viaje. Más débil, pero lo recuerda todo.", en: "{name} followed you from your last journey. Weaker, but it remembers everything." },
   settled: { es: "{name} no volverá a seguirte. Su marca de Savia se deshace en fragmentos.", en: "{name} won't follow you again. Its Sap mark crumbles into shards." },
   carries: { es: "{name} te esperará en el próximo viaje: más débil, pero recordando cómo luchas.", en: "{name} will be waiting on your next journey: weaker, but remembering how you fight." },
+} satisfies Record<string, Line>;
+
+/** A companion whose ending went badly in an earlier run, back as a Sap-marked rival (run/legacy.ts carriedReturn). */
+export const RETURN_LINES = {
+  arrives: { es: "{name} viajó contigo una vez. Después la Savia lo encontró. Te espera más adelante.", en: "{name} travelled with you once. The Sap found them after. They wait ahead." },
+  spared: { es: "{name} baja el arma. Queda algo de la confianza de antes, y vuelve a caminar contigo.", en: "{name} lowers their weapon. Something of the old trust is left, and they walk with you again." },
+  finished: { es: "{name} cae. Te quedas con su nombre.", en: "{name} falls. You keep their name." },
+  carries: { es: "{name} no acabó bien contigo. Volverá en el próximo viaje, marcado por la Savia.", en: "{name} didn't part well with you. They will be back on your next journey, marked by the Sap." },
+  keepsake: { es: "{name} te deja un recuerdo para los próximos viajes: {perk}.", en: "{name} leaves you a keepsake for journeys to come: {perk}." },
 } satisfies Record<string, Line>;
