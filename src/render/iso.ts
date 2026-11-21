@@ -522,7 +522,7 @@ function drawUnit(
     ctx.strokeText(`✚ ${u.downedTurns}`, c.x, c.y - 66); ctx.fillText(`✚ ${u.downedTurns}`, c.x, c.y - 66);
   }
   // Rooted and status effects: small icons in a row on the right of the health bar.
-  const icons = [...(u.rooted ? ["🌿"] : []), ...u.statuses.map((x) => STATUS[x.id].icon)];
+  const icons = [...(u.guard ? ["🛡"] : []), ...(u.rooted ? ["🌿"] : []), ...u.statuses.map((x) => STATUS[x.id].icon)];
   if (icons.length) {
     ctx.font = "bold 10px system-ui, sans-serif"; ctx.textAlign = "center";
     ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#fff";
