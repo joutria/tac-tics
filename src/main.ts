@@ -486,7 +486,10 @@ function refresh() {
   $("wait").textContent = t(lang, "wait");
   $("wait").title = t(lang, "waitHint");
   $("undo").textContent = t(lang, "undo");
-  $("rotate").textContent = `⟳ ${t(lang, "rotate")}`;
+  for (const [id, dir, key] of [["rotateL", "rotateLeft", "Q"], ["rotateR", "rotateRight", "E"]] as const) {
+    const b = $(id); b.textContent = id === "rotateL" ? "⟲" : "⟳";
+    b.title = `${t(lang, dir)} (${key})`; b.setAttribute("aria-label", t(lang, dir));
+  }
   $("lang").textContent = lang === "es" ? "English" : "Español";
   const confirm = $<HTMLButtonElement>("confirm");
   confirm.style.display = mine && pending ? "" : "none";
@@ -822,7 +825,10 @@ async function start() {
   canvas.addEventListener("wheel", (ev) => { ev.preventDefault(); zoom = Math.min(3, Math.max(0.5, zoom * (ev.deltaY < 0 ? 1.15 : 1 / 1.15))); layout(); }, { passive: false });
   $("zoomIn").addEventListener("click", () => { zoom = Math.min(3, zoom * 1.25); layout(); });
   $("zoomOut").addEventListener("click", () => { zoom = Math.max(0.5, zoom / 1.25); layout(); });
-  $("rotate").addEventListener("click", () => { view.rot = (view.rot + 1) % 4; });
+  // +1 turns the map clockwise on screen, -1 counter-clockwise. Hover/tooltips are cleared because tiles move.
+  const turn = (dir: 1 | -1) => { view.rot = (view.rot + dir + 4) % 4; hover = null; tooltip(null); };
+  $("rotateL").addEventListener("click", () => turn(-1));
+  $("rotateR").addEventListener("click", () => turn(1));
   const pass = (t_: "endTurn" | "wait") => {
     if (!heroTurn() || busy || animating()) return;
     run({ t: t_, unit: activeUnit(state).id }); selected = null; pending = null; tooltip(null); refresh(); maybeFoeTurn();
@@ -841,7 +847,12 @@ async function start() {
   $("newRun").addEventListener("click", () => { if (journey.over || confirmNewRun()) startRun(); });
   $("mapLang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); showMap(); });
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });
-  addEventListener("keydown", (ev) => { if (ev.key === "Escape") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); } });
+  addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); return; }
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
+    const k = ev.key.toLowerCase();
+    if (k === "q") turn(-1); else if (k === "e") turn(1);
+  });
   requestAnimationFrame(frame);
   maybeFoeTurn();
   // Small hook for automated browser checks: where a tile is on screen, and the current state.
