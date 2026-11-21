@@ -5,7 +5,7 @@
    with line of sight and height (so they hide behind obstacles and look for high ground). It also reads how the
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
 import { ABILITIES, type Ability } from "../data/abilities";
-import { abilityAvailable, areaTiles, damagePreview, guardAbility, maxRange, previewEffects, pushOutcome, shoveDistance, stuck, throwOutcome, unitAbilities } from "./combat";
+import { abilityAvailable, areaTiles, damagePreview, guardAbility, hiddenFrom, maxRange, previewEffects, pushOutcome, shoveDistance, stuck, throwOutcome, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain";
 import { reachable } from "./movement";
@@ -56,7 +56,7 @@ function threatAt(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<string, Po
       if (!ab.damage || h.cooldowns[id]) continue; // learned: abilities on cooldown are not a threat next turn
       const dummy = { ...u, pos: spot };
       for (const from of enemyReach.get(h.id) ?? [h.pos]) {
-        if (!reaches(s, ab, from, spot, [h.id, u.id])) continue;
+        if (!reaches(s, ab, from, spot, [h.id, u.id]) || hiddenFrom(s, h, dummy, from)) continue;
         const hitsPerTurn = Math.min(ab.perTurn, Math.floor(h.maxAp / ab.ap));
         best = Math.max(best, avg(damagePreview(s, h, dummy, ab, from)) * hitsPerTurn);
       }
@@ -98,7 +98,9 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
   if (style <= -3 && w.idealDistance > 1) ideal += 1;
   const spacing = Math.abs(nearest - ideal) * w.spacing;
   const height = (tileAt(s.map, spot)?.h ?? 0) * 3;
-  const cover = NEIGHBOURS.some((d) => { const t = tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }); return !!t && sightBlock(t) > 0; }) ? 2 : 0;
+  // Cover next to it, or tall grass to hide in (ranged attackers lose it from beyond HIDE_RANGE).
+  const cover = (NEIGHBOURS.some((d) => { const t = tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }); return !!t && sightBlock(t) > 0; }) ? 2 : 0)
+    + (tileAt(s.map, spot)?.terrain === "tallgrass" ? 1 : 0);
   // Fire under its feet, or a barrel next to it that the players could set off.
   // Sap hurts the party and feeds foes; oil could go up; charged water may stun.
   const ground = tileAt(s.map, spot);
@@ -293,6 +295,7 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
       for (const t of targets) {
         if (!reaches(s, ab, sp.p, t, [u.id])) continue;
         const occupant = unitAt(s, t);
+        if (occupant && hiddenFrom(s, u, occupant, sp.p)) continue;
         const pushable = !occupant && !!ab.push && ab.area === "single" && !!tileAt(s.map, t)?.prop;
         if (ab.target === "foe" && !pushable && (!occupant || !isFoe(u, occupant))) continue;
         if (ab.target === "ally" && (!occupant || isFoe(u, occupant) || occupant.life !== "up")) continue;

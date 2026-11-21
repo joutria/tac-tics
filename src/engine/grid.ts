@@ -1,7 +1,7 @@
 /* The battle map as the engine sees it: a square grid where every tile has a terrain and a height.
    The isometric look is only how the renderer draws it; nothing in the engine knows about diamonds. */
 
-export type Terrain = "grass" | "dirt" | "water" | "rock" | "tree" | "ice" | "bridge";
+export type Terrain = "grass" | "tallgrass" | "dirt" | "water" | "rock" | "tree" | "ice" | "bridge";
 
 export interface TerrainInfo {
   /** Units can stand here. */
@@ -14,6 +14,8 @@ export interface TerrainInfo {
 
 export const TERRAIN: Record<Terrain, TerrainInfo> = {
   grass: { walkable: true, blocksSight: false, sightHeight: 0 },
+  /** Tall grass: hides whoever stands in it from enemies more than HIDE_RANGE tiles away; it burns like grass. */
+  tallgrass: { walkable: true, blocksSight: false, sightHeight: 0 },
   dirt: { walkable: true, blocksSight: false, sightHeight: 0 },
   water: { walkable: false, blocksSight: false, sightHeight: 0 },
   rock: { walkable: false, blocksSight: true, sightHeight: 1 },
@@ -53,6 +55,10 @@ export interface Tile {
   deco?: "tent" | "bedroll";
 }
 
+/** Grass of either height: it catches fire and burns down to dirt. */
+export const grassy = (t: Tile | undefined) => !!t && (t.terrain === "grass" || t.terrain === "tallgrass");
+/** Tall grass hides a unit from enemies further away than this (Manhattan distance). */
+export const HIDE_RANGE = 2;
 /** Units can stand on the tile now (terrain and no object in the way). */
 export const standable = (t: Tile | undefined): t is Tile => !!t && TERRAIN[t.terrain].walkable && !t.prop;
 /** Levels above the ground that block sight on this tile. */
@@ -84,11 +90,11 @@ export const manhattan = (a: Pos, b: Pos) => Math.abs(a.x - b.x) + Math.abs(a.y 
 
 /**
  * Builds a map from text rows. Each tile is two characters: terrain letter + height digit.
- * g grass, d dirt, w water, r rock, t tree, i ice, b bridge. Optional extra characters: B barrel, C crate or O boulder
+ * g grass, h tall grass, d dirt, w water, r rock, t tree, i ice, b bridge. Optional extra characters: B barrel, C crate or O boulder
  * (an object), o oil, s Sap, S a Sap source (a surface). Example row: "g0 g0 d1 r1 g0B d0o g0S".
  */
 export function parseMap(id: string, rows: string[]): GridMap {
-  const letters: Record<string, Terrain> = { g: "grass", d: "dirt", w: "water", r: "rock", t: "tree", i: "ice", b: "bridge" };
+  const letters: Record<string, Terrain> = { g: "grass", h: "tallgrass", d: "dirt", w: "water", r: "rock", t: "tree", i: "ice", b: "bridge" };
   const props: Record<string, Prop> = { B: "barrel", C: "crate", O: "boulder" };
   const parsed = rows.map((row, y) =>
     row.trim().split(/\s+/).map((cell, x) => {

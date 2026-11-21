@@ -21,7 +21,7 @@
      Water or Light calms it, ice freezes it, fire turns it to steam.
    - Fire on water makes steam, which blocks sight for a round. */
 import type { Ability } from "../data/abilities";
-import { NEIGHBOURS, TERRAIN, manhattan, standable, tileAt, type Pos, type Tile } from "./grid";
+import { NEIGHBOURS, TERRAIN, grassy, manhattan, standable, tileAt, type Pos, type Tile } from "./grid";
 import { rngNext } from "./rng";
 import { absorb, addStatus } from "./status";
 import type { BattleState, Unit } from "./state";
@@ -63,10 +63,10 @@ function burnTile(s: BattleState, p: Pos, fx: TerrainFx[], hits: TerrainHit[], h
   if (t.surface === "oil") { flareOil(s, p, fx, hits, hurt, hitIds); return; }
   if (t.surface === "sap") {
     delete t.surface; delete t.sapSource;
-    t.fireUntil = s.clock + FIRE_TICKS; if (t.terrain === "grass") t.terrain = "dirt";
+    t.fireUntil = s.clock + FIRE_TICKS; if (grassy(t)) t.terrain = "dirt";
     fx.push({ fx: "ignite", at: p }); return;
   }
-  if (t.terrain === "grass" || t.terrain === "bridge") { t.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "ignite", at: p }); }
+  if (grassy(t) || t.terrain === "bridge") { t.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "ignite", at: p }); }
   else if (t.terrain === "water") steam(s, t, p, fx);
 }
 
@@ -299,7 +299,7 @@ export function updateTiles(s: BattleState) {
       if (t.terrain === "bridge") {
         if (unitOn(s, p)) continue;
         t.terrain = "water";
-      } else if (t.terrain === "grass") t.terrain = "dirt";
+      } else if (grassy(t)) t.terrain = "dirt";
       delete t.fireUntil;
     }
     if (t.thawAt !== undefined && t.thawAt <= s.clock && !unitOn(s, p)) { t.terrain = "water"; delete t.thawAt; }
