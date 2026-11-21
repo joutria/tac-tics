@@ -1,5 +1,5 @@
 /* Animated ambience drawn from the CC0 sheets in public/art/fx (built by tools/ambience-art.py, credited in
-   CREDITS.md): water that ripples, flames, smoke and steam columns, the camp fire, falling leaves and puffs.
+   CREDITS.md): water that ripples, flames, smoke and steam columns, falling leaves and puffs.
    Every sheet is one row of equal frames at the packs' 1x pixel size; it is drawn at 2x like the tiles.
    If a sheet failed to load, each helper returns false so the caller can fall back to its hand-drawn look. */
 import type { Images } from "./iso";
@@ -8,7 +8,6 @@ import type { Images } from "./iso";
 export const FX = {
   water: { w: 64, h: 32, n: 4, ms: 260 },
   flame: { w: 16, h: 32, n: 4, ms: 120 },
-  campfire: { w: 48, h: 64, n: 4, ms: 140 },
   steam: { w: 16, h: 32, n: 4, ms: 170 },
   smoke: { w: 16, h: 32, n: 4, ms: 170 },
   puff: { w: 12, h: 12, n: 8, ms: 70 },
@@ -56,12 +55,6 @@ export function drawFireTile(ctx: CanvasRenderingContext2D, img: Images, cx: num
     && drawFx(ctx, img, "flame", loopFrame("flame", time, seed + 1), cx + 10, cy + 1, 1.15, seed % 2 === 1)
     && drawFx(ctx, img, "flame", loopFrame("flame", time, seed + 2), cx, cy + 7, 1.6);
   return ok;
-}
-
-/** The camp fire on travel scenes: Idylwild's stone ring, logs, flame and smoke, at the tiles' scale. */
-export function drawCampfireFx(ctx: CanvasRenderingContext2D, img: Images, cx: number, cy: number, time: number, seed: number): boolean {
-  // The ring's centre sits 12 px above the bottom of its 48 x 64 cell.
-  return drawFx(ctx, img, "campfire", loopFrame("campfire", time, seed), cx, cy + 24, 2);
 }
 
 /** Steam over a tile: pale columns rising, and small puffs boiling off, thick enough to read as "can't see through". */

@@ -21,7 +21,7 @@ import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, 
 import { EXECUTIONER_FACTOR, GUARD_FACTOR } from "../data/jobs";
 import { hasLineOfSight } from "./sight";
 import { canStep } from "./movement";
-import { burning, chainBolt, explode, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
+import { burning, chainBolt, explode, giveFire, takeFire, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
 import { isFoe, unitAt, type BattleState, type Unit } from "./state";
 
 export const CRIT_CHANCE = 0.05;
@@ -370,7 +370,7 @@ function throwProp(s: BattleState, thrower: Unit, from: Pos, at: Pos, hits: Hit[
   hurtByTerrain: (v: Unit, dmg: number, h: TerrainHit) => void) {
   const o = throwOutcome(s, thrower, from, at);
   const src = tileAt(s.map, at)!;
-  const hp = src.propHp;
+  const hp = src.propHp, fire = takeFire(s, src);
   delete src.prop; delete src.propHp;
   if (!samePos(o.land, at)) fx.push({ fx: "slide", at, to: o.land });
   if (o.kind === "barrel") {
@@ -393,7 +393,7 @@ function throwProp(s: BattleState, thrower: Unit, from: Pos, at: Pos, hits: Hit[
   }
   if (o.sinks) return;
   const t = tileAt(s.map, o.land)!;
-  t.prop = "crate"; t.propHp = hp;
+  t.prop = "crate"; t.propHp = hp; giveFire(t, fire);
 }
 
 /** Tiles a Shove moves the target: 1, or 2 when the shover is much stronger. */

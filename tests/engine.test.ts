@@ -13,7 +13,7 @@ import { hasLineOfSight } from "../src/engine/sight";
 import { abilityReaches, dangerZone, nextTurnSpots } from "../src/engine/threat";
 import { activeUnit, applyCommand, BattleSetup, BattleState, Command, createBattle, delayFor, roundOf, UnitSpec, unitAt, unitById, upcomingTurns } from "../src/engine/state";
 import { activeRivals, afterBattle, pickCounter, readStyle, rivalSpec, rivalTaunt, RESIST_STEP } from "../src/run/rivals";
-import { BLAST_DAMAGE, IMPACT } from "../src/engine/terrain";
+import { BLAST_DAMAGE, IMPACT, REGROW_TICKS } from "../src/engine/terrain";
 import { ESCAPE_FROM_ROUND, FLEE_TAKEN, RETREAT_TAKEN, turnMp, wavering } from "../src/engine/escape";
 
 const setup: BattleSetup = { seed: "test-seed", map: MEADOW, units: TEST_UNITS };
@@ -532,7 +532,7 @@ describe("interactive terrain", () => {
   });
   Object.assign(ABILITIES, {
     xFire: ab("xFire", "fire"), xIce: ab("xIce", "ice", { damage: undefined }), xBolt: ab("xBolt", "bolt", { target: "foe", damage: { min: 10, max: 10, stat: "mag" } }),
-    xHit: ab("xHit", "neutral", { target: "foe", damage: { min: 5, max: 5, stat: "mag" } }), xShove: ab("xShove", "neutral", { target: "foe", damage: undefined, push: 2 }),
+    xWater: ab("xWater", "water", { damage: undefined }), xHit: ab("xHit", "neutral", { target: "foe", damage: { min: 5, max: 5, stat: "mag" } }), xShove: ab("xShove", "neutral", { target: "foe", damage: undefined, push: 2 }),
   });
   const kit = ["xFire", "xIce", "xBolt", "xHit", "xShove", "ray"];
   const field = (rows: string[], units: UnitSpec[]) => createBattle({ seed: 4, map: parseMap("t", rows), units });
@@ -557,6 +557,50 @@ describe("interactive terrain", () => {
     for (let i = 0; i < 8; i++) s = play(s, [{ t: "endTurn", unit: s.active }]);
     expect(tile(s, 2, 0).terrain).toBe("dirt");
     expect(tile(s, 2, 0).fireUntil).toBeUndefined();
+  });
+  it("burnt grass does not burn again until water brings it back, and fire does not stack", () => {
+    let s = field(["g0 g0 g0 g0 g0 g0"], [hero({ x: 0, y: 0 }, { abilities: [...kit, "xWater"] }), foe("f", { x: 5, y: 0 })]);
+    s = cast(s, "xFire", { x: 2, y: 0 });
+    const until = tile(s, 2, 0).fireUntil;
+    s = cast(s, "xFire", { x: 2, y: 0 });
+    expect(tile(s, 2, 0).fireUntil).toBe(until);
+    for (let i = 0; i < 8; i++) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(tile(s, 2, 0).terrain).toBe("dirt");
+    expect(tile(s, 2, 0).scorchedAt).toBeDefined();
+    s = play(s, [{ t: "endTurn", unit: s.active }]);
+    while (s.active !== "h") s = play(s, [{ t: "endTurn", unit: s.active }]);
+    s = cast(s, "xFire", { x: 2, y: 0 });
+    expect(tile(s, 2, 0).fireUntil).toBeUndefined();
+    s = cast(s, "xWater", { x: 2, y: 0 });
+    expect(tile(s, 2, 0).terrain).toBe("grass");
+    expect(tile(s, 2, 0).scorchedAt).toBeUndefined();
+  });
+  it("scorched ground next to water grows back after 3 rounds; away from water it stays", () => {
+    let s = field(["g0 g0 w0 g0 g0 g0", "g0 g0 g0 g0 g0 g0"], [hero({ x: 0, y: 1 }), foe("f", { x: 5, y: 1 })]);
+    s = cast(cast(s, "xFire", { x: 1, y: 0 }), "xFire", { x: 4, y: 1 });
+    const start = s.clock;
+    while (s.clock < start + 200 + REGROW_TICKS + 100) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(tile(s, 1, 0).terrain).toBe("grass");
+    expect(tile(s, 4, 1).terrain).toBe("dirt");
+  });
+  it("crates and trees catch fire, still block while burning, then burn away", () => {
+    let s = field(["g0 g0 g0C t0 g0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 5, y: 0 })]);
+    s = cast(cast(s, "xFire", { x: 2, y: 0 }), "xFire", { x: 3, y: 0 });
+    expect(tile(s, 2, 0).prop).toBe("crate");
+    expect(tile(s, 2, 0).fireUntil).toBeGreaterThan(s.clock);
+    expect(tile(s, 3, 0).fireUntil).toBeGreaterThan(s.clock);
+    expect(applyCommand(s, { t: "move", unit: "h", to: { x: 2, y: 0 } }).ok).toBe(false);
+    for (let i = 0; i < 8; i++) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(tile(s, 2, 0).prop).toBeUndefined();
+    expect(tile(s, 3, 0)).toMatchObject({ terrain: "dirt", deco: "stump" });
+  });
+  it("a shoved burning crate takes its fire along", () => {
+    let s = field(["g0 g0 g0C g0 g0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 5, y: 0 })]);
+    s = cast(s, "xFire", { x: 2, y: 0 });
+    s = cast(s, "xShove", { x: 2, y: 0 });
+    expect(tile(s, 2, 0).fireUntil).toBeUndefined();
+    expect(tile(s, 4, 0)).toMatchObject({ prop: "crate" });
+    expect(tile(s, 4, 0).fireUntil).toBeGreaterThan(s.clock);
   });
   it("ice makes water walkable until it thaws, and fire melts it", () => {
     let s = field(["g0 w0 w0 g0 g0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 5, y: 0 })]);

@@ -393,7 +393,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
     }
     for (const f of ev.fx) {
       const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡",
-        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "" }[f.fx];
+        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "", regrow: "🌿" }[f.fx];
       const loud = f.fx === "explode" || f.fx === "flare";
       if (word) floaters.push({ pos: { ...f.at }, text: word, color: loud ? "#ffb347" : "#e8f4ff", born: now + (loud ? 0 : 100) });
       const puff = ({ douse: "smoke", break: "smoke", explode: "smoke", steam: "steam", melt: "steam", freeze: "steam" } as const)[f.fx as string];
@@ -876,7 +876,8 @@ function tileInfo(at: Pos): string[] {
   if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
   if (tile.prop === "boulder") out.push(`<b>${t(lang, "boulder")}</b> · ${t(lang, "boulderInfo")}`);
-  if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, "fireInfo")}`);
+  if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, tile.prop || tile.terrain === "tree" ? "burningObjInfo" : "fireInfo")}`);
+  if (tile.scorchedAt !== undefined) out.push(t(lang, "scorchedInfo"));
   if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);
   if (tile.surface === "oil") out.push(`<b>🛢</b> ${t(lang, "oilInfo")}`);
   if (tile.surface === "sap") out.push(`<b>◆</b> ${t(lang, "sapInfo")}`);
