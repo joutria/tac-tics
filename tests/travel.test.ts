@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { REGIONS } from "../src/data/region";
 import { standable, tileAt } from "../src/engine/grid";
-import { activeUnit, createBattle } from "../src/engine/state";
+import { activeUnit, AMBUSH_OPENER_AP, applyCommand, createBattle } from "../src/engine/state";
 import { choices } from "../src/run/map";
 import { battleSetup, enterNode, isAmbush, newRun, type RunState } from "../src/run/run";
 import { approachScene, departScene, PIECES, placeOf, STRIP_W, walkPath, type Scene } from "../src/run/travel";
@@ -91,6 +91,12 @@ describe("ambushes", () => {
     // Every foe's first turn comes before any party member's.
     const firstHero = Math.min(...s.units.filter((u) => u.team === "heroes").map((u) => u.ct));
     for (const f of s.units.filter((u) => u.team === "foes")) expect(f.ct).toBeLessThan(firstHero);
+    // ...but that opening turn is a single attack: half their AP. Later turns are full.
+    const first = activeUnit(s);
+    expect(first.ap).toBe(Math.ceil(first.maxAp * AMBUSH_OPENER_AP));
+    const r = applyCommand(s, { t: "endTurn", unit: first.id });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.state.units.find((u) => u.id === first.id)!.opener).toBeUndefined();
   });
 
   it("leaves other fights as they were", () => {

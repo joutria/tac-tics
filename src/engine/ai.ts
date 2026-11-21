@@ -5,14 +5,14 @@
    with line of sight and height (so they hide behind obstacles and look for high ground). It also reads how the
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
 import { ABILITIES, type Ability } from "../data/abilities";
-import { abilityAvailable, areaTiles, damagePreview, guardAbility, hiddenFrom, maxRange, previewEffects, pushOutcome, shoveDistance, stuck, throwOutcome, unitAbilities } from "./combat";
+import { abilityAvailable, areaTiles, damagePreview, directionBonus, guardAbility, hiddenFrom, maxRange, previewEffects, pushOutcome, shoveDistance, stuck, throwOutcome, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain";
 import { reachable } from "./movement";
 import { cowering, isBorder, yielding } from "./escape";
 import { hasLineOfSight } from "./sight";
 import { statusOf, STATUS, type Status } from "./status";
-import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, onMap, roundOf, unitAt, type AiKind, type Unit } from "./state";
+import { activeUnit, applyCommand, BattleState, Command, isFoe, moveRules, onMap, roundOf, unitAt, type AiKind, type Temper, type Unit } from "./state";
 
 interface Weights {
   /** How much a point of expected incoming damage hurts a standing spot. */
@@ -30,6 +30,28 @@ const WEIGHTS: Record<AiKind, Weights> = {
   bruiser: { caution: 0.35, offense: 1.2, idealDistance: 1, spacing: 3 },
   skirmisher: { caution: 0.6, offense: 1, idealDistance: 2, spacing: 2 },
 };
+
+/** How a foe's temper bends its AiKind weights. Party units in the simulator have no temper and play as before. */
+interface TemperRule {
+  /** Multiplies caution. */
+  caution: number;
+  /** Multiplies the value of attacking this turn, against the safety of not attacking. */
+  attack: number;
+  /** Bonus for standing behind (full) or beside (half) the nearest enemy. */
+  flank: number;
+  /** Takes cover and tall grass into account. */
+  hides: boolean;
+}
+export const TEMPERS: Record<Temper, TemperRule> = {
+  bold: { caution: 0.4, attack: 1.5, flank: 1, hides: false },
+  flanker: { caution: 0.6, attack: 1.3, flank: 6, hides: false },
+  steady: { caution: 0.8, attack: 1.2, flank: 2, hides: true },
+  wary: { caution: 1, attack: 1, flank: 0, hides: true },
+};
+const NO_TEMPER: TemperRule = { caution: 1, attack: 1, flank: 0, hides: true };
+const temperOf = (u: Unit) => (u.temper ? TEMPERS[u.temper] : NO_TEMPER);
+/** From this round on everyone grows bolder each round, so nobody waits forever. */
+export const BOLD_FROM_ROUND = 3;
 
 const key = (p: Pos) => `${p.x},${p.y}`;
 const avg = (r: { min: number; max: number }) => (r.min + r.max) / 2;
@@ -83,24 +105,31 @@ function offenseAt(s: BattleState, u: Unit, spot: Pos): number {
 }
 
 function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<string, Pos[]>, w: Weights): number {
+  const tr = temperOf(u);
   const threat = threatAt(s, u, spot, enemyReach);
   const hpRatio = u.hp / u.maxHp;
   // Hurt units play safer; long fights make everyone bolder, so nobody hides forever.
-  const late = Math.max(0, roundOf(s) - 8);
-  const caution = w.caution * (hpRatio < 0.5 ? 1.6 : 1) * Math.max(0.1, 1 - late * 0.15);
-  const offense = offenseAt(s, u, spot) * w.offense;
+  const late = Math.max(0, roundOf(s) - BOLD_FROM_ROUND);
   const enemies = s.units.filter((h) => h.life === "up" && isFoe(h, u));
-  const nearest = Math.min(...enemies.map((h) => manhattan(h.pos, spot)), 99);
+  // When a friend is already trading blows, the rest commit instead of hanging back.
+  const engaged = s.units.some((f) => f.id !== u.id && f.life === "up" && !isFoe(f, u) && enemies.some((h) => manhattan(h.pos, f.pos) <= 1));
+  const caution = w.caution * tr.caution * (hpRatio < 0.5 ? 1.6 : 1) * Math.max(0.1, 1 - late * 0.15) * (engaged && u.temper ? 0.7 : 1);
+  const offense = offenseAt(s, u, spot) * w.offense;
+  const near = enemies.reduce<Unit | undefined>((b, h) => (!b || manhattan(h.pos, spot) < manhattan(b.pos, spot) ? h : b), undefined);
+  const nearest = near ? manhattan(near.pos, spot) : 99;
   // Adapting: against players who keep fighting from range, everyone presses in; against melee, casters back off.
   const style = s.habits.ranged - s.habits.melee;
   let ideal = w.idealDistance;
   if (style >= 3) ideal = Math.max(1, ideal - 1);
   if (style <= -3 && w.idealDistance > 1) ideal += 1;
   const spacing = Math.abs(nearest - ideal) * w.spacing;
-  const height = (tileAt(s.map, spot)?.h ?? 0) * 3;
-  // Cover next to it, or tall grass to hide in (ranged attackers lose it from beyond HIDE_RANGE).
-  const cover = (NEIGHBOURS.some((d) => { const t = tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }); return !!t && sightBlock(t) > 0; }) ? 2 : 0)
+  const height = (tileAt(s.map, spot)?.h ?? 0) * (tr.hides ? 3 : 1.5);
+  // Cover next to it, or tall grass to hide in (ranged attackers lose it from beyond HIDE_RANGE). Bold foes and
+  // flankers do not care.
+  const cover = !tr.hides ? 0 : (NEIGHBOURS.some((d) => { const t = tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }); return !!t && sightBlock(t) > 0; }) ? 2 : 0)
     + (tileAt(s.map, spot)?.terrain === "tallgrass" ? 1 : 0);
+  // Flankers work round to the back or side of the nearest enemy.
+  const flank = near && nearest <= Math.max(2, ideal) ? (directionBonus(near, spot) - 1) * 4 * tr.flank : 0;
   // Fire under its feet, or a barrel next to it that the players could set off.
   // Sap hurts the party and feeds foes; oil could go up; charged water may stun.
   const ground = tileAt(s.map, spot);
@@ -110,7 +139,7 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
     + (ground?.surface === "oil" ? 2 : 0)
     + (NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }))) ? 4 : 0)
     + guardDanger(s, u, spot);
-  return -threat * caution + offense - spacing + height + cover - nearest * late - hazard;
+  return -threat * caution + offense - spacing + height + cover + flank - nearest * late - hazard;
 }
 
 /** An enemy on Guard next to `spot` would strike on the way in: its average hit (approximate, ignores the path). */
@@ -264,6 +293,7 @@ interface Plan { value: number; moveTo: Pos | null; ability: string | null; targ
 export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
   const u = activeUnit(s);
   const w = WEIGHTS[u.ai ?? "skirmisher"];
+  const tr = temperOf(u);
   const enemyReach = enemyReachMap(s, u);
   const posCache = new Map<string, number>();
   const posScore = (p: Pos) => {
@@ -301,8 +331,9 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
         if (ab.target === "ally" && (!occupant || isFoe(u, occupant) || occupant.life !== "up")) continue;
         if (ab.target === "downedAlly" && (!occupant || isFoe(u, occupant) || !(occupant.life === "downed" || (ab.revive && occupant.id !== u.id && stuck(occupant))))) continue;
         if (ab.target === "yielding" && (!occupant || !isFoe(u, occupant) || !yielding(occupant))) continue;
-        const act = actionValue(s, u, ab, sp.p, t, opts);
+        let act = actionValue(s, u, ab, sp.p, t, opts);
         if (act <= 0) continue;
+        if (ab.damage) act *= tr.attack;
         const v = act + bestAfter(sp.p, u.mp - sp.cost);
         if (v > plan.value && v > idle) plan = { value: v, moveTo: samePos(sp.p, u.pos) ? null : sp.p, ability: id, target: t };
       }

@@ -36,7 +36,7 @@ export interface BossRule {
   unit?: Species;
 }
 /** The boss: a species swollen by the Sap. */
-export const BOSS: BossRule = { species: 1, hp: 1.5, stat: 6, mp: 1, name: { es: "{name} Hinchado de Savia", en: "Sap-Swollen {name}" } };
+export const BOSS: BossRule = { species: 1, hp: 1.5, stat: 4, mp: 1, name: { es: "{name} Hinchado de Savia", en: "Sap-Swollen {name}" } };
 
 /** How a region changes a species it borrows: "{name}" in `name` is the original name. */
 export interface VariantRule {
