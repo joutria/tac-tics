@@ -157,7 +157,7 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
     if (node.kind === "boss" && i === 0) {
       const boss = region.boss, sp = boss.unit ?? species[boss.species]!;
       const f = foeSpec(run, sp, id, pos, depth);
-      units.push({ ...f, name: boss.name[lang].replace("{name}", sp.name), hp: Math.round(f.hp * boss.hp), str: f.str + boss.stat, mag: f.mag + boss.stat, mp: f.mp + boss.mp });
+      units.push({ ...f, name: boss.name[lang].replace("{name}", sp.name), hp: Math.round(f.hp * boss.hp), str: f.str + boss.stat, mag: f.mag + boss.stat, mp: f.mp + boss.mp, heavy: true });
       continue;
     }
     units.push(foeSpec(run, pick(), id, pos, depth));

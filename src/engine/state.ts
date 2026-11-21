@@ -57,6 +57,8 @@ export interface UnitSpec {
   passive?: Passive;
   /** HP it starts the battle with, if lower than full (a run carries the hero's HP between battles). */
   hpNow?: number;
+  /** Too heavy to shove (bosses). */
+  heavy?: boolean;
   /** A rival's learned habit: it goes for units that can heal first. */
   hunts?: "healer";
 }

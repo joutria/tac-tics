@@ -8,10 +8,13 @@
             x critical       (5% chance, x1.5)
             x (1 - resistance % of the target to that element)
             x 0.75 if the attacker is Weakened
-   rounded down, then a Shield on the target soaks what it can. Attacks always hit. Area attacks hit everyone in the area, allies included, but not the caster. */
+   rounded down, then a Shield on the target soaks what it can. Attacks always hit. Area attacks hit everyone in the area, allies included, but not the caster.
+
+   Falls: a unit pushed down a drop takes damage for every level it falls (see fallDamage). Shove is free (0 AP),
+   once a turn, for everyone, and cannot move heavy units such as bosses. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
-import { inside, manhattan, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
+import { inside, manhattan, NEIGHBOURS, Pos, samePos, standable, tileAt, type Terrain } from "./grid";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
@@ -29,6 +32,14 @@ export const MAX_REVIVES = 2;
 /** Each Help up costs this share of the unit's starting max HP, for the rest of the battle. */
 export const REVIVE_MAX_HP_COST = 0.25;
 export const PUSH_HIT = 3;
+/** Fall damage per level dropped, before the pusher's Strength, the landing and the target's defences. */
+export const FALL_PER_LEVEL = 4;
+/** How hard the landing is. Grass is soft, ice is hard. */
+export const LANDING: Partial<Record<Terrain, number>> = { grass: 0.85, ice: 1.25 };
+/** Agility cuts fall damage by 1% per point, at most this share. */
+export const FALL_AGI_CAP = 0.4;
+/** A shove moves 2 tiles instead of 1 when the shover's Strength beats the target's by this much. */
+export const SHOVE_STRONG = 10;
 
 export interface Hit {
   unit: string;
@@ -40,6 +51,11 @@ export interface Hit {
   revived: boolean;
   rooted: boolean;
   pushedTo?: Pos;
+  /** Extra damage from a push: slamming into something, and falling down drops. */
+  bump?: number;
+  fall?: number;
+  /** Levels fallen during a push. */
+  fell?: number;
   /** Max HP the unit lost for good by being helped up. */
   maxHpLost?: number;
   /** Damage a Shield soaked. */
@@ -51,7 +67,7 @@ export interface Hit {
   source?: "blast" | "chain";
 }
 
-export const unitAbilities = (u: Unit) => [...u.abilities, "helpUp"];
+export const unitAbilities = (u: Unit) => [...u.abilities, "shove", "helpUp"];
 
 /** Max reach after height: ranged abilities gain 1 per level above the target, lose 1 per level below. */
 export function maxRange(s: BattleState, ab: Ability, from: Pos, to: Pos): number {
@@ -84,7 +100,9 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
     return !!o && o.life === "up" && o.id !== u.id && !samePos(p, target);
   })) return "no line of sight";
   switch (ab.target) {
-    case "foe": if ((!other || !isFoe(u, other)) && !(tileAt(s.map, target)?.prop && (ab.damage || ab.push))) return "needs an enemy"; break;
+    case "foe": if ((!other || !isFoe(u, other)) && !(tileAt(s.map, target)?.prop && (ab.damage || ab.push))) return "needs an enemy";
+      if (ab.shove && other?.heavy) return "too heavy to shove";
+      break;
     case "ally": { const t = samePos(target, from) ? u : other; if (!t || isFoe(u, t) || t.life !== "up") return "needs a standing ally"; break; }
     case "downedAlly": if (!other || isFoe(u, other) || other.life !== "downed") return "needs a downed ally"; break;
     case "emptyTile": {
@@ -185,7 +203,7 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
       if (bad.length) hit.cleansed = [...(hit.cleansed ?? []), ...bad];
     }
     if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [ab.status.id];
-    if (ab.push && u.life === "up") push(s, u, from, ab.push, hit);
+    if (ab.push && u.life === "up") push(s, caster, u, from, ab.shove ? shoveDistance(caster, u) : ab.push, hit);
     credit(u, hit);
     hits.push(hit);
   }
@@ -210,31 +228,58 @@ export function hurt(u: Unit, dmg: number, hit: Pick<Hit, "downed" | "died">) {
   }
 }
 
-/** Shoves a unit straight away from `from`. Hitting a wall, a unit or a cliff costs PUSH_HIT per tile left. */
-function push(s: BattleState, u: Unit, from: Pos, tiles: number, hit: Hit) {
+/** Tiles a Shove moves the target: 1, or 2 when the shover is much stronger. */
+export const shoveDistance = (caster: Unit, target: Unit) => caster.str >= target.str + SHOVE_STRONG ? 2 : 1;
+
+/** Damage for falling `levels` levels onto `land`. It grows with the drop, the pusher's Strength (which grows
+    with level) and a hard landing, and shrinks with the target's Agility, its Stone resistance and job passives
+    (Executioner on the pusher adds, a Guard next to the target cuts). */
+export function fallDamage(s: BattleState, pusher: Unit, target: Unit, levels: number, land: Terrain): number {
+  if (levels <= 0) return 0;
+  const agi = 1 - Math.min(FALL_AGI_CAP, Math.max(0, target.agi) / 100);
+  const res = 1 - (target.res.stone ?? 0) / 100;
+  return Math.max(1, Math.floor(FALL_PER_LEVEL * levels * (1 + Math.max(0, pusher.str) / 100) * (LANDING[land] ?? 1) * agi * res
+    * passiveFactor(s, pusher, target)));
+}
+
+/** Where a push would leave `u` and what it would cost, without changing anything. Straight away from `from`:
+    hitting a wall, a unit or a step up costs PUSH_HIT per tile left; going down drops costs fall damage on landing. */
+export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number): { to: Pos; bump: number; fall: number; fell: number } {
   const dx = u.pos.x - from.x, dy = u.pos.y - from.y;
   const step = Math.abs(dx) >= Math.abs(dy) ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dy) };
-  if (!step.x && !step.y) return;
+  let at = { ...u.pos }, fell = 0, bump = 0;
+  if (!step.x && !step.y) return { to: at, bump, fall: 0, fell };
   for (let i = 0; i < tiles; i++) {
-    const n = { x: u.pos.x + step.x, y: u.pos.y + step.y };
-    const here = tileAt(s.map, u.pos)!, next = tileAt(s.map, n);
+    const n = { x: at.x + step.x, y: at.y + step.y };
+    const here = tileAt(s.map, at)!, next = tileAt(s.map, n);
     // Pushed units can be shoved down any drop, but never up a step.
-    const free = standable(next) && !unitAt(s, n) && next.h <= here.h;
-    if (!free) {
-      const extra = PUSH_HIT * (tiles - i);
-      hit.damage += Math.min(extra, u.hp);
-      hurt(u, extra, hit);
-      break;
-    }
-    u.pos = n;
-    hit.pushedTo = { ...n };
+    const other = unitAt(s, n);
+    const free = standable(next) && (!other || other.id === u.id) && next.h <= here.h;
+    if (!free) { bump = PUSH_HIT * (tiles - i); break; }
+    fell += here.h - next.h;
+    at = n;
+  }
+  return { to: at, bump, fall: fallDamage(s, pusher, u, fell, tileAt(s.map, at)!.terrain), fell };
+}
+
+function push(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number, hit: Hit) {
+  const o = pushOutcome(s, pusher, u, from, tiles);
+  if (!samePos(o.to, u.pos)) { u.pos = { ...o.to }; hit.pushedTo = { ...o.to }; }
+  if (o.fell) hit.fell = o.fell;
+  for (const [kind, dmg] of [["fall", o.fall], ["bump", o.bump]] as const) {
+    if (!dmg || u.life !== "up") continue;
+    const taken = absorb(u, dmg);
+    if (dmg > taken) hit.shielded = (hit.shielded ?? 0) + dmg - taken;
+    hit[kind] = taken;
+    hit.damage += Math.min(taken, u.hp);
+    hurt(u, taken, hit);
   }
 }
 
 /** Where things end up if `caster` uses `ab` on `target` now: units pushed and crates slid, with the damage a
     push into something adds, and barrels that would go off. Runs the cast on a copy; push results never depend
     on the roll, so this is exact for movement. */
-export interface MovePreview { moves: { from: Pos; to: Pos; unit?: string; bump: number }[]; blasts: Pos[] }
+export interface MovePreview { moves: { from: Pos; to: Pos; unit?: string; bump: number; fall: number; fell: number }[]; blasts: Pos[] }
 export function previewEffects(s: BattleState, caster: Unit, ab: Ability, target: Pos): MovePreview {
   const copy = structuredClone(s);
   const me = copy.units.find((u) => u.id === caster.id)!;
@@ -245,10 +290,9 @@ export function previewEffects(s: BattleState, caster: Unit, ab: Ability, target
   if (ab.push) for (const h of hits) {
     const from = before.get(h.unit)!, to = h.pushedTo ?? from;
     if (h.unit === caster.id) continue;
-    // A push stopped early by a wall, a unit or a step hurts PUSH_HIT per tile it could not travel.
-    const tiles = Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
-    out.moves.push({ from, to, unit: h.unit, bump: PUSH_HIT * Math.max(0, ab.push - tiles) });
+    // A push stopped early by a wall, a unit or a step hurts PUSH_HIT per tile it could not travel; drops add a fall.
+    out.moves.push({ from, to, unit: h.unit, bump: h.bump ?? 0, fall: h.fall ?? 0, fell: h.fell ?? 0 });
   }
-  for (const f of fx) if (f.fx === "slide") out.moves.push({ from: f.at, to: f.to, bump: 0 });
+  for (const f of fx) if (f.fx === "slide") out.moves.push({ from: f.at, to: f.to, bump: 0, fall: 0, fell: 0 });
   return out;
 }
