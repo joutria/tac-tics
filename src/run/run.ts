@@ -193,6 +193,8 @@ export const nextNodes = (run: RunState): RunNode[] => (run.over || run.offers.l
 
 /** Which arena a node uses: picked from the seed so revisiting the save gives the same one. */
 export function arenaFor(run: RunState, node: RunNode) {
+  const lair = node.kind === "boss" ? regionOf(run).boss.arena : undefined;
+  if (lair) return lair;
   const arenas = regionOf(run).arenas;
   const [i] = rngInt(seedFrom(`${regionSeed(run.seed, run.region ?? 0)}:arena:${node.id}`), 0, arenas.length - 1);
   return arenas[i]!;
@@ -239,7 +241,10 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
     if (node.kind === "boss" && i === 0) {
       const boss = region.boss, sp = boss.unit ?? species[boss.species]!;
       const f = foeSpec(run, sp, id, pos, depth);
-      units.push({ ...f, name: boss.name[lang].replace("{name}", sp.name), hp: Math.round(f.hp * boss.hp), str: f.str + boss.stat, mag: f.mag + boss.stat, mp: f.mp + boss.mp, heavy: true });
+      // A giant is not "heavy" (unshovable): it shrugs off part of every push instead (combat.ts GIANT_PUSH_RESIST).
+      units.push({ ...f, name: boss.name[lang].replace("{name}", sp.name), hp: Math.round(f.hp * boss.hp), str: f.str + boss.stat, mag: f.mag + boss.stat, mp: f.mp + boss.mp,
+        ...(boss.size && boss.size > 1 ? { size: boss.size } : { heavy: true }),
+        ...(boss.abilities ? { abilities: [...f.abilities, ...boss.abilities] } : {}) });
       continue;
     }
     units.push(foeSpec(run, pick(), id, pos, depth));

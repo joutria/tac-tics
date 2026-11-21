@@ -25,7 +25,7 @@
      Water or Light calms it, ice freezes it, fire turns it to steam.
    - Fire on water makes steam, which blocks sight for a round. */
 import type { Ability } from "../data/abilities";
-import { NEIGHBOURS, TERRAIN, grassy, manhattan, standable, tileAt, type Pos, type Tile } from "./grid";
+import { NEIGHBOURS, TERRAIN, cellsOf, coversPos, grassy, manhattan, standable, tileAt, type Pos, type Tile } from "./grid";
 import { rngNext } from "./rng";
 import { absorb, addStatus } from "./status";
 import type { BattleState, Unit } from "./state";
@@ -55,7 +55,9 @@ export type TerrainFx =
 /** A hit dealt by the terrain (blast or chained bolt), in the same shape the battle reports any hit in. */
 export interface TerrainHit { source: "blast" | "chain" | "impact"; unit: string; damage: number; downed: boolean; died: boolean; burned: boolean; shielded?: number }
 
-const unitOn = (s: BattleState, p: Pos) => s.units.find((u) => (u.life === "up" || u.life === "downed") && u.pos.x === p.x && u.pos.y === p.y);
+const unitOn = (s: BattleState, p: Pos) => s.units.find((u) => (u.life === "up" || u.life === "downed") && coversPos(u.pos, u.size ?? 1, p));
+/** The tiles under a unit (four for a giant). */
+const under = (u: Unit) => cellsOf(u.pos, u.size ?? 1);
 export const burning = (s: BattleState, t: Tile | undefined) => !!t && (t.fireUntil ?? 0) > s.clock;
 export const charged = (s: BattleState, t: Tile | undefined) => !!t && t.terrain === "water" && (t.chargedUntil ?? 0) > s.clock;
 /** What fire can catch on: grass, bridges, trees and crates (barrels go off instead). */
@@ -123,7 +125,7 @@ function flareOil(s: BattleState, p: Pos, fx: TerrainFx[], hits: TerrainHit[], h
     burnTile(s, q, fx, hits, hurt, hitIds);
   }
   for (const u of s.units) {
-    if (u.life !== "up" || hitIds.has(u.id) || !area.some((q) => q.x === u.pos.x && q.y === u.pos.y)) continue;
+    if (u.life !== "up" || hitIds.has(u.id) || !area.some((q) => coversPos(u.pos, u.size ?? 1, q))) continue;
     hitIds.add(u.id);
     const h: TerrainHit = { source: "blast", unit: u.id, damage: 0, downed: false, died: false, burned: false };
     const dealt = absorb(u, OIL_BLAST);
@@ -173,6 +175,7 @@ export function explode(s: BattleState, at: Pos, fx: TerrainFx[], hits: TerrainH
   const t = tileAt(s.map, at)!;
   delete t.prop; delete t.propHp;
   fx.push({ fx: "explode", at });
+  const blasted = new Set<string>(); // a giant under several tiles of the blast is hit once
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     const p = { x: at.x + dx, y: at.y + dy };
     const q = tileAt(s.map, p);
@@ -181,7 +184,8 @@ export function explode(s: BattleState, at: Pos, fx: TerrainFx[], hits: TerrainH
     if (q.prop === "crate") { delete q.prop; delete q.propHp; fx.push({ fx: "break", at: p }); }
     if (q.terrain !== "water") burnTile(s, p, fx, hits, hurt);
     const u = unitOn(s, p);
-    if (!u) continue;
+    if (!u || blasted.has(u.id)) continue;
+    blasted.add(u.id);
     const h: TerrainHit = { source: "blast", unit: u.id, damage: 0, downed: false, died: false, burned: false };
     const dealt = absorb(u, BLAST_DAMAGE);
     if (dealt < BLAST_DAMAGE) h.shielded = BLAST_DAMAGE - dealt;
@@ -285,7 +289,7 @@ export function chainBolt(s: BattleState, caster: Unit, struck: { unit: string; 
   for (const first of struck) {
     if (first.damage <= 0) continue;
     const u = s.units.find((x) => x.id === first.unit)!;
-    const water = waterBody(s, u.pos);
+    const water = under(u).flatMap((c) => waterBody(s, c)).filter((w, i, all) => all.findIndex((v) => v.x === w.x && v.y === w.y) === i);
     if (!water.length) continue;
     // The bolt leaves the water it ran through charged.
     if (!water.some((w) => charged(s, tileAt(s.map, w)))) fx.push({ fx: "charge", at: water[0]! });
@@ -293,7 +297,7 @@ export function chainBolt(s: BattleState, caster: Unit, struck: { unit: string; 
     const share = Math.floor(first.damage * CHAIN_SHARE);
     for (const o of s.units) {
       if (done.has(o.id) || o.life !== "up") continue;
-      if (!water.some((w) => Math.abs(w.x - o.pos.x) + Math.abs(w.y - o.pos.y) === 1)) continue;
+      if (!water.some((w) => under(o).some((c) => Math.abs(w.x - c.x) + Math.abs(w.y - c.y) === 1))) continue;
       done.add(o.id);
       const h: TerrainHit = { source: "chain", unit: o.id, damage: 0, downed: false, died: false, burned: false };
       h.damage = absorb(o, share);
@@ -362,19 +366,19 @@ function growSap(s: BattleState) {
 
 /** Starting a turn next to charged water: a SHOCK_CHANCE roll to be stunned. True when it stuns. */
 export function shockNear(s: BattleState, u: Unit): boolean {
-  if (u.life !== "up" || !NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: u.pos.x + d.x, y: u.pos.y + d.y })))) return false;
+  if (u.life !== "up" || !under(u).some((c) => NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: c.x + d.x, y: c.y + d.y }))))) return false;
   const [roll, rng] = rngNext(s.rng); s.rng = rng;
   return roll < SHOCK_CHANCE && addStatus(u, { id: "stun", turns: 1, power: 0 });
 }
 
 /** Standing in Sap: Poison for the party, Regen for foes. Returns what it gave, if it took. */
 export function sapUnder(s: BattleState, u: Unit): "poison" | "regen" | null {
-  if (u.life !== "up" || tileAt(s.map, u.pos)?.surface !== "sap") return null;
+  if (u.life !== "up" || !under(u).some((c) => tileAt(s.map, c)?.surface === "sap")) return null;
   const st = u.team === "heroes" ? SAP_POISON : SAP_REGEN;
   return addStatus(u, { ...st }) ? st.id : null;
 }
 
 /** Standing in fire: a Burn. True when it took. */
 export function fireUnder(s: BattleState, u: Unit): boolean {
-  return u.life === "up" && burning(s, tileAt(s.map, u.pos)) && addStatus(u, { ...FIRE_BURN });
+  return u.life === "up" && under(u).some((c) => burning(s, tileAt(s.map, c))) && addStatus(u, { ...FIRE_BURN });
 }

@@ -100,6 +100,8 @@ export const ABILITIES: Record<string, Ability> = {
 
   // Cañín: plant bruiser that closes in and pins.
   bite: { id: "bite", element: "plant", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 8, max: 11, stat: "str" } },
+  // Giants: a stamp of the whole body that hits the tile in front and the ones around it, and knocks them back.
+  stomp: { id: "stomp", element: "stone", ap: 4, range: [1, 1], los: false, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 4, max: 6, stat: "str" }, push: 1 },
   snare: { id: "snare", element: "plant", ap: 3, range: [1, 3], los: true, target: "foe", area: "single", cooldown: 3, perTurn: 1, damage: { min: 2, max: 4, stat: "str" }, root: true },
 
   // Ajolín: water skirmisher that shoves.

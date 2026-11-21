@@ -121,6 +121,9 @@ export function afterBattle(rivals: Rival[], setup: BattleSetup, commands: Comma
       cause: { kind: u.life === "escaped" ? "escaped" : "felled", hero: heroName },
       level: 1, meetings: 0, memory: [style], counters: [],
     };
+    // A giant that gets away shrinks back as the Sap drains out of it: as a rival it fights at normal size, so it
+    // fits any arena.
+    delete fresh.base.size;
     fresh.counters.push(pickCounter(fresh, style));
     out.push(fresh);
   }
