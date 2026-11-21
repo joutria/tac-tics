@@ -58,7 +58,7 @@ export const COMPANIONS: Record<string, Companion> = {
     spec: {
       id: "remanso", name: "Remanso", team: "heroes", element: "water", look: "remolin",
       hp: 40, ap: 6, mp: 3, speed: 48, jump: 1, str: 6, mag: 12, agi: 12, res: { water: 20 },
-      abilities: ["splash", "undertow", "mend"],
+      abilities: ["splash", "undertow", "mend"], quick: "douse",
     },
     reacts: { helpUp: 4, heal: 1, letEscape: 2, jobBeacon: 5, spare: 4, finishDowned: -5, finishYielding: -4, allyBledOut: -5, killFleeing: -20 },
     likeCapPerBattle: 8,
@@ -89,7 +89,7 @@ export const COMPANIONS: Record<string, Companion> = {
     spec: {
       id: "guijo", name: "Guijo", team: "heroes", element: "stone", look: "guijo",
       hp: 54, ap: 6, mp: 2, speed: 36, jump: 1, str: 11, mag: 4, agi: 6, res: { stone: 25, fire: 10, bolt: 10 },
-      abilities: ["slam", "bulwark", "tremor"],
+      abilities: ["slam", "bulwark", "tremor"], quick: "hurl",
     },
     reacts: { helpUp: 4, noneDowned: 3, heal: 1, jobBeacon: 5, spare: 1, allyBledOut: -25 },
     likeCapPerBattle: 8,
@@ -118,7 +118,7 @@ export const COMPANIONS: Record<string, Companion> = {
     spec: {
       id: "centella", name: "Centella", team: "heroes", element: "bolt", look: "centella",
       hp: 32, ap: 6, mp: 4, speed: 58, jump: 2, str: 9, mag: 11, agi: 16, res: { bolt: 25 },
-      abilities: ["spark", "jolt", "dash"],
+      abilities: ["spark", "jolt", "dash"], quick: "zip",
     },
     reacts: { rivalBeaten: 5, killFleeing: 3, quickWin: 2, finishDowned: 1, finishYielding: 1, jobBlaze: 5, letEscape: -3, rivalEscaped: -8, spare: -1 },
     likeCapPerBattle: 10,
@@ -150,7 +150,7 @@ export const COMPANIONS: Record<string, Companion> = {
     spec: {
       id: "moheda", name: "Moheda", team: "heroes", element: "mush", look: "moheda",
       hp: 38, ap: 6, mp: 3, speed: 44, jump: 1, str: 3, mag: 15, agi: 9, res: { mush: 25, plant: 10 },
-      abilities: ["spores", "wilt", "sapCap"],
+      abilities: ["spores", "wilt", "sapCap"], quick: "puff",
     },
     reacts: { shardsGained: 2, heal: 1, rivalEscaped: 2, spendShards: -3, destroyShards: -20 },
     likeCapPerBattle: 6,

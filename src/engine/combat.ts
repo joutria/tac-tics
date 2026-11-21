@@ -20,7 +20,8 @@ import { takenFactor, yielding } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
 import { EXECUTIONER_FACTOR, GUARD_FACTOR } from "../data/jobs";
 import { hasLineOfSight } from "./sight";
-import { chainBolt, explode, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
+import { canStep } from "./movement";
+import { burning, chainBolt, explode, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
 import { isFoe, unitAt, type BattleState, type Unit } from "./state";
 
 export const CRIT_CHANCE = 0.05;
@@ -76,13 +77,22 @@ export interface Hit {
 }
 
 /** Everyone can Shove and Help up; the party can also Spare a yielding foe. */
-export const unitAbilities = (u: Unit) => [...u.abilities, "shove", "helpUp", ...(u.team === "heroes" ? ["spare"] : [])];
+/** Quick actions every unit has; each character may also have one of its own (UnitSpec.quick). Foes do not Throw
+    for now: in AI runs it cut the Normal clear rate from 27% to 18%. */
+export const QUICK_SHARED = ["shove", "jump", "throw", "dip"];
+export const unitAbilities = (u: Unit) => [...u.abilities, "helpUp", ...(u.team === "heroes" ? ["spare"] : []),
+  ...QUICK_SHARED.filter((q) => u.team === "heroes" || q !== "throw"), ...(u.quick ? [u.quick] : [])];
+/** Thrown crates hit for this (x Strength), and fly this far (+1 with Strength 10 or more). */
+export const THROW_HIT = 6;
+export const THROW_RANGE = 3;
 
 /** Max reach after height: ranged abilities gain 1 per level above the target, lose 1 per level below. */
-export function maxRange(s: BattleState, ab: Ability, from: Pos, to: Pos): number {
-  if (ab.range[1] <= 1) return ab.range[1];
+export function maxRange(s: BattleState, ab: Ability, from: Pos, to: Pos, caster?: Unit): number {
+  if (ab.range[1] <= 1 || ab.jump) return ab.range[1];
   const diff = (tileAt(s.map, from)?.h ?? 0) - (tileAt(s.map, to)?.h ?? 0);
-  return Math.max(1, ab.range[1] + diff);
+  // Aim (a quick action) adds 1 to the next ranged ability.
+  const aim = caster?.aiming && !ab.quick ? 1 : 0;
+  return Math.max(1, ab.range[1] + diff + aim);
 }
 
 export function abilityAvailable(u: Unit, id: string): string | null {
@@ -91,6 +101,7 @@ export function abilityAvailable(u: Unit, id: string): string | null {
   if (u.ap < ab.ap) return "not enough AP";
   if (u.cooldowns[id]) return `on cooldown for ${u.cooldowns[id]} more turn(s)`;
   if ((u.usedThisTurn[id] ?? 0) >= ab.perTurn) return "already used this turn";
+  if (ab.quick && u.usedThisTurn.quick) return "quick action already used this turn";
   return null;
 }
 
@@ -101,7 +112,8 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
   const ab = ABILITIES[id]!;
   if (!inside(s.map, target)) return "outside the map";
   const d = manhattan(from, target);
-  if (d < ab.range[0] || d > maxRange(s, ab, from, target)) return "out of range";
+  if (d < ab.range[0] || d > maxRange(s, ab, from, target, u)) return "out of range";
+  if ((ab.jump || ab.step) && u.rooted) return "rooted";
   const occupant = unitAt(s, target);
   const other = occupant && occupant.id !== u.id ? occupant : undefined;
   if (ab.los && d > 0 && !hasLineOfSight(s.map, from, target, (p) => {
@@ -112,16 +124,36 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
     case "foe": if ((!other || !isFoe(u, other)) && !(tileAt(s.map, target)?.prop && (ab.damage || ab.push))) return "needs an enemy";
       if (ab.shove && other?.heavy) return "too heavy to shove";
       break;
+    case "unit": if (!other || other.life !== "up") return "needs a unit"; if (ab.push && other.heavy) return "too heavy to shove"; break;
+    case "prop": { const p = tileAt(s.map, target)?.prop; if (p !== "crate" && p !== "barrel") return "needs a crate or barrel"; break; }
     case "ally": { const t = samePos(target, from) ? u : other; if (!t || isFoe(u, t) || t.life !== "up") return "needs a standing ally"; break; }
     case "downedAlly": if (!other || isFoe(u, other) || other.life !== "downed") return "needs a downed ally"; break;
     case "yielding": if (!other || !isFoe(u, other) || !yielding(other)) return "needs a yielding foe"; break;
     case "emptyTile": {
       const tile = tileAt(s.map, target);
       if (!standable(tile) || occupant) return "needs an empty tile";
+      if (ab.jump) { const why = jumpProblem(s, u, from, target); if (why) return why; }
+      if (ab.step && !canStep(s.map, from, target, u.jump)) return "too steep";
       break;
     }
     case "any": break;
   }
+  if (ab.dip && ![{ x: 0, y: 0 }, ...NEIGHBOURS].some((d) => burning(s, tileAt(s.map, { x: from.x + d.x, y: from.y + d.y })))) return "needs fire next to you";
+  return null;
+}
+
+/** Jump: 1 tile, or 2 in a straight line over a gap (a tile you cannot stand on) or a unit. It climbs up to Jump + 1
+    levels and may drop any height; Lock does not hold it. */
+function jumpProblem(s: BattleState, u: Unit, from: Pos, to: Pos): string | null {
+  const d = manhattan(from, to);
+  if (d === 2) {
+    if (from.x !== to.x && from.y !== to.y) return "jumps go straight";
+    const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    const t = tileAt(s.map, mid);
+    if (standable(t) && !unitAt(s, mid)) return "jump 2 only over a gap or a unit";
+    if (t && t.h > Math.max(tileAt(s.map, from)!.h, tileAt(s.map, to)!.h) + 1) return "too high to jump over";
+  }
+  if (tileAt(s.map, to)!.h - tileAt(s.map, from)!.h > u.jump + 1) return "too high";
   return null;
 }
 
@@ -180,6 +212,8 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
   const hits: Hit[] = [];
   const from = { ...caster.pos };
   if (ab.teleport) { caster.pos = { ...target }; return hits; }
+  if (ab.aim) { caster.aiming = true; return hits; }
+  if (ab.dip) { caster.dipped = true; return hits; }
   if (ab.spare) {
     const u = unitAt(s, target);
     if (!u) return hits;
@@ -228,6 +262,9 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
       for (const id of bad) removeStatus(u, id);
       if (bad.length) hit.cleansed = [...(hit.cleansed ?? []), ...bad];
     }
+    // Dipped in fire: the attack sets enemies it hits burning.
+    if (caster.dipped && ab.damage && hit.damage > 0 && u.life === "up" && isFoe(caster, u) && addStatus(u, { id: "burn", turns: 2, power: 3 }))
+      hit.statuses = [...(hit.statuses ?? []), "burn"];
     if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [ab.status.id];
     const extra: Hit[] = [];
     if (ab.push && u.life === "up") push(s, caster, u, from, ab.shove ? shoveDistance(caster, u) : ab.push, hit, extra, fx, ground, hurtByTerrain);
@@ -235,6 +272,9 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
     hits.push(hit);
     for (const e of extra) { credit(s.units.find((x) => x.id === e.unit)!, e); hits.push(e); }
   }
+  if (ab.throwProp) throwProp(s, caster, from, target, hits, fx, ground, hurtByTerrain);
+  // Aim and Dip last until the next ability that is not a quick action.
+  if (!ab.quick) { caster.aiming = false; if (ab.damage) caster.dipped = false; }
   if (ab.element === "bolt" && ab.damage) chainBolt(s, caster, hits, fx, ground, hurtByTerrain);
   // Sap-fed cards cost the caster some HP, never the last one.
   if (ab.selfHurt && caster.life === "up" && caster.hp > 1) {
@@ -262,6 +302,60 @@ export function hurt(u: Unit, dmg: number, hit: Pick<Hit, "downed" | "died" | "h
     if (u.revives >= MAX_REVIVES) { u.life = "dead"; hit.died = true; return; }
     u.life = "downed"; u.downedTurns = DOWNED_TURNS; hit.downed = true;
   }
+}
+
+/** Where a thrown crate or barrel goes: straight away from the thrower, up to THROW_RANGE tiles (+1 with Strength
+    10+), flying over drops but stopped by walls more than 1 level up, rocks, trees and objects. It stops on the
+    first unit in its way and hits it. A barrel always goes off where it ends; a crate breaks on a unit and sinks in water. */
+export function throwOutcome(s: BattleState, thrower: Unit, from: Pos, at: Pos): { land: Pos; unit?: string; damage: number; kind: "crate" | "barrel"; sinks: boolean } {
+  const kind = tileAt(s.map, at)!.prop as "crate" | "barrel";
+  const step = Math.abs(at.x - from.x) >= Math.abs(at.y - from.y) ? { x: Math.sign(at.x - from.x), y: 0 } : { x: 0, y: Math.sign(at.y - from.y) };
+  const range = THROW_RANGE + (thrower.str >= 10 ? 1 : 0);
+  let cur = at, sinks = false;
+  for (let i = 0; i < range; i++) {
+    const n = { x: cur.x + step.x, y: cur.y + step.y };
+    const t = tileAt(s.map, n);
+    if (!t || t.prop || t.h > tileAt(s.map, cur)!.h + 1) break;
+    const v = unitAt(s, n);
+    if (v && v.id !== thrower.id) {
+      const damage = kind === "crate" ? Math.floor(THROW_HIT * (1 + Math.max(0, thrower.str) / 100)) : 0;
+      return { land: n, unit: v.id, damage, kind, sinks: false };
+    }
+    if (t.terrain === "water") { cur = n; sinks = true; break; }
+    if (!TERRAIN[t.terrain].walkable) break;
+    cur = n;
+  }
+  return { land: cur, damage: 0, kind, sinks };
+}
+
+function throwProp(s: BattleState, thrower: Unit, from: Pos, at: Pos, hits: Hit[], fx: TerrainFx[], ground: TerrainHit[],
+  hurtByTerrain: (v: Unit, dmg: number, h: TerrainHit) => void) {
+  const o = throwOutcome(s, thrower, from, at);
+  const src = tileAt(s.map, at)!;
+  const hp = src.propHp;
+  delete src.prop; delete src.propHp;
+  if (!samePos(o.land, at)) fx.push({ fx: "slide", at, to: o.land });
+  if (o.kind === "barrel") {
+    const t = tileAt(s.map, o.land)!;
+    t.prop = "barrel"; t.propHp = hp;
+    explode(s, o.land, fx, ground, hurtByTerrain);
+    return;
+  }
+  if (o.unit) {
+    const v = s.units.find((x) => x.id === o.unit)!;
+    const h: Hit = { unit: v.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false };
+    const taken = absorb(v, o.damage);
+    if (o.damage > taken) h.shielded = o.damage - taken;
+    h.damage = Math.min(taken, v.hp); h.bump = taken;
+    hurt(v, taken, h);
+    if ((h.downed || h.died) && isFoe(thrower, v)) thrower.downs += 1;
+    hits.push(h);
+    fx.push({ fx: "break", at: o.land });
+    return;
+  }
+  if (o.sinks) return;
+  const t = tileAt(s.map, o.land)!;
+  t.prop = "crate"; t.propHp = hp;
 }
 
 /** Tiles a Shove moves the target: 1, or 2 when the shover is much stronger. */
@@ -414,5 +508,7 @@ export function previewEffects(s: BattleState, caster: Unit, ab: Ability, target
     out.moves.push({ from, to, unit: h.unit, bump: h.bump ?? 0, fall: h.fall ?? 0, fell: h.fell ?? 0, ...(h.slammed ? { slammed: h.slammed } : {}) });
   }
   for (const f of fx) if (f.fx === "slide") out.moves.push({ from: f.at, to: f.to, bump: 0, fall: 0, fell: 0 });
+  // A thrown crate's hit on whoever was in its way.
+  if (ab.throwProp) for (const h of hits) if (h.bump && !h.source) out.splashes.push({ unit: h.unit, damage: h.bump });
   return out;
 }

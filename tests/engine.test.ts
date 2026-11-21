@@ -690,3 +690,55 @@ describe("what a push slams into", () => {
     expect(unitById(blocked, "g").hp).toBe(40 - 10);
   });
 });
+
+describe("quick actions", () => {
+  const battle = (rows: string[], units: UnitSpec[]) => createBattle({ seed: 3, map: parseMap("q", rows), units });
+  const hero = (o: Partial<UnitSpec> = {}) => unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90, ...o });
+  it("are free and share one use per turn", () => {
+    const s = battle(["g0 g0 g0 g0"], [hero(), unit({ id: "f", team: "foes", pos: { x: 1, y: 0 } })]);
+    const a = play(s, [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(unitById(a, "h").ap).toBe(6);
+    expect(castProblem(a, unitById(a, "h"), "jump", { x: 1, y: 0 })).toBe("quick action already used this turn");
+    expect(applyCommand(a, { t: "wait", unit: "h" }).ok).toBe(false);
+  });
+  it("Jump hops 1, or 2 over a gap or a unit, and climbs Jump + 1 levels", () => {
+    const s = battle(["g0 w0 g0 g0", "g0 g0 g0 g3", "g2 g0 g0 g0"], [hero({ jump: 1 })]);
+    const h = unitById(s, "h");
+    expect(castProblem(s, h, "jump", { x: 2, y: 0 })).toBeNull();                      // over water
+    expect(castProblem(s, h, "jump", { x: 0, y: 2 })).toBe("jump 2 only over a gap or a unit");
+    expect(castProblem(s, h, "jump", { x: 1, y: 1 })).toBe("jumps go straight");
+    const up = battle(["g0 g2 g3"], [hero({ jump: 1 })]);
+    expect(castProblem(up, unitById(up, "h"), "jump", { x: 1, y: 0 })).toBeNull();     // 2 levels with Jump 1
+    const after = play(up, [{ t: "cast", unit: "h", ability: "jump", target: { x: 1, y: 0 } }]);
+    expect(unitById(after, "h").pos).toEqual({ x: 1, y: 0 });
+  });
+  it("Throw sends a crate into whoever is in the way, and a barrel goes off where it lands", () => {
+    const s = battle(["g0 g0C g0 g0 g0"], [hero(), unit({ id: "f", team: "foes", pos: { x: 3, y: 0 } })]);
+    const a = play(s, [{ t: "cast", unit: "h", ability: "throw", target: { x: 1, y: 0 } }]);
+    expect(unitById(a, "f").hp).toBe(40 - 6);
+    expect(a.map.tiles[1]!.prop).toBeUndefined();
+    const b = play(battle(["g0 g0B g0 g0 g0 g0"], [hero(), unit({ id: "f", team: "foes", pos: { x: 5, y: 0 } })]),
+      [{ t: "cast", unit: "h", ability: "throw", target: { x: 1, y: 0 } }]);
+    expect(unitById(b, "f").hp).toBe(40 - 10); // landed next to it (4 tiles at most... 3 here) and blew up
+  });
+  it("Dip needs fire next to you and makes the next attack burn", () => {
+    const s = battle(["g0 g0 g0"], [hero({ abilities: ["ray"] }), unit({ id: "f", team: "foes", pos: { x: 2, y: 0 } })]);
+    expect(castProblem(s, unitById(s, "h"), "dip", { x: 0, y: 0 })).toBe("needs fire next to you");
+    s.map.tiles[1]!.fireUntil = s.clock + 500;
+    const a = play(s, [{ t: "cast", unit: "h", ability: "dip", target: { x: 0, y: 0 } }, { t: "cast", unit: "h", ability: "ray", target: { x: 2, y: 0 } }]);
+    expect(unitById(a, "f").statuses.some((x) => x.id === "burn")).toBe(true);
+    expect(unitById(a, "h").dipped).toBe(false);
+  });
+  it("Aim adds 1 reach to the next ranged ability; Hurl moves friends too; Zip ignores Lock", () => {
+    const s = battle(["g0 g0 g0 g0 g0 g0 g0"], [hero({ abilities: ["ray"], quick: "aim" }), unit({ id: "f", team: "foes", pos: { x: 6, y: 0 } })]);
+    expect(castProblem(s, unitById(s, "h"), "ray", { x: 6, y: 0 })).toBe("out of range");
+    const a = play(s, [{ t: "cast", unit: "h", ability: "aim", target: { x: 0, y: 0 } }]);
+    expect(castProblem(a, unitById(a, "h"), "ray", { x: 6, y: 0 })).toBeNull();
+    const g = battle(["g0 g0 g0 g0", "g0 g0 g0 g0"], [hero({ quick: "hurl", str: 11 }), unit({ id: "b", team: "heroes", pos: { x: 1, y: 0 } }), unit({ id: "f", team: "foes", pos: { x: 3, y: 1 } })]);
+    expect(unitById(play(g, [{ t: "cast", unit: "h", ability: "hurl", target: { x: 1, y: 0 } }]), "b").pos).toEqual({ x: 3, y: 0 });
+    const z = battle(["g0 g0", "g0 g0"], [hero({ quick: "zip" }), unit({ id: "f", team: "foes", pos: { x: 1, y: 0 } })]);
+    const zz = play(z, [{ t: "cast", unit: "h", ability: "zip", target: { x: 0, y: 1 } }]);
+    expect(unitById(zz, "h").pos).toEqual({ x: 0, y: 1 });
+    expect(unitById(zz, "h").mp).toBe(3);
+  });
+});

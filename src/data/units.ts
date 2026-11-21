@@ -5,7 +5,7 @@ import type { UnitSpec } from "../engine/state";
 export const TEST_UNITS: UnitSpec[] = [
   { id: "hero", name: "Hero", team: "heroes", element: "light", look: "lumo", pos: { x: 2, y: 6 },
     hp: 60, ap: 6, mp: 3, speed: 50, jump: 1, str: 0, mag: 26, agi: 10, res: { light: 20 },
-    abilities: ["ray", "flare", "prism", "blink", "glow"] },
+    abilities: ["ray", "flare", "prism", "blink", "glow"], quick: "aim" },
   { id: "foe1", name: "Chisporro", team: "foes", element: "fire", look: "chisporro", pos: { x: 7, y: 1 },
     hp: 30, ap: 6, mp: 3, speed: 42, jump: 1, str: 0, mag: 10, agi: 8, res: { fire: 25 },
     abilities: ["ember", "blaze"], ai: "caster", marked: true },
