@@ -57,6 +57,8 @@ export interface Tile {
   /** Timeline time the ground burnt (drawn darker, with ash). Scorched ground does not catch fire again until it
       regrows: a water attack on it, or REGROW_TICKS next to water (src/engine/terrain.ts). */
   scorchedAt?: number;
+  /** Outside the map's shape: kept so the grid stays whole, but never drawn (the route map's island). */
+  offMap?: boolean;
 }
 
 /** Grass of either height: it catches fire and burns down to dirt. */

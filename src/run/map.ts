@@ -66,20 +66,32 @@ export function generateMap(seed: string | number, recruits: RecruitSpot[] = [{ 
     const spots = (byLayer[layer] ?? []).filter((n) => n.kind === "battle");
     if (spots.length) spots[roll(0, spots.length - 1)]!.kind = "shop";
   }
-  // Links: each node goes to the nearest one or two nodes of the next layer; every node gets at least one way in.
+  // Links never cross, so the map reads at a glance: walk both layers left to right together, linking the pair
+  // reached at each step. Each step moves on in this layer, the next one, or both, choosing the pair whose columns
+  // are closest; a fork sometimes splits a step in two (one more link). Every node gets a way in and a way on.
   for (let layer = 0; layer < layers - 1; layer++) {
     const here = byLayer[layer]!, there = byLayer[layer + 1]!;
-    for (const n of here) {
-      const near = [...there].sort((a, b) => Math.abs(a.col - n.col) - Math.abs(b.col - n.col) || a.col - b.col);
-      n.next.push(near[0]!.id);
-      if (near[1] && Math.abs(near[1].col - n.col) <= 1 && chance(0.5)) n.next.push(near[1].id);
+    const link = (a: number, b: number) => { if (!here[a]!.next.includes(there[b]!.id)) here[a]!.next.push(there[b]!.id); };
+    const gap = (a: number, b: number) => Math.abs(here[a]!.col - there[b]!.col);
+    let i = 0, j = 0;
+    link(0, 0);
+    while (i < here.length - 1 || j < there.length - 1) {
+      const steps: [number, number][] = [];
+      if (i < here.length - 1 && j < there.length - 1) steps.push([i + 1, j + 1]);
+      if (i < here.length - 1) steps.push([i + 1, j]);
+      if (j < there.length - 1) steps.push([i, j + 1]);
+      const best = Math.min(...steps.map(([a, b]) => gap(a, b)));
+      const near = steps.filter(([a, b]) => gap(a, b) === best);
+      let [a, b] = near[near.length > 1 ? roll(0, near.length - 1) : 0]!;
+      // A fork: on a step both ways, link one corner first when it is a neighbour, so a node leads two ways.
+      if (a === i + 1 && b === j + 1 && chance(0.8)) {
+        const corners = ([[i, j + 1], [i + 1, j]] as [number, number][]).filter(([x, y]) => gap(x, y) <= 1 && here[x]!.next.length < 2);
+        if (corners.length) { const [x, y] = corners[roll(0, corners.length - 1)]!; link(x, y); }
+      }
+      link(a, b);
+      i = a; j = b;
     }
-    for (const m of there) {
-      if (here.some((n) => n.next.includes(m.id))) continue;
-      const from = [...here].sort((a, b) => Math.abs(a.col - m.col) - Math.abs(b.col - m.col))[0]!;
-      from.next.push(m.id);
-    }
-    for (const n of here) n.next.sort((a, b) => a - b);
+    for (const n of here) n.next.sort((x, y) => x - y);
   }
   return { layers, width, nodes };
 }

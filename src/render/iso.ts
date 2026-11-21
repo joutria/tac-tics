@@ -437,7 +437,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       if (x >= d.w || k - x >= d.h) continue;
       const p = unrotate(m, { x, y: k - x }, view.rot);
       const tile = tileAt(m, p);
-      if (!tile) continue;
+      if (!tile || tile.offMap) continue;
       const c = tileCenter(m, p, view.rot);
       const k2 = `${p.x},${p.y}`;
       if (flat) {
