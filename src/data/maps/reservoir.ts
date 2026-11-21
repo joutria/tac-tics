@@ -10,7 +10,7 @@ export const SHORE = parseMap("shore", [
   "d0 g0 w0 w0 i0 w0 w0 g0 d0 d0",
   "d0 g0 w0 b0 b0 b0 w0 g0 g0 d0",
   "g0 g0 w0 w0 i0 w0 w0 g0 d0 d0",
-  "g0 g0 g0 g0 g0 g0 g0 g0 g0 r0",
+  "g0 g0 h0 h0 g0 g0 g0 g0 g0 r0",
   "g0 g0C g0 g0 g0 g0 g0 g0B g0 g0",
   "g1 g0 g0 r0 g0 g0 t0 g0 g0 g1",
   "g1 g1 g0 g0 g0 g0 g0 g0 g1 g1",
@@ -26,6 +26,6 @@ export const SPILLWAY = parseMap("spillway", [
   "g0 w0 w0 b0 w0 w0 b0 w0 w0 g0",
   "g0 g0 w0 b0 i0 i0 b0 w0 g0 g0",
   "g0 g0 g0 g0 g0C g0 g0 g0 g0B g0",
-  "g1 t0 g0 g0 g0 g0 r0 g0 g0 g1",
+  "g1 t0 h0 h0 h0 g0 r0 g0 g0 g1",
   "g1 g0 g0 g0 g0 g0 g0 g0 t0 g1",
 ]);

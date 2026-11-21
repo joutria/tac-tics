@@ -959,3 +959,25 @@ describe("ice slides and Help up frees", () => {
     expect(unitById(r, "a").statuses.some((x) => x.id === "stun")).toBe(false);
   });
 });
+
+describe("tall grass", () => {
+  Object.assign(ABILITIES, {
+    tShot: { id: "tShot", element: "neutral", ap: 3, range: [1, 6], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 3, damage: { min: 5, max: 5, stat: "mag" } } as Ability,
+    tFire: { id: "tFire", element: "fire", ap: 1, range: [1, 6], los: false, target: "any", area: "single", cooldown: 0, perTurn: 3 } as Ability,
+  });
+  const field = () => createBattle({ seed: 2, map: parseMap("t", ["g0 g0 g0 g0 h0 g0"]), units: [
+    unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90, abilities: ["tShot", "tFire"] }), unit({ id: "f", team: "foes", pos: { x: 4, y: 0 } })] });
+  it("hides a unit from enemies more than 2 tiles away, and fire burns it down", () => {
+    let s = field();
+    expect(s.map.tiles[4]!.terrain).toBe("tallgrass");
+    expect(castProblem(s, unitById(s, "h"), "tShot", { x: 4, y: 0 })).toBe("hidden in tall grass");
+    s = play(s, [{ t: "move", unit: "h", to: { x: 2, y: 0 } }]);
+    expect(castProblem(s, unitById(s, "h"), "tShot", { x: 4, y: 0 })).toBeNull();
+    s = createBattle({ seed: 2, map: parseMap("t", ["g0 g0 g0 g0 h0 g0"]), units: [
+      unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90, abilities: ["tFire"] }), unit({ id: "f", team: "foes", pos: { x: 5, y: 0 } })] });
+    s = play(s, [{ t: "cast", unit: "h", ability: "tFire", target: { x: 4, y: 0 } }]);
+    expect(s.map.tiles[4]!.fireUntil).toBeGreaterThan(s.clock);
+    while (s.clock < 400) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(s.map.tiles[4]!.terrain).toBe("dirt");
+  });
+});

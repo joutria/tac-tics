@@ -87,6 +87,8 @@ export interface Unit extends UnitSpec {
   usedThisTurn: Record<string, number>;
   /** Aim was used: the next ranged ability reaches 1 further. */
   aiming?: boolean;
+  /** Attacked this turn: tall grass does not hide it until its next turn. */
+  revealed?: boolean;
   /** Guarding until its next turn, with this ability: the first enemy to step next to it takes a free hit. */
   guard?: string;
   /** Dipped in fire (burn) or Sap (poison): the next attack gives enemies it hits that status. */
@@ -255,7 +257,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
     if (!u) return;
     s.clock = u.ct;
     s.active = u.id;
-    delete u.guard;
+    delete u.guard; delete u.revealed;
     updateTiles(s);
     if (u.life === "downed") {
       u.downedTurns -= 1;
@@ -378,6 +380,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       // A quick action is free: it does not count as spending AP, so a turn of moving plus a quick action still
       // comes back sooner. It does count as acting, so Wait is gone after it.
       if (!ab.quick) actor.spentAp = true;
+      if (ab.damage || ab.push) actor.revealed = true;
       actor.usedThisTurn[ab.id] = (actor.usedThisTurn[ab.id] ?? 0) + 1;
       if (ab.quick) actor.usedThisTurn.quick = 1;
       if (ab.cooldown > 0) actor.cooldowns[ab.id] = ab.cooldown + 1;

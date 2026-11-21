@@ -25,7 +25,7 @@
      Water or Light calms it, ice freezes it, fire turns it to steam.
    - Fire on water makes steam, which blocks sight for a round. */
 import type { Ability } from "../data/abilities";
-import { NEIGHBOURS, TERRAIN, manhattan, standable, tileAt, type Pos, type Tile } from "./grid";
+import { NEIGHBOURS, TERRAIN, grassy, manhattan, standable, tileAt, type Pos, type Tile } from "./grid";
 import { rngNext } from "./rng";
 import { absorb, addStatus } from "./status";
 import type { BattleState, Unit } from "./state";
@@ -59,7 +59,7 @@ const unitOn = (s: BattleState, p: Pos) => s.units.find((u) => (u.life === "up" 
 export const burning = (s: BattleState, t: Tile | undefined) => !!t && (t.fireUntil ?? 0) > s.clock;
 export const charged = (s: BattleState, t: Tile | undefined) => !!t && t.terrain === "water" && (t.chargedUntil ?? 0) > s.clock;
 /** What fire can catch on: grass, bridges, trees and crates (barrels go off instead). */
-export const flammable = (t: Tile) => t.prop === "crate" || (!t.prop && (t.terrain === "grass" || t.terrain === "bridge" || t.terrain === "tree"));
+export const flammable = (t: Tile) => t.prop === "crate" || (!t.prop && (grassy(t) || t.terrain === "bridge" || t.terrain === "tree"));
 const chebyshev = (a: Pos, b: Pos) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
 type Hurt = (u: Unit, dmg: number, h: TerrainHit) => void;
@@ -72,7 +72,7 @@ function burnTile(s: BattleState, p: Pos, fx: TerrainFx[], hits: TerrainHit[], h
   if (burning(s, t)) return;
   if (t.surface === "sap") {
     delete t.surface; delete t.sapSource;
-    t.fireUntil = s.clock + FIRE_TICKS; if (t.terrain === "grass") { t.terrain = "dirt"; t.scorchedAt = s.clock; }
+    t.fireUntil = s.clock + FIRE_TICKS; if (grassy(t)) { t.terrain = "dirt"; t.scorchedAt = s.clock; }
     fx.push({ fx: "ignite", at: p }); return;
   }
   if (flammable(t)) { t.fireUntil = s.clock + FIRE_TICKS; fx.push({ fx: "ignite", at: p }); }
@@ -327,9 +327,9 @@ export function updateTiles(s: BattleState) {
       if (t.terrain === "bridge") {
         if (unitOn(s, p)) continue;
         t.terrain = "water";
-      } else if (t.prop === "crate") { delete t.prop; delete t.propHp; if (t.terrain === "grass") { t.terrain = "dirt"; t.scorchedAt = s.clock; } }
+      } else if (t.prop === "crate") { delete t.prop; delete t.propHp; if (grassy(t)) { t.terrain = "dirt"; t.scorchedAt = s.clock; } }
       else if (t.terrain === "tree") { t.terrain = "dirt"; t.scorchedAt = s.clock; t.deco = "stump"; }
-      else if (t.terrain === "grass") { t.terrain = "dirt"; t.scorchedAt = s.clock; }
+      else if (grassy(t)) { t.terrain = "dirt"; t.scorchedAt = s.clock; }
       delete t.fireUntil;
     }
     if (t.thawAt !== undefined && t.thawAt <= s.clock && !unitOn(s, p)) { t.terrain = "water"; delete t.thawAt; }

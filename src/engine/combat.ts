@@ -14,7 +14,7 @@
    once a turn, for everyone, and cannot move heavy units such as bosses. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
-import { inside, manhattan, NEIGHBOURS, Pos, samePos, standable, TERRAIN, tileAt, type Terrain } from "./grid";
+import { HIDE_RANGE, inside, manhattan, NEIGHBOURS, Pos, samePos, standable, TERRAIN, tileAt, type Terrain } from "./grid";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor, yielding } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
@@ -130,6 +130,12 @@ export function guardAbility(u: Unit): string | null {
   return best;
 }
 
+/** A unit standing (up) in tall grass is hidden from enemies more than HIDE_RANGE tiles from it, until it attacks
+    (then it is seen until its next turn). */
+export function hiddenFrom(s: BattleState, viewer: Unit, u: Unit, from: Pos = viewer.pos): boolean {
+  return u.life === "up" && !u.revealed && isFoe(viewer, u) && tileAt(s.map, u.pos)?.terrain === "tallgrass" && manhattan(from, u.pos) > HIDE_RANGE;
+}
+
 /** Why a cast is not allowed, or null when it is. `from` lets the AI test casts from other tiles. */
 export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, from: Pos = u.pos): string | null {
   const avail = abilityAvailable(u, id);
@@ -141,6 +147,7 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
   if ((ab.jump || ab.step) && u.rooted) return "rooted";
   const occupant = unitAt(s, target);
   const other = occupant && occupant.id !== u.id ? occupant : undefined;
+  if (other && hiddenFrom(s, u, other, from)) return "hidden in tall grass";
   if (ab.los && d > 0 && !hasLineOfSight(s.map, from, target, (p) => {
     const o = unitAt(s, p);
     return !!o && o.life === "up" && o.id !== u.id && !samePos(p, target);
