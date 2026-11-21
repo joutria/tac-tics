@@ -18,6 +18,7 @@ import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape"
 import { STATUS } from "./engine/status";
 import { charged } from "./engine/terrain";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
+import { carriedNemesis, closeRun, newLegacy, type Legacy } from "./run/legacy";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
 import { choices } from "./run/map";
 import { memberSpec } from "./run/party";
@@ -39,6 +40,8 @@ import { drawBattle, Floater, type ReachBadge, type SightLine, Images, isFlat, l
 /** The run save: the run, with the battle being fought inside it. */
 const RUN_KEY = "tac-tics.run.v1";
 const LANG_KEY = "tac-tics.lang";
+/** What carries between runs (run/legacy.ts): the nemesis. */
+const LEGACY_KEY = "tac-tics.legacy.v1";
 const VIEW_KEY = "tac-tics.view";
 const HOLD_KEY = "tac-tics.hold";
 const FOE_STEP_MS = 380;
@@ -127,8 +130,17 @@ function startRun() {
   showMap();
 }
 
+function loadLegacy(): Legacy {
+  try { const l = JSON.parse(safeGet(LEGACY_KEY) ?? "null") as Legacy | null; return l?.version === 1 ? l : newLegacy(); } catch { return newLegacy(); }
+}
+/** A finished run goes into the legacy once (closeRun ignores a run it has already counted). */
+function closeLegacy() {
+  if (!journey?.over) return;
+  safeSet(LEGACY_KEY, JSON.stringify(closeRun(loadLegacy(), journey)));
+}
+
 function pickDifficulty(d: Difficulty) {
-  journey = newRun(`${Date.now()}`, d);
+  journey = newRun(`${Date.now()}`, d, carriedNemesis(loadLegacy()));
   choosingDifficulty = false;
   record(logRunStart(PLAYER, journey));
   showMap();
@@ -253,6 +265,7 @@ function afterBattleButton() {
     record(...logBattle(PLAYER, before, fought, state, journey, battleStartedAt ? Date.now() - battleStartedAt : undefined));
     if (journey.over) record(logRunEnd(PLAYER, journey, journey.over));
   } catch (e) { console.warn("play log:", e); }
+  closeLegacy();
   if (journey.region !== region) { toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
   const sp = journey.spoils;
   if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : "")
@@ -267,6 +280,7 @@ function loadOrNew() {
       const saved = upgradeRun(JSON.parse(text) as RunState);
       if (saved.version !== RUN_VERSION) throw new Error(`unknown run version ${saved.version}`);
       journey = saved;
+      closeLegacy();
       if (journey.battle) { startBattle(false); toast(t(lang, "resume")); } else { skipNextWalk = true; showMap(); }
       return;
     } catch (e) { console.warn("run save ignored:", e); }

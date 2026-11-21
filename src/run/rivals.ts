@@ -44,6 +44,10 @@ export interface Rival {
   counters: { kind: Counter; element?: Element }[];
   /** Set once the party settles it: beaten and finished, or beaten and spared (it never comes back as a rival). */
   settled?: "finished" | "spared";
+  /** A nemesis: it ended an earlier run and followed the hero into this one (runs it has carried over). */
+  nemesis?: number;
+  /** How deep (run/run.ts depthOf) the node was where it ended a run: its stats carry that depth's scaling. */
+  depth?: number;
 }
 
 export const RIVAL_LEVEL_HP = 0.1, RIVAL_LEVEL_STAT = 5;
@@ -138,7 +142,26 @@ export const rivalName = (r: Rival, lang: keyof Line) => `${r.base.name} ${EPITH
 
 const fill = (text: string, vars: Record<string, string>) => text.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? `{${k}}`);
 
-export const rivalTitle = (r: Rival, lang: keyof Line) => fill(TITLES[r.cause.kind][lang], { hero: r.cause.hero });
+export const rivalTitle = (r: Rival, lang: keyof Line) => fill(TITLES[r.nemesis ? "nemesis" : r.cause.kind][lang], { hero: r.cause.hero });
+
+/** Who ended a lost run, as a rival: a rival standing at the end of the last battle (the highest level, then the
+    one with most downs), or else the standing foe with most downs, made a rival now even if it bore no Sap mark.
+    Pure: the seed picks the epithet of a new one. Null when no foe is left standing. */
+export function runEnder(rivals: Rival[], setup: BattleSetup, commands: Command[], end: BattleState): Rival | null {
+  const standing = end.units.filter((u) => u.team === "foes" && u.life === "up");
+  if (!standing.length) return null;
+  const known = activeRivals(rivals).filter((r) => standing.some((u) => u.id === r.id))
+    .sort((a, b) => b.level - a.level || (standing.find((u) => u.id === b.id)!.downs - standing.find((u) => u.id === a.id)!.downs));
+  if (known[0]) return known[0];
+  const u = [...standing].sort((a, b) => b.downs - a.downs || a.id.localeCompare(b.id))[0]!;
+  const spec = setup.units.find((x) => x.id === u.id)!;
+  const style = readStyle(setup, commands);
+  const [epithet] = rngInt(seedFrom(`${setup.seed}:ender`), 0, EPITHETS.length - 1);
+  const r: Rival = { id: u.id, base: { ...structuredClone(spec), marked: true }, epithet, cause: { kind: "felled", hero: setup.units.find((x) => x.team === "heroes")?.name ?? "" },
+    level: 1, meetings: 0, memory: [style], counters: [] };
+  r.counters.push(pickCounter(r, style));
+  return r;
+}
 
 /** What it says when the battle starts: about its newest counter. */
 export function rivalTaunt(r: Rival, lang: keyof Line): string {

@@ -6,6 +6,7 @@ import { ITEMS, PERKS, SHOP, xpToNext, type Mods } from "../data/gear";
 import { abilityDesc, abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
+import { NEMESIS } from "../run/legacy";
 import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
 import { JOBS } from "../data/jobs";
 import { ALTAR, questView, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
@@ -94,7 +95,7 @@ export function metersHtml(run: RunState, lang: Lang): string {
 /** The first thing to answer (perk, reward or shop), or the gear panel when `gearOpen`. */
 function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActions, gearOpen: boolean, closeGear: () => void) {
   const offer = run.offers[0];
-  const epilogue = !!run.over && (run.party.length > 0 || run.over === "won") && !gearOpen;
+  const epilogue = !!run.over && (run.party.length > 0 || run.over === "won" || !!run.endedBy) && !gearOpen;
   panel.style.display = offer || gearOpen || epilogue ? "flex" : "none";
   if (!offer && !gearOpen && !epilogue) { panel.replaceChildren(); return; }
   const button = (inner: string, onClick: () => void, cls = "card", disabled = false) => {
@@ -126,6 +127,13 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
       const end = endingOf(m);
       const p = document.createElement("p"); p.className = `say ending ${end}`;
       p.innerHTML = `<b>${html(COMPANIONS[m.id]!.spec.name)} · ${html(t(lang, `ending.${end}`))}</b><br>${html(q.endings[end][lang])}`;
+      list.append(p);
+    }
+    // The nemesis: who follows the hero into the next run, or the one settled at last.
+    const ender = run.endedBy ? run.rivals.find((r) => r.id === run.endedBy) : undefined;
+    if (ender) {
+      const p = document.createElement("p"); p.className = "say ending nemesis";
+      p.innerHTML = `<b>★ ${html(t(lang, "nemesisTitle"))} · ${html(rivalName(ender, lang))}</b><br>${html(t(lang, "nemesisCarries", { n: Math.max(1, ender.level - NEMESIS.levelDrop) }))}`;
       list.append(p);
     }
     if (act.newRun) foot.append(button(t(lang, "newRun"), act.newRun, "primary"));
@@ -267,7 +275,7 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
   const party = fielded(run).map((m) => `${COMPANIONS[m.id]!.spec.name} ${m.hp}/${memberMaxHp(run, m)} (${moodOf(m, lang)})`);
   if (party.length) root.querySelector("#runHead")!.innerHTML += `<br>${t(lang, "party")}: ${html(party.join(", "))}`;
   const said = run.remarks.map((l) => l[lang]).join("\n");
-  const hint = run.over === "won" ? t(lang, "runWon") : run.over === "lost" ? t(lang, "runLost")
+  const hint = run.over === "won" ? [t(lang, "runWon"), said].filter(Boolean).join("\n") : run.over === "lost" ? [t(lang, "runLost"), said].filter(Boolean).join("\n")
     : [said, waiting.length ? t(lang, "rivalsAhead", { names: waiting.join(", ") }) : ""].filter(Boolean).join("\n");
   root.querySelector("#runHint")!.textContent = hint;
   root.querySelector("#routeHint")!.textContent = hint || t(lang, "runHint");
