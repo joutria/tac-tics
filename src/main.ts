@@ -1,6 +1,6 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
-import { ABILITIES } from "./data/abilities";
+import { ABILITIES, type Ability } from "./data/abilities";
 import { elementMultiplier, ELEMENTS } from "./data/elements";
 import { COMPANIONS } from "./data/companions";
 import { MEADOW } from "./data/maps/meadow";
@@ -21,7 +21,7 @@ import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
 import {
-  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
+  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns, type Unit,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, setFlat, tileCenter, TW, View } from "./render/iso";
@@ -542,8 +542,15 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (u && selected && !castProblem(state, u, selected, hover)) {
     const ab = ABILITIES[selected]!;
+    const mvAll = previewMoves()?.moves.find((x) => x.unit === target.id);
+    const pushDmg = (mvAll?.bump ?? 0) + (mvAll?.fall ?? 0);
+    const pushLines = () => {
+      if (mvAll && (mvAll.to.x !== mvAll.from.x || mvAll.to.y !== mvAll.from.y) && !mvAll.bump && !mvAll.fall) lines.push(t(lang, "pushTo", { n: 0 }));
+      if (mvAll?.fall) lines.push(`<b class="down">${t(lang, "pushFall", { n: mvAll.fall, l: mvAll.fell })}</b>`);
+      if (mvAll?.bump) lines.push(t(lang, "pushBump", { n: mvAll.bump }));
+    };
     if (ab.damage && target.team !== u.team) {
-      const base = damagePreview(state, u, target, ab), bump = previewMoves()?.moves.find((x) => x.unit === target.id)?.bump ?? 0;
+      const base = damagePreview(state, u, target, ab), bump = pushDmg;
       const r = { min: base.min + bump, max: base.max + bump };
       const m = elementMultiplier(ab.element, target.element);
       const dir = directionBonus(target, u.pos);
@@ -555,10 +562,20 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b>`);
       else if (Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<span class="down">${t(lang, "critDown")}</span>`);
       if (dir > 1.2) lines.push(t(lang, "back")); else if (dir > 1) lines.push(t(lang, "side"));
-      const mv = previewMoves()?.moves.find((m) => m.unit === target.id);
-      if (mv && (mv.to.x !== mv.from.x || mv.to.y !== mv.from.y || mv.bump)) lines.push(t(lang, mv.bump ? "pushBump" : "pushTo", { n: mv.bump }));
+      heightLines(lines, u, target, ab);
+      pushLines();
       lines.push(t(lang, "crit"));
+    } else if (ab.push && target.team !== u.team) {
+      // A push with no damage of its own (Shove): what the fall or the slam would leave.
+      lines.push(`${abilityName(lang, selected)}${pushDmg ? `: <b>${pushDmg}</b>` : ""}`);
+      pushLines();
+      if (pushDmg) {
+        lines.push(t(lang, "hpAfter", { a: `${Math.max(0, target.hp - pushDmg)}` }));
+        if (pushDmg >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "downsIt")}</b>`);
+      }
     } else if (ab.heal) lines.push(`${abilityName(lang, selected)}: <b>+${ab.heal.min}–${ab.heal.max}</b>`);
+  } else if (u && selected && target.team !== u.team && castProblem(state, u, selected, hover) === "too heavy to shove") {
+    lines.push(`<span class="down">${t(lang, "tooHeavy")}</span>`);
   } else if (!selected && target.team === "foes") {
     // Foe info: its abilities, which are ready, and which could reach the hero next turn.
     const hero = state.units.find((h) => h.team === "heroes" && (h.life === "up" || h.life === "downed"));
@@ -574,6 +591,14 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
     }
   }
   showTip(tip, [...lines, ...ground].join("<br>"), at, ev);
+}
+
+/** The height chip: how standing higher or lower changes this attack's damage and reach. */
+function heightLines(lines: string[], u: Unit, target: Unit, ab: Ability) {
+  const diff = (tileAt(state.map, u.pos)?.h ?? 0) - (tileAt(state.map, target.pos)?.h ?? 0);
+  if (diff > 0) lines.push(`<span class="hg">${t(lang, "highGround", { n: Math.round(Math.min(0.3, diff * 0.1) * 100) })}</span>`);
+  if (ab.range[1] > 1 && diff > 0) lines.push(`<span class="hg">${t(lang, "highReach", { n: diff })}</span>`);
+  if (ab.range[1] > 1 && diff < 0) lines.push(`<span class="down">${t(lang, "lowReach", { n: Math.min(-diff, ab.range[1] - 1) })}</span>`);
 }
 
 /** What the ground under a tile does: objects, fire, ice. */
@@ -731,8 +756,8 @@ function previewHit() {
   const at = pending ?? hover;
   if (!selected || !at || !heroTurn()) return undefined;
   const u = activeUnit(state), target = unitAt(state, at), ab = ABILITIES[selected]!;
-  if (!target || !ab.damage || target.team === u.team || castProblem(state, u, selected, at)) return undefined;
-  const r = damagePreview(state, u, target, ab), bump = previewMoves()?.moves.find((m) => m.unit === target.id)?.bump ?? 0;
+  if (!target || !(ab.damage || ab.push) || target.team === u.team || castProblem(state, u, selected, at)) return undefined;
+  const r = damagePreview(state, u, target, ab), mv = previewMoves()?.moves.find((m) => m.unit === target.id), bump = (mv?.bump ?? 0) + (mv?.fall ?? 0);
   return { unit: target.id, min: r.min + bump, max: r.max + bump };
 }
 

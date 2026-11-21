@@ -153,7 +153,7 @@ export interface DrawOptions {
   /** Escape routes of retreating or fleeing foes, drawn as dotted lines to the edge. */
   escapePaths?: Pos[][];
   /** What the chosen ability would move or set off: where pushed units and crates end up, and barrel blasts. */
-  effects?: { moves: { from: Pos; to: Pos; bump: number }[]; blasts: Pos[] };
+  effects?: { moves: { from: Pos; to: Pos; bump: number; fall?: number }[]; blasts: Pos[] };
 }
 
 const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
@@ -304,10 +304,11 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       ctx.lineTo(b.x - 9 * Math.cos(ang - 0.5), b.y - 8 - 9 * Math.sin(ang - 0.5));
       ctx.lineTo(b.x - 9 * Math.cos(ang + 0.5), b.y - 8 - 9 * Math.sin(ang + 0.5)); ctx.fill();
     }
-    if (mv.bump) {
+    const label = [mv.fall ? `⤓ -${mv.fall}` : "", mv.bump ? `💥 -${mv.bump}` : ""].filter(Boolean).join(" ");
+    if (label) {
       ctx.font = "bold 12px system-ui, sans-serif"; ctx.textAlign = "center";
-      ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#ffb347";
-      ctx.strokeText(`💥 -${mv.bump}`, b.x, b.y + 16); ctx.fillText(`💥 -${mv.bump}`, b.x, b.y + 16);
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = mv.fall ? "#ff7a6b" : "#ffb347";
+      ctx.strokeText(label, b.x, b.y + 16); ctx.fillText(label, b.x, b.y + 16);
     }
     ctx.restore();
   }

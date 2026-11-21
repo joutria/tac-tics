@@ -34,7 +34,7 @@ for (const [id, ab] of Object.entries(ABILITIES)) {
   for (const k of [`ab.${id}`, `ab.${id}.d`]) if (!(k in TEXT.es)) fail(`ability ${id} has no text "${k}"`);
   if (ab.range[0] > ab.range[1]) fail(`ability ${id}: range min above max`);
   if (ab.damage && ab.damage.min > ab.damage.max) fail(`ability ${id}: damage min above max`);
-  if (ab.ap <= 0 || ab.perTurn <= 0) fail(`ability ${id}: AP and uses per turn must be positive`);
+  if (ab.ap < 0 || (ab.ap === 0 && !ab.shove) || ab.perTurn <= 0) fail(`ability ${id}: AP and uses per turn must be positive (only Shove is free)`);
 }
 for (const u of TEST_UNITS) for (const a of u.abilities) if (!ABILITIES[a]) fail(`unit ${u.id} has unknown ability ${a}`);
 

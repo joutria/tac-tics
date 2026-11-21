@@ -5,7 +5,7 @@
    with line of sight and height (so they hide behind obstacles and look for high ground). It also reads how the
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
 import { ABILITIES, type Ability } from "../data/abilities";
-import { abilityAvailable, areaTiles, damagePreview, maxRange, unitAbilities } from "./combat";
+import { abilityAvailable, areaTiles, damagePreview, maxRange, pushOutcome, shoveDistance, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, burning } from "./terrain";
 import { reachable } from "./movement";
@@ -142,7 +142,13 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (ab.heal && !enemy && o.life === "up") v += Math.min(avg(ab.heal), o.maxHp - o.hp);
     if (ab.revive && !enemy && o.life === "downed") v += 40;
     if (ab.root && enemy && o.life === "up") v += 6;
-    if (ab.push && enemy && o.life === "up") v += 4;
+    if (ab.push && enemy && o.life === "up") {
+      // What the push itself does: a fall or a slam is damage (and can down), and a shove that moves nothing is worthless.
+      const out = pushOutcome(s, u, o, from, ab.shove ? shoveDistance(u, o) : ab.push);
+      const extra = Math.min(out.fall + out.bump, o.hp);
+      const moved = !samePos(out.to, o.pos);
+      v += extra + (out.fall + out.bump >= o.hp ? 25 : 0) + (ab.shove ? (moved ? 1 : -1) : 4);
+    }
     if (ab.status && o.life === "up" && (o.id !== u.id || !ab.damage)) v += statusValue(ab.status, o, enemy);
   }
   return v;
