@@ -1,7 +1,9 @@
 /* M4: the nemesis, the rival who ended a run, carried into the next one until it is settled. */
 import { describe, expect, it } from "vitest";
 import { createBattle, type BattleState } from "../src/engine/state";
-import { carriedNemesis, closeRun, NEMESIS, newLegacy } from "../src/run/legacy";
+import { carriedNemesis, closeRun, hasMilestone, kitOf, NEMESIS, newLegacy } from "../src/run/legacy";
+import { KITS, LORE, MILESTONE_HINT } from "../src/data/camp";
+import { ITEMS } from "../src/data/gear";
 import { enterNode, finishBattle, newRun, type RunState } from "../src/run/run";
 import { DEPTH_STAT } from "../src/data/region";
 import { rivalTitle } from "../src/run/rivals";
@@ -87,5 +89,39 @@ describe("the nemesis", () => {
     const run = newRun("f", "normal", carriedNemesis(legacy));
     run.over = "won";
     expect(closeRun(legacy, run).nemesis?.nemesis).toBe(1);
+  });
+});
+
+describe("the camp between runs", () => {
+  it("a first lost run opens only the first journal page; winning opens more, and only once as new", () => {
+    let run = firstFight(newRun("m1"));
+    run = finishBattle(run, end(run, "lose"));
+    const one = closeRun(newLegacy(), run);
+    expect(one.milestones).toEqual(["firstRun"]);
+    expect(one.fresh).toEqual(["firstRun"]);
+    expect(LORE.filter((p) => hasMilestone(one, p.needs)).map((p) => p.id)).toEqual(["sap"]);
+    const won = { ...newRun("m2"), over: "won" as const };
+    const two = closeRun(one, won);
+    expect(two.milestones).toEqual(expect.arrayContaining(["firstRun", "region1", "runWon"]));
+    expect(two.fresh).toEqual(["region1", "runWon"]);
+    expect(closeRun(two, { ...newRun("m3"), over: "won" as const }).fresh).toEqual([]);
+  });
+
+  it("a picked kit counts only once it is open, and the run sets out with it", () => {
+    const legacy = { ...newLegacy(), kit: "veteran" };
+    expect(kitOf(legacy).id).toBe("traveller");
+    legacy.milestones = ["runWon"];
+    const kit = kitOf(legacy);
+    expect(kit.id).toBe("veteran");
+    const run = newRun("kit", "normal", undefined, kit);
+    expect(run.kit).toBe("veteran");
+    expect([...run.hero.bag, ...Object.values(run.hero.gear)]).toContain("featherCharm");
+    const scav = newRun("kit2", "normal", undefined, KITS.find((k) => k.id === "scavenger")!);
+    expect(scav.shards).toBe(2);
+  });
+
+  it("every kit and page names a milestone with a hint, and every kit's items exist", () => {
+    for (const k of KITS) { if (k.needs) expect(MILESTONE_HINT[k.needs]).toBeTruthy(); for (const i of k.items ?? []) expect(ITEMS[i]).toBeTruthy(); }
+    for (const p of LORE) expect(MILESTONE_HINT[p.needs].en.length).toBeGreaterThan(0);
   });
 });
