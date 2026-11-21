@@ -18,7 +18,9 @@ import { COMPANIONS, LESSON_APPROVAL, QUESTS, TALKS, type Lesson } from "../data
 import { JOB_LAYER, type Job } from "../data/jobs";
 import type { Line } from "../data/rivals";
 import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, type Member } from "./party";
-import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, type Rival } from "./rivals";
+import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, runEnder, type Rival } from "./rivals";
+import { NEMESIS, nemesisLine } from "./legacy";
+import type { Kit } from "../data/camp";
 import { HELP_LINES, MERCY, type HelpKind } from "../data/mercy";
 import { unsettled } from "../engine/state";
 import { ALIGN, SHIFT, type Align, type Meter, type Side } from "../data/alignment";
@@ -105,6 +107,10 @@ export interface RunState {
   combos?: string[];
   /** Poison hurts the party this much less per turn (Moheda's research, finished). */
   poisonWard?: number;
+  /** The starting kit the run set out with (data/camp.ts). */
+  kit?: string;
+  /** A lost run: the rival (its id in `rivals`) who ended it. It becomes the next run's nemesis (run/legacy.ts). */
+  endedBy?: string;
 }
 
 export interface SparedFoe {
@@ -118,11 +124,25 @@ export interface SparedFoe {
   helped?: boolean;
 }
 
-export function newRun(seed: string, difficulty: Difficulty = "normal"): RunState {
-  return {
+/** A new run. `nemesis` is the rival who ended the last one (legacy.ts carriedNemesis): it waits on the map. */
+export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?: Rival, kit?: Kit): RunState {
+  const run: RunState = {
     version: RUN_VERSION, seed, difficulty, region: 0, map: regionMap(seed, 0), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
     coins: 0, shards: 0, rivals: [], party: [], remarks: [], offers: [], over: null,
   };
+  if (nemesis) {
+    run.rivals.push(structuredClone(nemesis));
+    placeRival(run.map, null, nemesis.id, `${seed}:nemesis`, NEMESIS.layer);
+    run.remarks.push(nemesisLine("arrives", nemesis));
+  }
+  // The kit picked at the camp (data/camp.ts): what the hero sets out with.
+  if (kit) {
+    for (const id of kit.items ?? []) gainItem(run, id);
+    run.coins += kit.coins ?? 0;
+    run.shards += kit.shards ?? 0;
+    run.kit = kit.id;
+  }
+  return run;
 }
 
 /** The first region keeps the plain seed, so runs started before regions existed keep their maps. */
@@ -399,9 +419,23 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   // The hero is the first unit of the setup; the battle can reorder its units, so look it up by id.
   const heroId = b.setup.units[0]!.id;
   const hero = end.units.find((u) => u.id === heroId)!;
-  if (end.winner === "foes" || hero.life !== "up") { next.over = "lost"; next.heroHp = 0; return next; }
+  if (end.winner === "foes" || hero.life !== "up") {
+    next.over = "lost"; next.heroHp = 0;
+    // Whoever ended the run follows the hero into the next one.
+    const ender = runEnder(next.rivals, b.setup, b.commands, end);
+    if (ender) {
+      if (!next.rivals.some((r) => r.id === ender.id)) next.rivals.push(ender);
+      const kept = next.rivals.find((r) => r.id === ender.id)!;
+      kept.depth = Math.max(kept.depth ?? 0, depthOf(next, next.map.nodes[b.node]!));
+      next.endedBy = ender.id;
+      next.remarks = [nemesisLine("carries", ender)];
+    }
+    return next;
+  }
   const node = next.map.nodes[b.node]!;
   next.at = b.node; next.path.push(b.node);
+  // A nemesis settled at last: the chase is over, and its Sap mark crumbles into shards.
+  const nemesisDone = next.rivals.find((r) => r.nemesis && r.settled && !run.rivals.find((o) => o.id === r.id)?.settled);
 
   const beaten = end.units.filter((u) => u.team === "foes" && (u.life === "dead" || u.life === "downed" || u.life === "spared"));
   const spared = end.units.filter((u) => u.team === "foes" && u.life === "spared");
@@ -458,6 +492,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   next.hero = grown.progress;
   next.spoils = { coins, xp, shards, levels: grown.levels, align: { mercy: after.mercy - alignBefore.mercy, purity: after.purity - alignBefore.purity } };
   next.remarks.push(...crossed);
+  if (nemesisDone) { next.shards += NEMESIS.shards; next.remarks.push(nemesisLine("settled", nemesisDone)); }
   // Catching your breath after a win gives a little back; levels raise max HP and current HP alike.
   const max = heroMaxHp(next);
   next.heroHp = Math.min(max, hero.hp + (max - before) + Math.round(max * Math.max(0, AFTER_WIN_HEAL + rulesOf(next).healBonus)));

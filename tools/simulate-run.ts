@@ -3,7 +3,9 @@
    Add `--log <file>` to write the runs as a play log (src/run/playlog.ts), the same format players export, so
    `npm run analyze -- <file>` can compare AI runs with real ones. Add `--mercy` for a party that spares every
    yielding foe it can (in the fight and after the win) instead of finishing them, to compare the two.
-   Add `--party <temper>` to have the party play boldly (see ai.ts TEMPERS). */
+   Add `--party <temper>` to have the party play boldly (see ai.ts TEMPERS). Add `--legacy` to carry each run's
+   nemesis into the next (src/run/legacy.ts), as a player's runs do. Add `--kit <id>` to set out with that camp
+   kit (src/data/camp.ts) every run, opened or not, to see what it changes. */
 import { PaceStats } from "./battle-stats";
 import { writeFileSync } from "node:fs";
 import { planTurn } from "../src/engine/ai";
@@ -13,6 +15,8 @@ import { MAP_LAYERS } from "../src/run/map";
 import { endingOf } from "../src/run/party";
 import { alignmentOf, alignOf } from "../src/run/alignment";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, simContext, type PlayEvent } from "../src/run/playlog";
+import { KITS } from "../src/data/camp";
+import { carriedNemesis, closeRun, newLegacy } from "../src/run/legacy";
 import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceIn, shopHeal, type RunState } from "../src/run/run";
 
 const args = process.argv.slice(2);
@@ -24,6 +28,14 @@ const mercy = mercyAt >= 0 && !!args.splice(mercyAt, 1).length;
 // that walking up and fighting pays off rather than only camping.
 const partyAt = args.indexOf("--party");
 const partyTemper = partyAt >= 0 ? (args.splice(partyAt, 2)[1] as Temper) : undefined;
+const legacyAt = args.indexOf("--legacy");
+const useLegacy = legacyAt >= 0 && !!args.splice(legacyAt, 1).length;
+const kitAt = args.indexOf("--kit");
+const kitId = kitAt >= 0 ? args.splice(kitAt, 2)[1] : undefined;
+const kit = kitId ? KITS.find((k) => k.id === kitId) : undefined;
+if (kitAt >= 0 && !kit) throw new Error(`no such kit; try ${KITS.map((k) => k.id).join(", ")}`);
+let legacy = newLegacy();
+let nemesisRuns = 0, nemesisWins = 0;
 const runs = Number(args[0] ?? 100);
 const difficulty = (args[1] ?? "normal") as Difficulty;
 const ctx = simContext();
@@ -36,7 +48,8 @@ const alignments = new Map<string, number>();
 const started = Date.now();
 const pace = new PaceStats();
 for (let i = 1; i <= runs; i++) {
-  let run = newRun(`sim-${i}`, difficulty);
+  let run = newRun(`sim-${i}`, difficulty, useLegacy ? carriedNemesis(legacy) : undefined, kit);
+  const hadNemesis = run.rivals.some((r) => r.nemesis);
   keep(logRunStart(ctx, run));
   while (!run.over) {
     run = answerOffers(run);
@@ -73,6 +86,8 @@ for (let i = 1; i <= runs; i++) {
     if (run.over === "lost") deaths.set(layer, (deaths.get(layer) ?? 0) + 1);
   }
   keep(logRunEnd(ctx, run, run.over === "won" ? "won" : "lost"));
+  if (hadNemesis) { nemesisRuns++; if (run.over === "won") nemesisWins++; }
+  legacy = closeRun(legacy, run);
   if (run.over === "won") won++;
   if (run.region > 0 || run.over === "won") cleared1++;
   levels += run.hero.level;
@@ -83,12 +98,13 @@ for (let i = 1; i <= runs; i++) {
   { const k = alignmentOf(alignOf(run)); alignments.set(k, (alignments.get(k) ?? 0) + 1); }
   for (const m of run.party) { const k = `${m.id} ${endingOf(m)}`; endings.set(k, (endings.get(k) ?? 0) + 1); }
 }
-console.log(`${runs} ${difficulty}${mercy ? " mercy" : ""} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+console.log(`${runs} ${difficulty}${mercy ? " mercy" : ""}${kit ? ` ${kit.id} kit` : ""} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 console.log(`runs won ${won} (${((100 * won) / runs).toFixed(0)}%), average nodes cleared ${(nodes / runs).toFixed(1)}`);
 console.log(`first region cleared ${cleared1} (${((100 * cleared1) / runs).toFixed(0)}%)`);
 console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
+if (useLegacy) console.log(`nemesis: ${nemesisRuns} runs began with one (${nemesisWins} won), ${legacy.settled.length} settled (${legacy.settled.filter((x) => x.how === "spared").length} spared)`);
 console.log(`foes spared ${sparedAll}, came back to help ${helped}`);
 console.log(pace.report());
 console.log(`hero alignment at the end: ${[...alignments.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);

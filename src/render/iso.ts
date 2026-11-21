@@ -7,6 +7,7 @@ import { MAX_REVIVES } from "../engine/combat";
 import { wavering, yielding } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
 import { iconCanvas, splitIcons, type IconId } from "../ui/icons";
+import { drawPuddle } from "./puddle";
 import { drawBurst, drawFallingLeaf, drawFireTile, drawFx, drawSteamTile, drawWater, loopFrame, type Burst } from "./fx";
 
 /** Fire that never goes out (camp fires on travel scenes) is drawn as a camp fire: stones, logs and a live flame. */
@@ -159,51 +160,6 @@ function drawStump(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, s
   ctx.restore();
 }
 
-/** Oil drawn as one puddle across tiles: in each tile a rounded blob, joined to the edge towards every neighbour
-    with oil on the same level, and the corner filled where all three tiles round it have oil (autotiling, like
-    marching squares). The pieces are drawn in the tile's own grid square and clipped to it, so neighbours meet
-    seamlessly whatever the view's rotation. `oil(du, dv)` tells whether the tile one step along the rotated grid has oil. */
-function drawOil(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, time: number, seed: number, oil: (du: number, dv: number) => boolean) {
-  const E = oil(1, 0), W = oil(-1, 0), S = oil(0, 1), N = oil(0, -1);
-  const lo = 0.17, hi = 0.83, mid = 0.5;
-  const shape = (grow: number) => {
-    const path = new Path2D();
-    const a = lo - grow, b = hi + grow;
-    // The middle blob: an almost round rounded square (a circle on the ground, an oval on screen).
-    const r = 0.3 + grow;
-    path.moveTo(a + r, a); path.arcTo(b, a, b, b, r); path.arcTo(b, b, a, b, r); path.arcTo(a, b, a, a, r); path.arcTo(a, a, b, a, r); path.closePath();
-    // Bridges to oily neighbours, reaching past the edge (the clip trims them) so the join has no seam.
-    if (E) path.rect(mid, a, 1.2 - mid, b - a);
-    if (W) path.rect(-0.2, a, mid + 0.2, b - a);
-    if (S) path.rect(a, mid, b - a, 1.2 - mid);
-    if (N) path.rect(a, -0.2, b - a, mid + 0.2);
-    // Corners where the puddle wraps round: fill the quarter when both sides and the diagonal have oil.
-    if (E && S && oil(1, 1)) path.rect(mid, mid, 0.7, 0.7);
-    if (E && N && oil(1, -1)) path.rect(mid, -0.2, 0.7, 0.7);
-    if (W && S && oil(-1, 1)) path.rect(-0.2, mid, 0.7, 0.7);
-    if (W && N && oil(-1, -1)) path.rect(-0.2, -0.2, 0.7, 0.7);
-    return path;
-  };
-  ctx.save();
-  // Grid square (u, v in 0..1) -> screen: +u runs down-right, +v down-left, the square's top corner at the tile's top.
-  ctx.translate(c.x, c.y - TH / 2); ctx.transform(TW / 2, TH / 2, -TW / 2, TH / 2, 0, 0);
-  // Clip a hair past the square so joins with the next tile's oil don't show a seam where the ground tiles meet.
-  ctx.beginPath(); ctx.rect(-0.02, -0.02, 1.04, 1.04); ctx.clip();
-  ctx.fillStyle = "rgba(170, 140, 230, 0.55)"; ctx.fill(shape(0.035), "nonzero"); // a faint violet rim
-  const body = shape(0);
-  ctx.fillStyle = "#16121d"; ctx.fill(body, "nonzero");
-  // Gloss: rainbow streaks that drift slowly, and a white glint, kept inside the puddle.
-  ctx.clip(body, "nonzero");
-  // The streaks lie along the screen's horizontal (the grid's u - v direction), each tile's a little offset.
-  const drift = Math.sin(time / 900 + seed) * 0.08, o = ((seed % 5) - 2) * 0.05;
-  for (const [col, off] of [["rgba(110, 190, 255, 0.22)", -0.07], ["rgba(220, 130, 255, 0.2)", 0], ["rgba(255, 215, 110, 0.16)", 0.07]] as const) {
-    ctx.fillStyle = col;
-    ctx.beginPath(); ctx.ellipse(0.5 + o + drift + off, 0.5 + o - drift + off, 0.26, 0.05, -Math.PI / 4, 0, Math.PI * 2); ctx.fill();
-  }
-  if (seed % 3 === 0) { ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.fillRect(0.3, 0.36, 0.08, 0.035); }
-  ctx.restore();
-}
-
 /** A camp fire seen from the battle's angle: an oval ring of stones (the back half behind the fire, the front half
     in front), embers, two logs laid along the grid, then the pack's animated flame and smoke. */
 function isoCampfire(ctx: CanvasRenderingContext2D, img: Images, c: { x: number; y: number }, time: number, seed: number) {
@@ -326,15 +282,60 @@ export function pickTile(m: GridMap, px: number, py: number, rot: number): Pos |
   return null;
 }
 
-/** What a tap or click at a point means. Units win over ground, because their sprites stand up over the tiles
-    behind them; then the tile whose top face is under the point; then, for a finger landing on a cliff side or
+/** Where each unit's sprite frame was last drawn (map pixels), so a click counts as on a unit only where the
+    sprite actually has paint: a tile peeking out beside or behind a character can still be picked. */
+interface DrawnSprite { map: GridMap; sheet: HTMLImageElement; sx: number; sy: number; x: number; y: number; flip: boolean; scale?: number }
+const drawnSprites = new Map<string, DrawnSprite>();
+/** The map of the battle being drawn, so sprites recorded for a travel scene never answer clicks in a fight. */
+let spriteMap: GridMap | null = null;
+/** Each sheet's alpha channel, read once. */
+const sheetAlpha = new WeakMap<HTMLImageElement, { w: number; a: Uint8ClampedArray } | null>();
+
+function alphaOf(sheet: HTMLImageElement) {
+  if (sheetAlpha.has(sheet)) return sheetAlpha.get(sheet)!;
+  let out: { w: number; a: Uint8ClampedArray } | null = null;
+  try {
+    const cv = document.createElement("canvas");
+    cv.width = sheet.naturalWidth || sheet.width; cv.height = sheet.naturalHeight || sheet.height;
+    const g = cv.getContext("2d", { willReadFrequently: true })!;
+    g.drawImage(sheet, 0, 0);
+    out = { w: cv.width, a: g.getImageData(0, 0, cv.width, cv.height).data };
+  } catch { out = null; } // no canvas, or a tainted image: fall back to the box
+  sheetAlpha.set(sheet, out);
+  return out;
+}
+
+/** Is there paint under a point (map pixels), allowing one sprite pixel of slack so edges are not fiddly? */
+function spriteHit(d: DrawnSprite, px: number, py: number) {
+  // Sprite drawn at (-32, -64) .. (32, 0) around its feet, times its scale (2 for a giant).
+  let lx = (px - d.x) / (d.scale ?? 1), ly = (py - d.y) / (d.scale ?? 1);
+  if (d.flip) lx = -lx;
+  const fx = Math.floor(lx + 32), fy = Math.floor(ly + 64);
+  if (fx < -1 || fx > 64 || fy < -1 || fy > 64) return false;
+  const al = alphaOf(d.sheet);
+  if (!al) return Math.abs(lx) <= 18 && ly >= -64 && ly <= 4;
+  for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+    const x = fx + ox, y = fy + oy;
+    if (x < 0 || x >= 64 || y < 0 || y >= 64) continue;
+    if (al.a[((d.sy + y) * al.w + d.sx + x) * 4 + 3]! > 40) return true;
+  }
+  return false;
+}
+
+/** What a tap or click at a point means. Units win over ground where their sprite is painted, because they
+    stand up over the tiles behind them; then the tile whose top face is under the point; then, for a finger landing on a cliff side or
     between tiles, the nearest tile top within `slack` tile-widths. */
 export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: number, rot: number, slack = 0): Pos | null {
   let best: { p: Pos; depth: number } | null = null;
   for (const u of units) {
     if (u.life === "dead" || u.life === "escaped" || u.life === "spared") continue;
-    const k = u.size ?? 1, c = bodyCenter(m, u.pos, k, rot), front = frontCell(m, u.pos, k, rot);
-    if (Math.abs(px - c.x) > 18 * k || py < c.y - 58 * k || py > c.y + 10 * k) continue;
+    const k = u.size ?? 1, front = frontCell(m, u.pos, k, rot);
+    const drawn = drawnSprites.get(u.id);
+    if (drawn && drawn.map === m) { if (!spriteHit(drawn, px, py)) continue; }
+    else {
+      const c = bodyCenter(m, u.pos, k, rot);
+      if (Math.abs(px - c.x) > 18 * k || py < c.y - 58 * k || py > c.y + 10 * k) continue;
+    }
     const r = rotate(m, front, rot), depth = r.x + r.y;
     // A giant is picked on the tile of its body under the pointer when there is one, else its front tile.
     const under = k > 1 ? pickTile(m, px, py, rot) : null;
@@ -353,7 +354,11 @@ export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: numbe
   return near?.p ?? null;
 }
 
-export type Mark = "move" | "range" | "blocked" | "target" | "area" | "chosen";
+export type Mark = "move" | "range" | "blocked" | "target" | "area" | "chosen" | "short";
+/** Small notes on reach: up = reached only thanks to height, down = lost to lower ground. */
+export type ReachBadge = "up" | "down";
+/** A line of sight cut by `blocker`, drawn over the board while aiming at a blocked tile. */
+export interface SightLine { from: Pos; to: Pos; blocker: Pos }
 export interface Floater { pos: Pos; text: string; color: string; born: number }
 
 /** A unit on its way somewhere. The rules already put it at the end; this only draws the trip.
@@ -430,6 +435,12 @@ export interface DrawOptions {
   escapePaths?: Pos[][];
   /** What the chosen ability would move or set off: where pushed units and crates end up, and barrel blasts. */
   effects?: { moves: { from: Pos; to: Pos; bump: number; fall?: number }[]; blasts: Pos[]; splashes?: { unit: string; damage: number }[] };
+  /** Reach notes drawn on tiles while aiming (see ReachBadge). */
+  badges?: Map<string, ReachBadge>;
+  /** The cut line of sight to the tile being aimed at. */
+  sightLine?: SightLine;
+  /** Trace the border of the ability's reach, so its shape reads at a glance. */
+  outline?: boolean;
   /** Scenery mode (travel scenes, the route map): units without health bars, rings or badges. */
   bare?: boolean;
 }
@@ -461,10 +472,14 @@ const MARK_STYLE: Record<Mark, [string, string]> = {
   blocked: ["rgba(40, 40, 52, 0.55)", "rgba(150, 150, 165, 0.7)"], // in range, but something stands in the way
   area: ["rgba(255, 170, 60, 0.5)", "rgba(255, 230, 160, 1)"],
   chosen: ["rgba(255, 216, 107, 0.6)", "rgba(255, 255, 255, 1)"],
+  short: ["rgba(20, 16, 30, 0.22)", "rgba(255, 170, 150, 0.28)"], // inside the card's reach, but too close or too low
 };
+/** Marks inside an ability's reach: the outline runs around them. */
+const IN_REACH = new Set<Mark>(["range", "target", "blocked", "area", "chosen"]);
 
 export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: Images, view: View, opt: DrawOptions) {
   const m = s.map, d = dims(m, view.rot);
+  spriteMap = m;
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.setTransform(view.scale, 0, 0, view.scale, view.ox, view.oy);
@@ -523,19 +538,23 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         footShadows(ctx, m, x, k - x, view.rot, tile.h, c);
       }
       if (tile.scorchedAt !== undefined && !flat) drawScorch(ctx, c, p.x * 13 + p.y * 7);
-      if (tile.surface === "oil") {
-        const rx = x, ry = k - x;
-        drawOil(ctx, c, opt.time, p.x * 5 + p.y * 3, (du, dv) => {
+      if (tile.surface) {
+        // Oil and sap puddles join up with the same liquid on the same level, whatever the view's rotation.
+        const rx = x, ry = k - x, kind = tile.surface;
+        drawPuddle(ctx, kind, c, opt.time, p.x * 5 + p.y * 3, (du, dv) => {
           const q = unrotate(m, { x: rx + du, y: ry + dv }, view.rot), n = tileAt(m, q);
-          return rx + du >= 0 && ry + dv >= 0 && rx + du < d.w && ry + dv < d.h && n?.surface === "oil" && n.h === tile.h;
+          return rx + du >= 0 && ry + dv >= 0 && rx + du < d.w && ry + dv < d.h && n?.surface === kind && n.h === tile.h;
         });
       }
       drawSurface(ctx, tile, c, s.clock, opt.time, p);
       const mark = opt.marks.get(k2);
       if (mark) diamond(ctx, c.x, c.y, ...MARK_STYLE[mark], mark === "chosen" ? 2.5 : 1);
+      if (mark && opt.outline && IN_REACH.has(mark)) reachRim(ctx, m, x, k - x, view.rot, c, opt.marks);
       // Danger zone: a dull purple wash (bright colours over many tiles tire the eye), on top of other marks.
       if (opt.danger?.has(k2)) diamond(ctx, c.x, c.y, "rgba(120, 70, 170, 0.38)", "rgba(200, 160, 255, 0.55)");
       if (opt.hover && opt.hover.x === p.x && opt.hover.y === p.y) diamond(ctx, c.x, c.y, "rgba(255, 255, 255, 0.2)", "#fff");
+      const badge = opt.badges?.get(k2);
+      if (badge) reachBadge(ctx, badge, c);
       // Height cues, part 2: a dark-and-light rim on every edge that drops to lower ground (drawn over marks, so
       // the shape of the ground stays readable while aiming).
       if (!flat) ledges(ctx, m, x, k - x, view.rot, tile.h, c);
@@ -548,7 +567,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       const onFire = (tile.fireUntil ?? 0) > s.clock && (tile.fireUntil ?? 0) < CAMPFIRE_AT;
       if ((tile.fireUntil ?? 0) >= CAMPFIRE_AT) drawCampfire(ctx, img, c, opt.time, p.x * 7 + p.y);
       else if (onFire && !tile.prop && tile.terrain !== "tree") groundFire(ctx, img, c, opt.time, p);
-      if (tile.prop) drawProp(ctx, tile.prop, c, tile.propHp ?? 0);
+      if (tile.prop) drawProp(ctx, img, tile.prop, c, tile.propHp ?? 0);
       // A burning crate: the flames and smoke go over the crate.
       if (onFire && tile.prop) { burningObject(ctx, img, c, opt.time, p.x * 3 + p.y, -14); }
       if (tile.steamUntil !== undefined) {
@@ -658,6 +677,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     ctx.lineTo(b.x - 9 * Math.cos(ang + 0.5), b.y - 9 * Math.sin(ang + 0.5)); ctx.fill();
     ctx.restore();
   }
+  if (opt.sightLine) drawSightLine(ctx, m, view.rot, opt.sightLine, opt.time);
   for (const b of opt.bursts ?? []) { const c = tileCenter(m, b.pos, view.rot); drawBurst(ctx, img, b, c.x, c.y, opt.time); }
   for (const f of opt.floaters) {
     const age = (opt.time - f.born) / 1000;
@@ -680,6 +700,58 @@ const EDGES = [
   { dx: 0, dy: 1, a: [0, 1], b: [-1, 0], back: false }, // bottom -> left
   { dx: -1, dy: 0, a: [-1, 0], b: [0, -1], back: true }, // left -> top
 ] as const;
+
+/** The border of an ability's reach: a bright line on every edge whose neighbour is out of reach. */
+function reachRim(ctx: CanvasRenderingContext2D, m: GridMap, rx: number, ry: number, rot: number, c: { x: number; y: number }, marks: Map<string, Mark>) {
+  const d = dims(m, rot);
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const e of EDGES) {
+    const nx = rx + e.dx, ny = ry + e.dy;
+    const off = nx < 0 || ny < 0 || nx >= d.w || ny >= d.h;
+    if (!off) { const q = unrotate(m, { x: nx, y: ny }, rot), nm = marks.get(`${q.x},${q.y}`); if (nm && IN_REACH.has(nm)) continue; }
+    // Pulled in a little, so neighbouring rims at another height never merge.
+    const ax = c.x + e.a[0] * TW / 2 * 0.94, ay = c.y + e.a[1] * TH / 2 * 0.94, bx = c.x + e.b[0] * TW / 2 * 0.94, by = c.y + e.b[1] * TH / 2 * 0.94;
+    ctx.strokeStyle = "rgba(40, 8, 4, 0.7)"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 196, 170, 1)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** A small note in the corner of a tile: ▲ height adds the reach to it, ▼ lower ground takes it away. */
+function reachBadge(ctx: CanvasRenderingContext2D, b: ReachBadge, c: { x: number; y: number }) {
+  const x = c.x + 14, y = c.y + 2, up = b === "up";
+  ctx.save();
+  ctx.fillStyle = up ? "#ffd86b" : "#ff8a7a"; ctx.strokeStyle = "#1a1208"; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  if (up) { ctx.moveTo(x, y - 5); ctx.lineTo(x + 5, y + 3); ctx.lineTo(x - 5, y + 3); }
+  else { ctx.moveTo(x, y + 5); ctx.lineTo(x + 5, y - 3); ctx.lineTo(x - 5, y - 3); }
+  ctx.closePath(); ctx.stroke(); ctx.fill();
+  ctx.restore();
+}
+
+/** The line of sight to a blocked tile: clear up to what blocks it, a red X there, and a dashed red line after. */
+function drawSightLine(ctx: CanvasRenderingContext2D, m: GridMap, rot: number, l: SightLine, time: number) {
+  const eye = (p: Pos) => { const c = tileCenter(m, p, rot); return { x: c.x, y: c.y - 22 }; };
+  const a = eye(l.from), b = eye(l.to), k = eye(l.blocker);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(k.x, k.y); ctx.stroke();
+  ctx.strokeStyle = "rgba(255, 240, 200, 0.95)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(k.x, k.y); ctx.stroke();
+  ctx.setLineDash([5, 5]); ctx.lineDashOffset = -time / 60;
+  ctx.strokeStyle = "rgba(255, 107, 91, 0.9)";
+  ctx.beginPath(); ctx.moveTo(k.x, k.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.setLineDash([]);
+  for (const [col, w] of [["#1a0d0d", 5], ["#ff6b5b", 2.5]] as const) {
+    ctx.strokeStyle = col; ctx.lineWidth = w;
+    ctx.beginPath(); ctx.moveTo(k.x - 6, k.y - 6); ctx.lineTo(k.x + 6, k.y + 6); ctx.moveTo(k.x + 6, k.y - 6); ctx.lineTo(k.x - 6, k.y + 6); ctx.stroke();
+  }
+  ctx.restore();
+}
 
 /** Height of the neighbour across an edge, in rotated grid steps; off the map counts as no neighbour. */
 function neighbourH(m: GridMap, rx: number, ry: number, rot: number): number | null {
@@ -747,15 +819,12 @@ function tallGrass(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, s
   ctx.globalAlpha = 1;
 }
 
-/** Sap and charged water on top of the ground (src/engine/terrain.ts); oil is drawOil. */
+/** Sap sources and charged water on top of the ground (src/engine/terrain.ts); the puddles are drawPuddle. */
 function drawSurface(ctx: CanvasRenderingContext2D, tile: Tile, c: { x: number; y: number }, clock: number, time: number, p: Pos) {
-  if (tile.surface === "sap") {
-    // Sap: a sickly green ooze that pulses; a source has a glowing shard in the middle.
+  if (tile.surface === "sap" && tile.sapSource) {
+    // The ooze itself is a pixel puddle (drawPuddle); a source has a glowing shard in the middle.
     const pulse = 0.5 + 0.5 * Math.sin(time / 300 + p.x * 2 + p.y);
-    diamond(ctx, c.x, c.y, `rgba(120, 190, 50, ${0.38 + 0.12 * pulse})`, "rgba(190, 240, 110, 0.7)");
-    ctx.fillStyle = "rgba(210, 255, 140, 0.55)";
-    for (const [dx, dy] of [[-8, 1], [5, -3], [2, 5]] as const) { ctx.beginPath(); ctx.arc(c.x + dx, c.y + dy, 1.6 + pulse, 0, Math.PI * 2); ctx.fill(); }
-    if (tile.sapSource) {
+    {
       ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 0.75 + 0.25 * pulse;
       ctx.drawImage(iconCanvas("shard"), c.x - 8, Math.round(c.y - 12 - 2 * pulse), 16, 16); ctx.globalAlpha = 1;
     }
@@ -806,6 +875,7 @@ function drawUnit(
   // Just hit: a white flash (browsers without canvas filters simply skip it), and a small knock back.
   if (flash) { ctx.filter = "brightness(2.6) saturate(0.3)"; ctx.translate(Math.round(Math.sin(time / 18) * 2), 0); }
   ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32 * k, -64 * k, 64 * k, 64 * k);
+  drawnSprites.set(u.id, { map: spriteMap!, sheet, sx: frame * 64, sy: row * 64, x: c.x, y: c.y + 6 * k, flip: f.flip && !downed, scale: k });
   ctx.filter = "none";
   ctx.restore();
   if (bare) return;
@@ -876,59 +946,17 @@ function drawUnit(
   }
 }
 
-/** Barrels and crates, drawn with plain shapes so they read at a glance in both views. */
-function drawProp(ctx: CanvasRenderingContext2D, prop: Prop, c: { x: number; y: number }, hp: number) {
+/** Barrels and crates: pixel sprites drawn at 2x like the trees and rocks (tools/prop-art.py). The crate is an
+    isometric cube whose edges follow the tile diamond, so it looks the same at every camera angle; a damaged crate
+    is cracked. Each sprite is placed so its base sits on the tile's centre. */
+function drawProp(ctx: CanvasRenderingContext2D, img: Images, prop: Prop, c: { x: number; y: number }, hp: number) {
+  if (prop === "boulder") { drawBoulder(ctx, c); return; }
+  const sprite = prop === "barrel" ? img["obj-barrel"] : img[hp < PROP_HP.crate ? "obj-crate-hurt" : "obj-crate"];
+  if (!sprite) return;
   ctx.save();
-  if (prop === "boulder") { drawBoulder(ctx, c); ctx.restore(); return; }
-  if (prop === "barrel") {
-    ctx.fillStyle = "#8c2f1f"; ctx.strokeStyle = "#2a0f08"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.ellipse(c.x, c.y - 4, 9, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.fillRect(c.x - 9, c.y - 22, 18, 18); ctx.strokeRect(c.x - 9, c.y - 22, 18, 18);
-    ctx.beginPath(); ctx.ellipse(c.x, c.y - 22, 9, 4, 0, 0, Math.PI * 2); ctx.fillStyle = "#b5432c"; ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "#ffd23f"; ctx.font = "bold 10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText("!", c.x, c.y - 9);
-  } else {
-    drawCrate(ctx, c, hp < PROP_HP.crate);
-  }
+  ctx.imageSmoothingEnabled = false;
+  // Crate: base diamond centre at sprite (12, 16); barrel: base at (9, 15). Sprites are 1x, drawn at 2x.
+  const [ax, ay] = prop === "barrel" ? [9, 15] : [12, 16];
+  ctx.drawImage(sprite, Math.round(c.x - ax * 2), Math.round(c.y + 1 - ay * 2), sprite.width * 2, sprite.height * 2);
   ctx.restore();
-}
-
-/** A wooden crate as a small isometric cube sitting on the tile: a lit top, a mid left side and a shaded right
-    side, each with a plank frame and a cross brace. The cube lines up with the tile diamond, so it looks the
-    same at every camera angle. A damaged crate is darker and cracked. */
-function drawCrate(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, hurt: boolean) {
-  const w = 19, d = w / 2, H = 21; // half width, half depth (2:1 like the tiles), height
-  const x = c.x, y = c.y + 1; // base diamond centre
-  const top = (u: number, v: number) => ({ x: x + (u - v) * w, y: y - H + (u + v - 1) * d }); // u,v in 0..1 across the top
-  const left = (u: number, t: number) => ({ x: x - w + u * w, y: y + u * d - t * H }); // front-left side, t = up
-  const right = (u: number, t: number) => ({ x: x + u * w, y: y + d - u * d - t * H }); // front-right side
-  const tone = hurt ? [0.78, 0.78, 0.78] : [1, 1, 1];
-  const shade = (r: number, g: number, b: number) => `rgb(${Math.round(r * tone[0]!)},${Math.round(g * tone[1]!)},${Math.round(b * tone[2]!)})`;
-  const face = (f: (a: number, b: number) => { x: number; y: number }, fill: string, plank: string) => {
-    const poly = (pts: [number, number][]) => { ctx.beginPath(); pts.forEach(([a, b], i) => { const q = f(a, b); if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.closePath(); };
-    poly([[0, 0], [1, 0], [1, 1], [0, 1]]);
-    ctx.fillStyle = fill; ctx.fill();
-    // Plank frame: a lighter inset border, then a diagonal brace.
-    const k = 0.16;
-    ctx.strokeStyle = plank; ctx.lineWidth = 1.6;
-    poly([[k, k], [1 - k, k], [1 - k, 1 - k], [k, 1 - k]]); ctx.stroke();
-    const a = f(k, k), b = f(1 - k, 1 - k);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    ctx.strokeStyle = "#3d2810"; ctx.lineWidth = 1.2;
-    poly([[0, 0], [1, 0], [1, 1], [0, 1]]); ctx.stroke();
-  };
-  // Soft contact shadow so the crate sits on the ground.
-  ctx.fillStyle = "rgba(0,0,0,0.28)";
-  ctx.beginPath(); ctx.moveTo(x - w - 2, y); ctx.lineTo(x, y + d + 1); ctx.lineTo(x + w + 2, y); ctx.lineTo(x, y - d - 1); ctx.closePath(); ctx.fill();
-  face(left, shade(150, 104, 54), shade(184, 136, 78));
-  face(right, shade(112, 76, 38), shade(146, 104, 58));
-  face((u, v) => top(u, v), shade(196, 146, 84), shade(226, 182, 118));
-  if (hurt) {
-    // Cracks on the two sides you can see.
-    ctx.strokeStyle = "#24160a"; ctx.lineWidth = 1.3;
-    const crack = (f: (a: number, b: number) => { x: number; y: number }, pts: [number, number][]) => {
-      ctx.beginPath(); pts.forEach(([a, b], i) => { const q = f(a, b); if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.stroke();
-    };
-    crack(left, [[0.62, 1], [0.5, 0.72], [0.66, 0.5], [0.55, 0.3]]);
-    crack(right, [[0.2, 0], [0.34, 0.3], [0.24, 0.52]]);
-  }
 }

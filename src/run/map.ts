@@ -105,9 +105,11 @@ export function aheadOf(map: RunMap, at: number | null): Set<number> {
 }
 
 /** Puts a rival on a battle node ahead of `at` that the player can still reach, if there is one. */
-export function placeRival(map: RunMap, at: number | null, rivalId: string, seed: string | number): number | null {
+export function placeRival(map: RunMap, at: number | null, rivalId: string, seed: string | number, minLayer = 0): number | null {
   const ahead = aheadOf(map, at);
-  const spots = map.nodes.filter((n) => ahead.has(n.id) && (n.kind === "battle" || n.kind === "elite") && !n.rival);
+  const all = map.nodes.filter((n) => ahead.has(n.id) && (n.kind === "battle" || n.kind === "elite") && !n.rival);
+  const deep = all.filter((n) => n.layer >= minLayer);
+  const spots = deep.length ? deep : all;
   if (!spots.length) return null;
   // Prefer the nearest layer, so the player meets it soon; the seed picks among those.
   const nearest = Math.min(...spots.map((n) => n.layer));

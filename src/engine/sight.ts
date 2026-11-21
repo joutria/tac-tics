@@ -29,9 +29,18 @@ export function tilesBetween(a: Pos, b: Pos): Pos[][] {
 
 /** `occupied` says whether a unit's body stands on a tile in between: true for one of normal height, or a number of
     levels (a giant is BIG_BODY tall, so it blocks sight like a wall). */
-export function hasLineOfSight(m: GridMap, a: Pos, b: Pos, occupied: (p: Pos) => boolean | number = () => false): boolean {
+export type Occupied = (p: Pos) => boolean | number;
+
+export function hasLineOfSight(m: GridMap, a: Pos, b: Pos, occupied: Occupied = () => false): boolean {
+  if (!tileAt(m, a) || !tileAt(m, b)) return false;
+  return !sightBlocker(m, a, b, occupied);
+}
+
+/** The first tile that cuts the line from a to b (the nearer one when the line slips between two), or null when
+    the line is clear. Used to show the player what is in the way. */
+export function sightBlocker(m: GridMap, a: Pos, b: Pos, occupied: Occupied = () => false): Pos | null {
   const ta = tileAt(m, a), tb = tileAt(m, b);
-  if (!ta || !tb) return false;
+  if (!ta || !tb) return null;
   const from = ta.h + EYE, to = tb.h + EYE;
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
   const blocks = (p: Pos) => {
@@ -44,6 +53,6 @@ export function hasLineOfSight(m: GridMap, a: Pos, b: Pos, occupied: (p: Pos) =>
     if (body) top = Math.max(top, tile.h + (typeof body === "number" ? body : EYE));
     return top >= lineH;
   };
-  for (const step of tilesBetween(a, b)) if (step.every(blocks)) return false;
-  return true;
+  for (const step of tilesBetween(a, b)) if (step.every(blocks)) return step[0]!;
+  return null;
 }

@@ -12,11 +12,14 @@ import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, comboProblem, guardAbility, CRIT_MULT, HEIGHT_CAP, HEIGHT_PER_LEVEL, SIDE_BONUS, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
+import { heightShapesReach, reachAt, reachBound, type Reach } from "./engine/reach";
 import { dangerZone } from "./engine/threat";
 import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { charged } from "./engine/terrain";
-import { rivalTaunt, rivalTitle } from "./run/rivals";
+import { rivalName, rivalTaunt, rivalTitle } from "./run/rivals";
+import { carriedNemesis, closeRun, hasMilestone, kitOf, newLegacy, type Legacy } from "./run/legacy";
+import { KITS, LORE, MILESTONE_HINT } from "./data/camp";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
 import { choices } from "./run/map";
 import { memberSpec } from "./run/party";
@@ -33,11 +36,13 @@ import {
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { fxSources, type Burst } from "./render/fx";
-import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
+import { drawBattle, Floater, type ReachBadge, type SightLine, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
 
 /** The run save: the run, with the battle being fought inside it. */
 const RUN_KEY = "tac-tics.run.v1";
 const LANG_KEY = "tac-tics.lang";
+/** What carries between runs (run/legacy.ts): the nemesis. */
+const LEGACY_KEY = "tac-tics.legacy.v1";
 const VIEW_KEY = "tac-tics.view";
 const HOLD_KEY = "tac-tics.hold";
 const FOE_STEP_MS = 380;
@@ -112,6 +117,10 @@ let onMap = true;
 
 /** While true, the map shows the Easy / Normal / Hard choice instead of the run. */
 let choosingDifficulty = false;
+/** While true (and choosing), the camp between runs shows first: the record, kits and lore (data/camp.ts). */
+let atCamp = false;
+/** The lore page open at the camp. */
+let campPage: string | null = null;
 /** While true, the map shows the play log panel. */
 let statsOpen = false;
 /** When the battle on screen started, for the play log (0 for a battle resumed from a save). */
@@ -123,14 +132,70 @@ function startRun() {
   if (journey && !journey.over && !choosingDifficulty && (journey.path.length || journey.battle)) record(logRunEnd(PLAYER, journey, "abandoned"));
   journey = newRun(`${Date.now()}`);
   choosingDifficulty = true;
+  // The camp only shows once there is something behind the hero: a first journey goes straight to the difficulty.
+  atCamp = loadLegacy().runs > 0; campPage = null;
   showMap();
 }
 
+function loadLegacy(): Legacy {
+  try { const l = JSON.parse(safeGet(LEGACY_KEY) ?? "null") as Legacy | null; return l?.version === 1 ? l : newLegacy(); } catch { return newLegacy(); }
+}
+/** A finished run goes into the legacy once (closeRun ignores a run it has already counted). */
+function closeLegacy() {
+  if (!journey?.over) return;
+  safeSet(LEGACY_KEY, JSON.stringify(closeRun(loadLegacy(), journey)));
+}
+
 function pickDifficulty(d: Difficulty) {
-  journey = newRun(`${Date.now()}`, d);
+  const legacy = loadLegacy();
+  journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy));
   choosingDifficulty = false;
   record(logRunStart(PLAYER, journey));
   showMap();
+}
+
+function saveLegacy(f: (l: Legacy) => void) { const l = loadLegacy(); f(l); safeSet(LEGACY_KEY, JSON.stringify(l)); }
+
+/** The camp between runs: what the hero has done so far, the starting kits it opened, and the journal pages. */
+function renderCamp(panel: HTMLElement) {
+  panel.style.display = "flex";
+  const legacy = loadLegacy(), fresh = new Set(legacy.fresh ?? []), kit = kitOf(legacy);
+  const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text = "") => { const e = document.createElement(tag); e.className = cls; e.textContent = text; return e; };
+  const title = el("h2", "", t(lang, "camp"));
+  const rec = el("p", "say", t(lang, "campRecord", { runs: legacy.runs, wins: legacy.wins, settled: legacy.settled.length }));
+  const parts: HTMLElement[] = [title, rec];
+  if (legacy.nemesis) parts.push(el("p", "say down", t(lang, "campNemesis", { name: rivalName(legacy.nemesis, lang) })));
+  const card = (open: boolean, isNew: boolean, name: string, desc: string, hint: string) => {
+    const b = el("button", "card"); b.disabled = !open;
+    const n = el("b", "", open ? name : `🔒 ${t(lang, "campLocked")}`);
+    if (isNew) n.append(" ", el("em", "", t(lang, "campNew")));
+    b.append(n, el("small", "", open ? desc : hint));
+    return b;
+  };
+  const kits = el("div", "cards");
+  for (const k of KITS) {
+    const open = hasMilestone(legacy, k.needs);
+    const b = card(open, !!k.needs && fresh.has(k.needs), k.name[lang], k.desc[lang], k.needs ? MILESTONE_HINT[k.needs][lang] : "");
+    if (k.id === kit.id) { b.classList.add("worn"); b.setAttribute("aria-pressed", "true"); }
+    b.dataset.kit = k.id;
+    b.onclick = () => { saveLegacy((l) => { l.kit = k.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-kit="${k.id}"]`)?.focus(); };
+    kits.append(b);
+  }
+  const lore = el("div", "cards");
+  for (const page of LORE) {
+    const open = hasMilestone(legacy, page.needs);
+    const b = card(open, fresh.has(page.needs), page.title[lang], campPage === page.id ? page.text[lang] : "…", MILESTONE_HINT[page.needs][lang]);
+    b.setAttribute("aria-expanded", String(campPage === page.id));
+    b.onclick = () => { campPage = campPage === page.id ? null : page.id; showMap(); document.querySelector<HTMLButtonElement>(`[data-lore="${page.id}"]`)?.focus(); };
+    b.dataset.lore = page.id;
+    lore.append(b);
+  }
+  const go = el("button", "", t(lang, "campSetOut"));
+  // Leaving the camp: what was new has been seen.
+  go.onclick = () => { saveLegacy((l) => { l.fresh = []; }); atCamp = false; showMap(); };
+  parts.push(go, el("h3", "", t(lang, "campKits")), kits, el("h3", "", t(lang, "campLore")), lore);
+  panel.replaceChildren(...parts);
+  go.focus();
 }
 
 function renderDifficulty(panel: HTMLElement) {
@@ -168,7 +233,7 @@ function showMap() {
     twin: (base, on) => { try { update(wearTwin(journey, base, on)); document.querySelector<HTMLButtonElement>(`[data-twin="${base}"]`)?.focus(); } catch (e) { console.warn(e); } },
     newRun: () => startRun(),
   }, gearOpen, () => { gearOpen = false; showMap(); });
-  if (choosingDifficulty) renderDifficulty($("runPanel"));
+  if (choosingDifficulty) (atCamp ? renderCamp : renderDifficulty)($("runPanel"));
   else if (statsOpen) renderStats($("runPanel"), lang, () => { statsOpen = false; showMap(); });
   const label = (id: string, ic: IconId | null, text: string, help: string) => {
     $(id).innerHTML = `${ic ? icon(ic) : ""}<span class="lbl">${text}</span>`; $(id).setAttribute("aria-label", text);
@@ -252,6 +317,7 @@ function afterBattleButton() {
     record(...logBattle(PLAYER, before, fought, state, journey, battleStartedAt ? Date.now() - battleStartedAt : undefined));
     if (journey.over) record(logRunEnd(PLAYER, journey, journey.over));
   } catch (e) { console.warn("play log:", e); }
+  closeLegacy();
   if (journey.region !== region) { toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
   const sp = journey.spoils;
   if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : "")
@@ -266,6 +332,7 @@ function loadOrNew() {
       const saved = upgradeRun(JSON.parse(text) as RunState);
       if (saved.version !== RUN_VERSION) throw new Error(`unknown run version ${saved.version}`);
       journey = saved;
+      closeLegacy();
       if (journey.battle) { startBattle(false); toast(t(lang, "resume")); } else { skipNextWalk = true; showMap(); }
       return;
     } catch (e) { console.warn("run save ignored:", e); }
@@ -513,25 +580,43 @@ function explain(why: string): string {
 /* ---------- what the map highlights ---------- */
 
 function marks(): Map<string, Mark> {
-  const out = new Map<string, Mark>();
-  if (!heroTurn() || busy) return out;
+  return aimView().marks;
+}
+
+/** Everything the board shows while aiming: the marks, small reach badges (▲ reached only thanks to height,
+    ▼ lost to lower ground) and, over a tile whose line of sight is cut, that line and what cuts it. */
+function aimView(): { marks: Map<string, Mark>; badges: Map<string, ReachBadge>; line?: SightLine } {
+  const out = new Map<string, Mark>(), badges = new Map<string, ReachBadge>();
+  if (!heroTurn() || busy) return { marks: out, badges };
   const u = activeUnit(state);
   if (!selected) {
     for (const k of reachable(state.map, u.pos, moveRules(state, u)).keys()) out.set(k, "move");
     if (pending) out.set(`${pending.x},${pending.y}`, "chosen");
-    return out;
+    return { marks: out, badges };
   }
   const ab = ABILITIES[selected]!;
+  const bound = reachBound(state, u, ab);
   for (let y = 0; y < state.map.h; y++) for (let x = 0; x < state.map.w; x++) {
-    const p = { x, y }, d = manhattan(u.pos, p);
-    if (d < ab.range[0] || d > maxRange(state, ab, u.pos, p, u)) continue;
+    const p = { x, y }, k = `${x},${y}`;
+    if (manhattan(u.pos, p) > bound) continue;
+    const r = reachAt(state, u, ab, p);
+    if (r.problem === "far") continue;
+    // Too close (only worth showing for abilities that cannot reach next to the caster) or lost to low ground.
+    if (r.problem === "near") { if (r.min >= 2 && r.dist > 0) out.set(k, "short"); continue; }
+    if (r.problem === "low") { out.set(k, "short"); badges.set(k, "down"); continue; }
+    if (r.dist > r.base + r.aim) badges.set(k, "up");
     const why = castProblem(state, u, selected, p);
-    out.set(`${x},${y}`, !why ? "target" : why === "no line of sight" || sightBlock(tileAt(state.map, p)!) > 0 ? "blocked" : "range");
+    out.set(k, !why ? "target" : why === "no line of sight" || sightBlock(tileAt(state.map, p)!) > 0 ? "blocked" : "range");
   }
   const focus = pending ?? hover;
   if (focus && out.get(`${focus.x},${focus.y}`) === "target") for (const p of areaTiles(ab, focus)) out.set(`${p.x},${p.y}`, "area");
   if (pending) out.set(`${pending.x},${pending.y}`, "chosen");
-  return out;
+  let line: SightLine | undefined;
+  if (focus && out.has(`${focus.x},${focus.y}`)) {
+    const r = reachAt(state, u, ab, focus);
+    if (r.blocker) line = { from: u.pos, to: focus, blocker: r.blocker };
+  }
+  return { marks: out, badges, line };
 }
 
 /* ---------- HUD: FFTA-style windows ---------- */
@@ -579,15 +664,23 @@ function abilityHelp(id: string, u: Unit | null): string {
   if (ab.push) chip("push", t(lang, "h.push", { n: ab.shove ? "1–2" : ab.push }));
   if (ab.status) chip(ab.status.id, `${t(lang, `st.${ab.status.id}` as TextKey)} · ${t(lang, "turnsLeft", { n: ab.status.turns })}`);
   if (ab.also) chip(ab.also.id, `${t(lang, `st.${ab.also.id}` as TextKey)} · ${t(lang, "turnsLeft", { n: ab.also.turns })}`);
+  if (u && u.team === "heroes" && u.aiming && heightShapesReach(ab) && !ab.quick) chip(null, t(lang, "r.aim"));
   if (ab.cooldown) chip("cooldown", t(lang, "h.cd", { n: ab.cooldown }));
   if (ab.perTurn > 1 && ab.perTurn < 4) chip(null, t(lang, "h.perTurn", { n: ab.perTurn }));
   if (ab.quick) chip("quick", t(lang, "h.quick"));
   const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
+  // How its reach works: height (ranged only), the blind spot next to the caster, and what cuts the line of sight.
+  const rules: string[] = [];
+  if (ab.range[1] > 0 && !ab.quick) rules.push(t(lang, heightShapesReach(ab) ? "h.heightRule" : "h.meleeRule"));
+  if (ab.range[0] >= 2) rules.push(t(lang, "h.minRule", { n: ab.range[0] - 1 }));
+  if (ab.los) rules.push(t(lang, "h.sightRule"));
   const el = ELEMENTS[ab.element];
   const key = u ? menuOrder(u).indexOf(id) + 1 : 0;
   return `<div class="head">${icon(abilityIcon(id, ab.element), "big")}<span>${abilityName(lang, id)}</span>${key > 0 && key <= 9 ? `<kbd>${key}</kbd>` : ""}`
     + `<small style="margin-left:auto;font-weight:400;color:var(--quiet)">${icon(abilityIcon("", ab.element))} ${el[lang]}</small></div>`
-    + `<div class="chips">${chips.join("")}</div><p>${abilityDesc(lang, id)}</p>${why ? `<p class="why">${explainAvail(why)}</p>` : ""}`;
+    + `<div class="chips">${chips.join("")}</div>`
+    + `<div class="body">${shapeDiagram(ab)}<div><p>${abilityDesc(lang, id)}</p>${rules.length ? `<p class="rules">${rules.join(" ")}</p>` : ""}</div></div>`
+    + `${why ? `<p class="why">${explainAvail(why)}</p>` : ""}`;
 }
 
 /** The order abilities are listed in the menu (and picked with the number keys): the unit's own, then the quick ones. */
@@ -767,10 +860,11 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   const u = heroTurn() ? activeUnit(state) : null;
   const target = at && unitAt(state, at);
   const ground = at ? tileInfo(at) : [];
-  if (!at || (!target && !ground.length)) { tip.style.display = "none"; return; }
-  if (!target) { showTip(tip, [...objectLines(at), ...ground].join("<br>"), at, ev); return; }
+  const reach = at ? reachLines(at) : [];
+  if (!at || (!target && !ground.length && !reach.length)) { tip.style.display = "none"; return; }
+  if (!target) { showTip(tip, [...reach, ...objectLines(at), ...ground].join("<br>"), at, ev); return; }
   const hover = at;
-  const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`];
+  const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`, ...reach];
   const rival = target.rival ? journey.rivals.find((r) => r.id === target.id && !r.settled) : undefined;
   if (rival) {
     lines.push(`<span class="rival">★ ${t(lang, "rival", { n: rival.level })} · ${rivalTitle(rival, lang)}</span>`);
@@ -823,7 +917,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
       else if (Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<span class="down">${t(lang, "critDown")}</span>`);
       if (dir > SIDE_BONUS) lines.push(t(lang, "back")); else if (dir > 1) lines.push(t(lang, "side"));
-      heightLines(lines, u, target, ab);
+      heightLines(lines, u, target);
       pushLines();
       lines.push(t(lang, "crit"));
     } else if (ab.push && target.team !== u.team) {
@@ -872,12 +966,64 @@ function objectLines(at: Pos): string[] {
   return out;
 }
 
-/** The height chip: how standing higher or lower changes this attack's damage and reach. */
-function heightLines(lines: string[], u: Unit, target: Unit, ab: Ability) {
+/** The height chip: how standing higher changes this attack's damage (its reach is in reachLines). */
+function heightLines(lines: string[], u: Unit, target: Unit) {
   const diff = (tileAt(state.map, u.pos)?.h ?? 0) - (tileAt(state.map, target.pos)?.h ?? 0);
   if (diff > 0) lines.push(`<span class="hg">${t(lang, "highGround", { n: Math.round(Math.min(HEIGHT_CAP, diff * HEIGHT_PER_LEVEL) * 100) })}</span>`);
-  if (ab.range[1] > 1 && diff > 0) lines.push(`<span class="hg">${t(lang, "highReach", { n: diff })}</span>`);
-  if (ab.range[1] > 1 && diff < 0) lines.push(`<span class="down">${t(lang, "lowReach", { n: Math.min(-diff, ab.range[1] - 1) })}</span>`);
+}
+
+/** While aiming: is this tile in reach, and if not, why. Height and Aim are spelled out. */
+function reachLines(at: Pos): string[] {
+  const u = heroTurn() ? activeUnit(state) : null;
+  if (!u || !selected) return [];
+  const ab = ABILITIES[selected]!;
+  if (ab.range[1] === 0) return [];
+  const r = reachAt(state, u, ab, at);
+  if (r.dist === 0 && r.problem === "near") return [];
+  const out: string[] = [];
+  if (r.problem === null) out.push(`<span class="ok">◎ ${t(lang, "r.ok", { d: r.dist, max: r.max })}</span>`);
+  else if (r.problem === "near") out.push(`<span class="down">${t(lang, "r.near", { n: r.min })}</span>`);
+  else if (r.problem === "far") out.push(`<span class="down">${t(lang, "r.far", { d: r.dist, max: r.max })}</span>`);
+  else if (r.problem === "low") out.push(`<span class="down">${t(lang, "r.low", { d: r.dist, max: r.max })}</span>`);
+  else out.push(`<span class="down">${t(lang, "r.sight", { what: blockerName(r.blocker!) })}</span>`, `<span class="quiet">${t(lang, "r.dist", { d: r.dist, max: r.max })}</span>`);
+  out.push(...reachBonusLines(r));
+  return out;
+}
+
+/** What height and Aim add to (or take from) the reach to one tile. */
+function reachBonusLines(r: Reach): string[] {
+  const out: string[] = [];
+  if (r.height > 0) out.push(`<span class="hg">${t(lang, "highReach", { n: r.height })}</span>`);
+  if (r.height < 0) out.push(`<span class="down">${t(lang, "lowReach", { n: -r.height })}</span>`);
+  if (r.aim) out.push(`<span class="hg">${t(lang, "r.aim")}</span>`);
+  return out;
+}
+
+/** What stands between the caster and the tile aimed at, in words. */
+function blockerName(p: Pos): string {
+  const o = unitAt(state, p);
+  if (o && o.life === "up") return o.name;
+  const tile = tileAt(state.map, p)!;
+  if (tile.steamUntil !== undefined) return t(lang, "r.steam");
+  if (tile.prop) return t(lang, `r.${tile.prop}` as TextKey);
+  if (tile.terrain === "tree") return t(lang, "r.tree");
+  if (tile.terrain === "rock") return t(lang, "r.rock");
+  return t(lang, "r.ground");
+}
+
+/** A small map of an ability's reach around the caster (gold), with what it cannot reach close by darkened and,
+    for area abilities, the area it covers at the far end (orange). */
+function shapeDiagram(ab: Ability): string {
+  const R = Math.min(ab.range[1], 6), n = R + (ab.area === "single" ? 0 : 1);
+  if (n === 0) return "";
+  const area = new Set(ab.area === "single" ? [] : areaTiles(ab, { x: 0, y: -R }).map((p) => `${p.x},${p.y}`));
+  let cells = "";
+  for (let y = -n; y <= n; y++) for (let x = -n; x <= n; x++) {
+    const d = Math.abs(x) + Math.abs(y);
+    const cls = x === 0 && y === 0 ? "me" : area.has(`${x},${y}`) ? "ar" : d <= R && d >= ab.range[0] ? "in" : d <= R ? "no" : "";
+    cells += cls ? `<i class="${cls}"></i>` : "<i></i>";
+  }
+  return `<div class="shape" style="grid-template-columns:repeat(${2 * n + 1},var(--c))" aria-hidden="true">${cells}</div>`;
 }
 
 /** What the ground under a tile does: objects, fire, ice. */
@@ -1543,8 +1689,9 @@ function frame(time: number) {
   const moving = time < animUntil;
   if (focus && time > focus.until) focus = null;
   const shake = time < shakeUntil ? Math.round(Math.sin(time / 22) * 3 * ((shakeUntil - time) / 320) * (window.devicePixelRatio || 1)) : 0;
+  const aiming = moving ? null : aimView();
   drawBattle(ctx, state, images, shake ? { ...view, ox: view.ox + shake, oy: view.oy + shake / 2 } : view, {
-    marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, bursts, motions, flashes,
+    marks: aiming?.marks ?? new Map(), badges: aiming?.badges, sightLine: aiming?.line, outline: !!selected, hover, active: state.active, time, floaters, bursts, motions, flashes,
     danger: dangerTiles(), preview: moving ? undefined : previewHit(), effects: moving ? undefined : previewMoves(), focus: focus?.id,
     escapePaths: moving ? undefined : escapePaths(),
   });
@@ -1553,7 +1700,7 @@ function frame(time: number) {
 
 async function start() {
   const base = import.meta.env.BASE_URL;
-  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-rock", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-rock", "obj-tree"];
+  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-rock", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-rock", "obj-tree", "obj-crate", "obj-crate-hurt", "obj-barrel"];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
