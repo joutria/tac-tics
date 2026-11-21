@@ -60,6 +60,8 @@ export interface UnitSpec {
   hpNow?: number;
   /** Too heavy to shove (bosses). */
   heavy?: boolean;
+  /** This character's own quick action (data/abilities.ts), on top of the shared ones. */
+  quick?: string;
   /** A rival's learned habit: it goes for units that can heal first. */
   hunts?: "healer";
 }
@@ -82,6 +84,10 @@ export interface Unit extends UnitSpec {
   /** Turns of cooldown left per ability (counts down at the end of the unit's own turns). */
   cooldowns: Record<string, number>;
   usedThisTurn: Record<string, number>;
+  /** Aim was used: the next ranged ability reaches 1 further. */
+  aiming?: boolean;
+  /** Dipped in fire: the next attack sets enemies burning. */
+  dipped?: boolean;
   rooted: boolean;
   /** Timeline position of the next turn; ties go to the lower `seq`. */
   ct: number;
@@ -254,6 +260,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
       u.mp = Math.max(0, turnMp(u) - (statusOf(u, "slow")?.power ?? 0));
       u.rooted = false;
       u.usedThisTurn = {};
+      u.aiming = false; u.dipped = false;
       u.spentAp = false;
       u.moved = false;
     }
@@ -335,8 +342,11 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       const fx: TerrainFx[] = [];
       const hits = resolveCast(s, actor, ab, cmd.target, fx, !!cmd.hold);
       actor.ap -= ab.ap;
-      actor.spentAp = true;
+      // A quick action is free: it does not count as spending AP, so a turn of moving plus a quick action still
+      // comes back sooner. It does count as acting, so Wait is gone after it.
+      if (!ab.quick) actor.spentAp = true;
       actor.usedThisTurn[ab.id] = (actor.usedThisTurn[ab.id] ?? 0) + 1;
+      if (ab.quick) actor.usedThisTurn.quick = 1;
       if (ab.cooldown > 0) actor.cooldowns[ab.id] = ab.cooldown + 1;
       if (actor.team === "heroes" && (ab.damage || ab.root || ab.push)) {
         const dist = Math.abs(cmd.target.x - actor.pos.x) + Math.abs(cmd.target.y - actor.pos.y);
@@ -350,7 +360,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       break;
     }
     case "wait": {
-      if (actor.spentAp || actor.moved || actor.waited) return { ok: false, error: "can only wait before moving or acting, once per turn" };
+      if (actor.spentAp || actor.moved || actor.waited || actor.usedThisTurn.quick) return { ok: false, error: "can only wait before moving or acting, once per turn" };
       const next = nextInLine(s, actor.id);
       if (!next) return { ok: false, error: "nobody to wait for" };
       actor.ct = next.ct;

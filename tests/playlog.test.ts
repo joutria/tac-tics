@@ -50,7 +50,8 @@ describe("play log", () => {
     for (const e of battles) if (e.ev === "battle") {
       expect(e.turns).toBeGreaterThan(0);
       expect(e.commands).toBeGreaterThan(0);
-      expect(Object.values(e.abilities).reduce((x, y) => x + y, 0)).toBeGreaterThan(0);
+      // An ambush can end a lost battle before the party gets a turn, so only wins must show abilities used.
+      if (e.result === "won") expect(Object.values(e.abilities).reduce((x, y) => x + y, 0)).toBeGreaterThan(0);
     }
     // Plain JSON: survives a round trip unchanged.
     expect(JSON.parse(JSON.stringify(a.log))).toEqual(a.log);

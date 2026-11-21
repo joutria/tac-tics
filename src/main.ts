@@ -51,6 +51,8 @@ let view: View = { ox: 0, oy: 0, scale: 1, rot: 0 };
 let zoom = 0, panX = 0, panY = 0; // zoom 0 = pick a comfortable size on the first layout
 let hover: Pos | null = null;
 let selected: string | null = null;
+/** The quick actions row is open (one free quick action per turn). */
+let quickOpen = false;
 /** On touch the first tap only chooses a tile; a second tap on it, or the Confirm button, carries the action out. */
 let pending: Pos | null = null;
 let busy = false;
@@ -466,7 +468,7 @@ function marks(): Map<string, Mark> {
   const ab = ABILITIES[selected]!;
   for (let y = 0; y < state.map.h; y++) for (let x = 0; x < state.map.w; x++) {
     const p = { x, y }, d = manhattan(u.pos, p);
-    if (d < ab.range[0] || d > maxRange(state, ab, u.pos, p)) continue;
+    if (d < ab.range[0] || d > maxRange(state, ab, u.pos, p, u)) continue;
     const why = castProblem(state, u, selected, p);
     out.set(`${x},${y}`, !why ? "target" : why === "no line of sight" || sightBlock(tileAt(state.map, p)!) > 0 ? "blocked" : "range");
   }
@@ -502,22 +504,37 @@ function refresh() {
   const mine = heroTurn() && !busy;
   const bar = $("abilities");
   bar.replaceChildren();
-  for (const id of unitAbilities(u)) {
+  const quickIds = unitAbilities(u).filter((id) => ABILITIES[id]!.quick);
+  const quickDone = !!u.usedThisTurn.quick;
+  if (selected && ABILITIES[selected]?.quick) quickOpen = true;
+  const shown = unitAbilities(u).filter((id) => !ABILITIES[id]!.quick);
+  for (const id of [...shown, "__quick", ...(quickOpen ? quickIds : [])]) {
     if (u.team !== "heroes") break;
+    if (id === "__quick") {
+      // One button opens the quick actions: a free one per turn, shared between them.
+      const q = document.createElement("button");
+      q.className = `ab quickToggle${quickOpen ? " on" : ""}`;
+      q.disabled = !mine || quickDone;
+      q.innerHTML = `<span>${t(lang, quickDone ? "quickUsed" : "quick")}</span><small>0 ${t(lang, "ap")} · 1/${t(lang, "turnShort")}</small>`;
+      q.title = t(lang, "quickInfo");
+      q.onclick = () => { quickOpen = !quickOpen; if (!quickOpen && selected && ABILITIES[selected]?.quick) selected = null; refresh(); };
+      bar.append(q);
+      continue;
+    }
     const ab = ABILITIES[id]!;
     const b = document.createElement("button");
-    b.className = `ab${selected === id ? " on" : ""}`;
+    b.className = `ab${ab.quick ? " quick" : ""}${selected === id ? " on" : ""}`;
     const why = abilityAvailable(u, id) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
     const dmg = ab.damage ? `${ab.damage.min}–${ab.damage.max}` : ab.heal ? `+${ab.heal.min}–${ab.heal.max}` : "";
-    b.innerHTML = `<span>${abilityName(lang, id)}</span><small>${ab.ap} ${t(lang, "ap")} · ${ab.range[0]}–${ab.range[1]}${dmg ? " · " + dmg : ""}${cd ? " · ⏳" + t(lang, "cooldown", { n: cd }) : ""}</small>`;
+    b.innerHTML = `<span>${abilityName(lang, id)}</span><small>${ab.ap} ${t(lang, "ap")} · ${ab.range[1] === 0 ? t(lang, "selfOnly") : `${ab.range[0]}–${ab.range[1]}`}${dmg ? " · " + dmg : ""}${cd ? " · ⏳" + t(lang, "cooldown", { n: cd }) : ""}</small>`;
     b.title = abilityDesc(lang, id);
     b.onclick = () => { selected = selected === id ? null : id; pending = null; inspect = null; tooltip(null); refresh(); };
     bar.append(b);
   }
   $<HTMLButtonElement>("end").disabled = !mine;
-  $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited;
+  $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited || !!u.usedThisTurn.quick;
   $<HTMLButtonElement>("undo").disabled = !canUndo();
   const rw = $<HTMLButtonElement>("rewind");
   const left = rulesOf(journey).rewinds - (save.rewindsUsed ?? 0);
@@ -1224,7 +1241,8 @@ function actionAt(p: Pos): { cmd: Command } | { why: string } | null {
 
 function act(cmd: Command) {
   const ok = run(cmd);
-  if (cmd.t === "cast" && ok) selected = null;
+  if (cmd.t === "cast" && ok) { if (ABILITIES[cmd.ability]?.quick) quickOpen = false; selected = null; }
+  if (cmd.t === "endTurn" || cmd.t === "wait") quickOpen = false;
   pending = null;
   refresh();
   if (cmd.t === "cast") maybeFoeTurn();
@@ -1263,7 +1281,7 @@ function previewMoves(): MovePreview | undefined {
   const u = activeUnit(state), ab = ABILITIES[selected]!;
   const tile = tileAt(state.map, at);
   let out: MovePreview | undefined;
-  if ((ab.push || tile?.prop === "barrel" || areaTiles(ab, at).some((p) => tileAt(state.map, p)?.prop === "barrel")) && !castProblem(state, u, selected, at)) {
+  if ((ab.push || ab.throwProp || tile?.prop === "barrel" || areaTiles(ab, at).some((p) => tileAt(state.map, p)?.prop === "barrel")) && !castProblem(state, u, selected, at)) {
     out = previewEffects(state, u, ab, at);
     if (!out.moves.length && !out.blasts.length && !out.splashes.length) out = undefined;
   }

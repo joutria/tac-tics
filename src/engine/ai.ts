@@ -5,7 +5,7 @@
    with line of sight and height (so they hide behind obstacles and look for high ground). It also reads how the
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
 import { ABILITIES, type Ability } from "../data/abilities";
-import { abilityAvailable, areaTiles, damagePreview, maxRange, pushOutcome, shoveDistance, unitAbilities } from "./combat";
+import { abilityAvailable, areaTiles, damagePreview, maxRange, pushOutcome, shoveDistance, throwOutcome, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, burning } from "./terrain";
 import { reachable } from "./movement";
@@ -129,6 +129,14 @@ export interface AiOptions { mercy?: boolean }
 function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos, opts: AiOptions = {}): number {
   let v = 0;
   if (ab.spare) { const o = unitAt(s, target); return opts.mercy && o && yielding(o) ? 30 : 0; }
+  if (ab.throwProp) {
+    // A thrown crate hurts whoever it hits; a thrown barrel blows up where it lands.
+    const o = throwOutcome(s, u, from, target);
+    if (o.kind === "barrel") return blastValue(s, u, o.land, from);
+    const hit = o.unit ? s.units.find((x) => x.id === o.unit) : undefined;
+    if (!hit) return 0;
+    return isFoe(u, hit) ? Math.min(o.damage, hit.hp) + (o.damage >= hit.hp ? 25 : 0) : -(o.damage * 1.5 + 5);
+  }
   for (const p of areaTiles(ab, target)) {
     if ((ab.damage || ab.element === "fire") && tileAt(s.map, p)?.prop === "barrel") v += blastValue(s, u, p, from);
     const o = unitAt(s, p);
@@ -187,6 +195,7 @@ function candidateTargets(s: BattleState, ab: Ability): Pos[] {
     spots.set(key(o.pos), o.pos);
     if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }
+  if (ab.throwProp) s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   if (ab.damage) s.map.tiles.forEach((t, i) => { if (t.prop === "barrel") { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   return [...spots.values()];
 }

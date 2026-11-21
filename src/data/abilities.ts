@@ -6,7 +6,7 @@ import type { Element } from "./elements";
 import type { Status } from "../engine/status";
 
 export type Area = "single" | "cross1";
-export type TargetKind = "foe" | "ally" | "downedAlly" | "any" | "emptyTile" | "yielding";
+export type TargetKind = "foe" | "ally" | "downedAlly" | "any" | "emptyTile" | "yielding" | "prop" | "unit";
 
 export interface Ability {
   id: string;
@@ -27,6 +27,18 @@ export interface Ability {
   push?: number;
   /** The shared Shove: push distance comes from Strength (combat.ts shoveDistance), and heavy units resist. */
   shove?: boolean;
+  /** A quick action: free (0 AP), and a unit gets one quick action per turn, shared by all of them. */
+  quick?: boolean;
+  /** Jump: hop 1 tile, or 2 over a gap or a unit, climbing up to Jump + 1 levels, ignoring Lock. */
+  jump?: boolean;
+  /** Sidestep: one normal step that ignores Lock. */
+  step?: boolean;
+  /** Throw: send an adjacent crate or barrel flying away from the thrower. */
+  throwProp?: boolean;
+  /** Dip: next to fire, the caster's next attack sets its targets burning. */
+  dip?: boolean;
+  /** Aim: the caster's next ability reaches 1 tile further. */
+  aim?: boolean;
   /** Target loses all MP on its next turn. */
   root?: boolean;
   /** Caster jumps to the target tile. */
@@ -50,7 +62,17 @@ export const SAP_RICH = 3;
 
 export const ABILITIES: Record<string, Ability> = {
   // Shared by everyone.
-  shove: { id: "shove", element: "neutral", ap: 0, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 1, push: 1, shove: true },
+  // Quick actions (free, one per turn between them). Shared by everyone:
+  shove: { id: "shove", element: "neutral", ap: 0, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 1, push: 1, shove: true, quick: true },
+  jump: { id: "jump", element: "neutral", ap: 0, range: [1, 2], los: false, target: "emptyTile", area: "single", cooldown: 0, perTurn: 1, teleport: true, jump: true, quick: true },
+  throw: { id: "throw", element: "neutral", ap: 0, range: [1, 1], los: false, target: "prop", area: "single", cooldown: 0, perTurn: 1, throwProp: true, quick: true },
+  dip: { id: "dip", element: "fire", ap: 0, range: [0, 0], los: false, target: "ally", area: "single", cooldown: 0, perTurn: 1, dip: true, quick: true },
+  // One per character:
+  aim: { id: "aim", element: "light", ap: 0, range: [0, 0], los: false, target: "ally", area: "single", cooldown: 0, perTurn: 1, aim: true, quick: true },
+  douse: { id: "douse", element: "water", ap: 0, range: [0, 1], los: false, target: "any", area: "single", cooldown: 0, perTurn: 1, quick: true },
+  hurl: { id: "hurl", element: "stone", ap: 0, range: [1, 1], los: false, target: "unit", area: "single", cooldown: 0, perTurn: 1, push: 2, quick: true },
+  zip: { id: "zip", element: "bolt", ap: 0, range: [1, 1], los: false, target: "emptyTile", area: "single", cooldown: 0, perTurn: 1, teleport: true, step: true, quick: true },
+  puff: { id: "puff", element: "mush", ap: 0, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 1, status: { id: "weaken", turns: 1, power: 0 }, quick: true },
   helpUp: { id: "helpUp", element: "neutral", ap: 3, range: [1, 1], los: false, target: "downedAlly", area: "single", cooldown: 0, perTurn: 1, revive: true },
   // The party only: a foe showing the white flag (under 25% HP, or fleeing) can be let go.
   spare: { id: "spare", element: "neutral", ap: 1, range: [1, 2], los: false, target: "yielding", area: "single", cooldown: 0, perTurn: 4, spare: true },
