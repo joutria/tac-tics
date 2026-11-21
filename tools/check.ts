@@ -14,6 +14,8 @@ import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
 import { HELP_LINES } from "../src/data/mercy";
 import { ALIGNMENTS, GRID, HERO_ENDINGS, SIDE_NAMES } from "../src/data/alignment";
 import { TWINS } from "../src/data/twins";
+import { EMOJI_ICON, ICONS, PALETTE } from "../src/ui/icons";
+import { STATUS } from "../src/engine/status";
 
 const problems: string[] = [];
 const fail = (msg: string) => problems.push(msg);
@@ -140,6 +142,18 @@ for (const a of REGIONS.flatMap((r) => r.arenas)) {
 
 // Isometric tiles the renderer needs.
 for (const t of Object.keys(TERRAIN)) if (!existsSync(`public/art/iso/top-${t}.png`)) fail(`missing tile art public/art/iso/top-${t}.png`);
+
+// Pixel icons: 16x16, known colours; every status, element in use and emoji stand-in has one.
+for (const [id, rows] of Object.entries(ICONS)) {
+  if (rows.length !== 16) fail(`icon ${id}: ${rows.length} rows, expected 16`);
+  rows.forEach((r, y) => {
+    if (r.length !== 16) fail(`icon ${id} row ${y}: ${r.length} pixels, expected 16`);
+    for (const c of r) if (c !== "." && !PALETTE[c]) fail(`icon ${id} row ${y}: unknown colour "${c}"`);
+  });
+}
+for (const id of Object.keys(STATUS)) if (!(id in ICONS)) fail(`status ${id} has no icon`);
+for (const ab of Object.values(ABILITIES)) if (!(ab.element in ICONS)) fail(`element ${ab.element} (ability ${ab.id}) has no icon`);
+for (const [e, id] of Object.entries(EMOJI_ICON)) if (!(id in ICONS)) fail(`emoji ${e} points at missing icon ${id}`);
 
 if (problems.length) {
   console.error(`check: ${problems.length} problem(s)\n- ${problems.join("\n- ")}`);

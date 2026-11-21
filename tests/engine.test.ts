@@ -13,7 +13,7 @@ import { hasLineOfSight } from "../src/engine/sight";
 import { abilityReaches, dangerZone, nextTurnSpots } from "../src/engine/threat";
 import { activeUnit, applyCommand, BattleSetup, BattleState, Command, createBattle, delayFor, roundOf, UnitSpec, unitAt, unitById, upcomingTurns } from "../src/engine/state";
 import { activeRivals, afterBattle, pickCounter, readStyle, rivalSpec, rivalTaunt, RESIST_STEP } from "../src/run/rivals";
-import { BLAST_DAMAGE } from "../src/engine/terrain";
+import { BLAST_DAMAGE, IMPACT } from "../src/engine/terrain";
 import { ESCAPE_FROM_ROUND, FLEE_TAKEN, RETREAT_TAKEN, turnMp, wavering } from "../src/engine/escape";
 
 const setup: BattleSetup = { seed: "test-seed", map: MEADOW, units: TEST_UNITS };
@@ -720,6 +720,38 @@ describe("quick actions", () => {
     const b = play(battle(["g0 g0B g0 g0 g0 g0"], [hero(), unit({ id: "f", team: "foes", pos: { x: 5, y: 0 } })]),
       [{ t: "cast", unit: "h", ability: "throw", target: { x: 1, y: 0 } }]);
     expect(unitById(b, "f").hp).toBe(40 - 10); // landed next to it (4 tiles at most... 3 here) and blew up
+  });
+  it("Shove pushes crates, barrels and boulders into foes, and they hurt", () => {
+    const foeAt = (x: number) => unit({ id: "f", team: "foes", pos: { x, y: 0 } });
+    // A crate shoved 1 tile into a foe right behind it: the base impact; the crate takes it too.
+    const c = play(battle(["g0 g0C g0 g0"], [hero(), foeAt(2)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(unitById(c, "f").hp).toBe(40 - IMPACT.crate.base);
+    expect(c.map.tiles[1]!.prop).toBe("crate");
+    expect(c.map.tiles[1]!.propHp).toBe(12 - IMPACT.crate.base);
+    // A boulder keeps rolling and hits harder for every tile it rolled.
+    const b = play(battle(["g0 g0O g0 g0 g0 g0"], [hero(), foeAt(5)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(b.map.tiles[4]!.prop).toBe("boulder");
+    expect(unitById(b, "f").hp).toBe(40 - (IMPACT.boulder.base + 3 * IMPACT.boulder.perTile));
+    // Rolling down a ledge adds the drop.
+    const d = play(battle(["g2 g2O g0 g0"], [hero(), foeAt(3)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(unitById(d, "f").hp).toBe(40 - (IMPACT.boulder.base + IMPACT.boulder.perTile + 2 * IMPACT.boulder.perLevel));
+    // A barrel rolled into a foe goes off next to it.
+    const r = play(battle(["g0 g0B g0 g0"], [hero(), foeAt(2)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(r.map.tiles[1]!.prop).toBeUndefined();
+    expect(unitById(r, "f").hp).toBe(40 - BLAST_DAMAGE);
+    // With nobody in the way a barrel just rolls; water swallows a crate.
+    const free = play(battle(["g0 g0B g0 g0"], [hero(), foeAt(3)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(free.map.tiles[2]!.prop).toBe("barrel");
+    const sunk = play(battle(["g0 g0C w0 g0"], [hero(), foeAt(3)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(sunk.map.tiles.some((t) => t.prop)).toBe(false);
+  });
+  it("the preview shows who a pushed object hits, and Hurl moves objects too", () => {
+    const s = battle(["g0 g0O g0 g0"], [hero({ quick: "hurl" }), unit({ id: "f", team: "foes", pos: { x: 3, y: 0 } })]);
+    const pv = previewEffects(s, unitById(s, "h"), ABILITIES.shove!, { x: 1, y: 0 });
+    expect(pv.splashes).toEqual([{ unit: "f", damage: IMPACT.boulder.base + IMPACT.boulder.perTile }]);
+    expect(pv.moves).toEqual([{ from: { x: 1, y: 0 }, to: { x: 2, y: 0 }, bump: 0, fall: 0, fell: 0 }]);
+    expect(castProblem(s, unitById(s, "h"), "hurl", { x: 1, y: 0 })).toBeNull();
+    expect(castProblem(s, unitById(s, "h"), "throw", { x: 1, y: 0 })).toBe("needs a crate or barrel");
   });
   it("Dip needs fire next to you and makes the next attack burn", () => {
     const s = battle(["g0 g0 g0"], [hero({ abilities: ["ray"] }), unit({ id: "f", team: "foes", pos: { x: 2, y: 0 } })]);

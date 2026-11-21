@@ -69,7 +69,7 @@ export interface Hit {
   statuses?: StatusId[];
   cleansed?: StatusId[];
   /** Dealt by the terrain rather than the ability itself: a barrel blast or a bolt chained through water. */
-  source?: "blast" | "chain" | "sap";
+  source?: "blast" | "chain" | "sap" | "impact";
   /** Hold back stopped this hit at 1 HP (or kept a downed unit from being finished). */
   held?: boolean;
   /** Knelt and left the fight, spared. */
@@ -132,7 +132,8 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
     case "foe": if ((!other || !isFoe(u, other)) && !(tileAt(s.map, target)?.prop && (ab.damage || ab.push))) return "needs an enemy";
       if (ab.shove && other?.heavy) return "too heavy to shove";
       break;
-    case "unit": if (!other || other.life !== "up") return "needs a unit"; if (ab.push && other.heavy) return "too heavy to shove"; break;
+    case "unit": if (ab.push && !other && tileAt(s.map, target)?.prop) break;
+      if (!other || other.life !== "up") return "needs a unit"; if (ab.push && other.heavy) return "too heavy to shove"; break;
     case "prop": { const p = tileAt(s.map, target)?.prop; if (p !== "crate" && p !== "barrel") return "needs a crate or barrel"; break; }
     case "ally": { const t = samePos(target, from) ? u : other; if (!t || isFoe(u, t) || t.life !== "up") return "needs a standing ally"; break; }
     case "downedAlly": if (!other || isFoe(u, other) || other.life !== "downed") return "needs a downed ally"; break;
@@ -233,7 +234,7 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
   const credit = (u: Unit, h: { downed: boolean; died: boolean }) => { if ((h.downed || h.died) && isFoe(caster, u)) caster.downs += 1; };
   const hurtByTerrain = (u: Unit, dmg: number, h: TerrainHit) => { hurt(u, dmg, h); credit(u, h); };
   for (const p of areaTiles(ab, target)) {
-    touchTile(s, ab, from, p, fx, ground, hurtByTerrain);
+    touchTile(s, ab, from, p, fx, ground, hurtByTerrain, caster.str);
     const u = unitAt(s, p);
     // An area attack hits allies caught in it, but never the one who casts it (so it can be used point-blank).
     if (!u || (u.id === caster.id && ab.damage) || (ab.alliesOnly && isFoe(caster, u))) continue;
@@ -381,8 +382,8 @@ export function fallDamage(s: BattleState, pusher: Unit, target: Unit, levels: n
 }
 
 /** What a pushed unit slams into, and how hard each kind hits (times PUSH_HIT per tile it could not travel). */
-export type Blocker = "edge" | "rock" | "tree" | "water" | "step" | "crate" | "barrel" | "unit";
-export const SLAM: Record<Exclude<Blocker, "step">, number> = { edge: 1, rock: 1.5, tree: 1.5, water: 0.5, crate: 1, barrel: 1, unit: 1 };
+export type Blocker = "edge" | "rock" | "tree" | "water" | "step" | "crate" | "barrel" | "boulder" | "unit";
+export const SLAM: Record<Exclude<Blocker, "step">, number> = { edge: 1, rock: 1.5, tree: 1.5, water: 0.5, crate: 1, barrel: 1, boulder: 1.5, unit: 1 };
 /** A step up hits harder the taller it is: +25% per level of the wall. */
 export const STEP_SLAM_PER_LEVEL = 0.25;
 /** A unit something is slammed into takes this share of the slam. */
@@ -516,7 +517,8 @@ export function previewEffects(s: BattleState, caster: Unit, ab: Ability, target
     out.moves.push({ from, to, unit: h.unit, bump: h.bump ?? 0, fall: h.fall ?? 0, fell: h.fell ?? 0, ...(h.slammed ? { slammed: h.slammed } : {}) });
   }
   for (const f of fx) if (f.fx === "slide") out.moves.push({ from: f.at, to: f.to, bump: 0, fall: 0, fell: 0 });
-  // A thrown crate's hit on whoever was in its way.
+  // A thrown crate's hit on whoever was in its way, and a pushed object's.
   if (ab.throwProp) for (const h of hits) if (h.bump && !h.source) out.splashes.push({ unit: h.unit, damage: h.bump });
+  for (const h of hits) if (h.source === "impact") out.splashes.push({ unit: h.unit, damage: h.damage });
   return out;
 }

@@ -6,7 +6,7 @@ export const MEADOW = parseMap("meadow", [
   "t0 g0 g0 g0 g0 g1 g1 g2 g2 t2",
   "g0 g0 d0 g0 g0 g1 g2 g3 g2 g2",
   "g0 g0 d0 g0 r0 g1 g2 g2B g2 g1",
-  "g0 w0 d0 d0 d0 d0 g1 g1 g1 g1",
+  "g0 w0 d0 d0 d0 d0 g1O g1 g1 g1",
   "w0 w0 g0 g0 g0 d0o g0C r1 g1 g0",
   "w0 w0 g0 t0 g0 d0o g0 g0 g0B g0",
   "g0 g0 g0 g0 g0C d0 d0 d0 g0 g0",

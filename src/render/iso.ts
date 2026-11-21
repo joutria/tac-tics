@@ -6,6 +6,124 @@ import { GridMap, Pos, PROP_HP, tileAt, type Prop, type Tile } from "../engine/g
 import { MAX_REVIVES } from "../engine/combat";
 import { wavering, yielding } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
+import { iconCanvas, splitIcons, type IconId } from "../ui/icons";
+
+/** Fire that never goes out (camp fires on travel scenes) is drawn as a camp fire: stones, logs and a live flame. */
+const CAMPFIRE_AT = 1e11;
+const PX_FONT = '"Pixelify Sans", system-ui, sans-serif';
+
+/** Draws a text in which emoji stand for pixel icons (see src/ui/icons.ts), centred on x, with a dark outline. */
+export function drawRich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, color: string, outline = true) {
+  const parts = splitIcons(text);
+  ctx.save();
+  ctx.font = `600 ${size}px ${PX_FONT}`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  const isz = Math.round(size * 1.15), gap = 2;
+  const widths = parts.map((p) => (typeof p === "string" ? ctx.measureText(p).width : isz + gap));
+  let cx = x - widths.reduce((a, b) => a + b, 0) / 2;
+  ctx.imageSmoothingEnabled = false;
+  parts.forEach((p, i) => {
+    if (typeof p === "string") {
+      if (outline) { ctx.lineWidth = 3; ctx.strokeStyle = "rgba(11,16,51,0.95)"; ctx.lineJoin = "round"; ctx.strokeText(p, cx, y); }
+      ctx.fillStyle = color; ctx.fillText(p, cx, y);
+    } else ctx.drawImage(iconCanvas(p.icon), Math.round(cx), Math.round(y - isz / 2), isz, isz);
+    cx += widths[i]!;
+  });
+  ctx.restore();
+}
+
+/** A pixel flame that flickers: the icon and its mirror take turns, and it stretches a little. */
+function drawFlame(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, time: number, seed: number) {
+  const t = time / 110 + seed * 1.7;
+  const ic: IconId = Math.floor(t) % 2 ? "fire" : "flameB";
+  const stretch = 1 + 0.12 * Math.sin(t * 2.3);
+  const w = size, h = Math.round(size * stretch);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(iconCanvas(ic), Math.round(x - w / 2), Math.round(y - h), w, h);
+}
+
+/** A camp fire: warm light on the ground, a ring of stones, crossed logs, a tall flame and sparks rising. */
+function drawCampfire(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, time: number, seed: number) {
+  ctx.save();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2, sx = Math.round(c.x + Math.cos(a) * 16), sy = Math.round(c.y + 2 + Math.sin(a) * 8);
+    ctx.fillStyle = "#1b1626"; ctx.fillRect(sx - 2, sy - 1, 5, 4);
+    ctx.fillStyle = i % 2 ? "#8d8aa0" : "#c9c6d6"; ctx.fillRect(sx - 1, sy - 1, 3, 2);
+  }
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(iconCanvas("logs"), c.x - 15, c.y - 23, 30, 30);
+  drawFlame(ctx, c.x, c.y + 1, 28, time, seed);
+  for (let i = 0; i < 4; i++) {
+    const life = ((time / 900 + i * 0.27 + seed * 0.13) % 1);
+    const sx = Math.round(c.x + Math.sin(time / 300 + i * 2) * 7), sy = Math.round(c.y - 26 - life * 40);
+    ctx.globalAlpha = 1 - life;
+    ctx.fillStyle = i % 2 ? "#ffe06b" : "#ff9a3a"; ctx.fillRect(sx, sy, 2, 2);
+  }
+  ctx.restore();
+}
+
+/** The warm light of a camp fire, laid over the ground and whoever sits around it (drawn after the tiles). */
+function campfireGlow(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, time: number, seed: number) {
+  const pulse = 0.85 + 0.15 * Math.sin(time / 170 + seed);
+  const g = ctx.createRadialGradient(c.x, c.y - 6, 4, c.x, c.y - 6, 96);
+  g.addColorStop(0, `rgba(255, 170, 70, ${0.38 * pulse})`); g.addColorStop(0.45, `rgba(255, 120, 40, ${0.14 * pulse})`); g.addColorStop(1, "rgba(255, 120, 40, 0)");
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(c.x, c.y - 6, 96, 60, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+/** A small canvas tent on a camp, its open flap facing the viewer, with a pole and a pennant. */
+function drawTent(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, seed: number) {
+  ctx.save();
+  const cloth = seed % 2 ? ["#d9c9a0", "#b8a274", "#8e7a52"] : ["#c9604a", "#a8473a", "#7a3026"];
+  const L = { x: c.x - 24, y: c.y }, R = { x: c.x + 24, y: c.y }, B = { x: c.x, y: c.y + 12 }, T = { x: c.x, y: c.y - 12 };
+  const top = { x: c.x - 6, y: c.y - 30 }, top2 = { x: c.x + 10, y: c.y - 38 };
+  ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.moveTo(L.x, L.y); ctx.lineTo(B.x, B.y); ctx.lineTo(R.x, R.y); ctx.lineTo(T.x, T.y); ctx.closePath(); ctx.fill();
+  const poly = (pts: { x: number; y: number }[], fill: string) => {
+    ctx.beginPath(); pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = "#1b1626"; ctx.lineWidth = 1.5; ctx.stroke();
+  };
+  // Back roof slope, front roof slope (lit), then the front gable with a dark doorway.
+  poly([top, top2, { x: R.x, y: R.y - 6 }, { x: c.x + 8, y: c.y + 4 }], cloth[2]!);
+  poly([{ x: L.x + 4, y: L.y + 2 }, top, { x: c.x + 8, y: c.y + 4 }, { x: c.x - 2, y: c.y + 10 }], cloth[0]!);
+  poly([{ x: c.x - 2, y: c.y + 10 }, top, { x: c.x + 8, y: c.y + 4 }], cloth[1]!);
+  ctx.fillStyle = "#2a1c14"; ctx.beginPath(); ctx.moveTo(c.x + 1, c.y + 8); ctx.lineTo(top.x + 2, top.y + 14); ctx.lineTo(c.x + 6, c.y + 5); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#5a3a1c"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(top.x, top.y); ctx.lineTo(top.x, top.y - 8); ctx.stroke();
+  ctx.fillStyle = "#ffe06b"; ctx.beginPath(); ctx.moveTo(top.x, top.y - 8); ctx.lineTo(top.x + 7, top.y - 6); ctx.lineTo(top.x, top.y - 4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+/** A bedroll laid on the ground by the fire. */
+function drawBedroll(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, seed: number) {
+  ctx.save();
+  const [body, edge] = seed % 2 ? ["#4f74d6", "#2b479f"] : ["#5bc46a", "#2a7d38"];
+  const q = (u: number, v: number) => ({ x: c.x + (u - v) * 32, y: c.y - 16 + (u + v) * 16 }); // u, v: 0..1 across the tile
+  const pts = [q(0.15, 0.35), q(0.85, 0.35), q(0.85, 0.7), q(0.15, 0.7)];
+  ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath();
+  ctx.fillStyle = body; ctx.fill(); ctx.strokeStyle = "#1b1626"; ctx.lineWidth = 1.2; ctx.stroke();
+  const fold = [q(0.15, 0.35), q(0.36, 0.35), q(0.36, 0.7), q(0.15, 0.7)];
+  ctx.beginPath(); fold.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath(); ctx.fillStyle = edge; ctx.fill(); ctx.stroke();
+  const pil = q(0.74, 0.52);
+  ctx.fillStyle = "#f7f3e8"; ctx.beginPath(); ctx.ellipse(pil.x, pil.y, 7, 3.5, 0.45, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+/** A loose boulder: a round, shaded pixel rock that can be pushed and rolls. */
+function drawBoulder(ctx: CanvasRenderingContext2D, c: { x: number; y: number }) {
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 15, 6, 0, 0, Math.PI * 2); ctx.fill();
+  const x = c.x, y = c.y - 11, r = 13;
+  ctx.fillStyle = "#1b1626"; ctx.beginPath(); ctx.arc(x, y, r + 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#6f6c84"; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#8d8aa0"; ctx.beginPath(); ctx.arc(x - 2, y - 2, r - 3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#b4b1c6"; ctx.beginPath(); ctx.arc(x - 4, y - 5, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#e4e1ee"; ctx.fillRect(Math.round(x - 7), Math.round(y - 8), 3, 2);
+  ctx.fillStyle = "#555268"; ctx.beginPath(); ctx.arc(x + 3, y + 5, 5, 0, Math.PI); ctx.fill();
+  ctx.strokeStyle = "#3d3a50"; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(x + 2, y - 9); ctx.lineTo(x + 5, y - 3); ctx.lineTo(x + 3, y + 1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - 8, y + 3); ctx.lineTo(x - 4, y + 6); ctx.stroke();
+  ctx.restore();
+}
 
 export const TW = 64, TH = 32, LEVEL = 16;
 
@@ -150,6 +268,8 @@ export interface DrawOptions {
   preview?: { unit: string; min: number; max: number };
   /** A unit to point out (tapped in the turn bar). */
   focus?: string | null;
+  /** Units just hit, and when: they flash bright for a moment. */
+  flashes?: Map<string, number>;
   /** Escape routes of retreating or fleeing foes, drawn as dotted lines to the edge. */
   escapePaths?: Pos[][];
   /** What the chosen ability would move or set off: where pushed units and crates end up, and barrel blasts. */
@@ -202,7 +322,9 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
   const drawPlace = (pl: (typeof places)[number]) => {
     ctx.globalAlpha = pl.alpha;
     const pv = opt.preview && opt.preview.unit === pl.u.id ? opt.preview : undefined;
-    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round), opt.bare);
+    const hitAt = opt.flashes?.get(pl.u.id);
+    const flash = hitAt !== undefined && opt.time >= hitAt && opt.time - hitAt < 180;
+    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round), opt.bare, flash);
     ctx.globalAlpha = 1;
   };
   // Painter's order: back diagonals first; on each tile its ground, then what stands on it.
@@ -258,13 +380,14 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.fillStyle = "#fff"; ctx.fillText(String(tile.h), c.x, c.y + 8);
         ctx.textBaseline = "alphabetic";
       }
-      if ((tile.fireUntil ?? 0) > s.clock) {
-        // Fire: a flickering orange wash and a flame.
+      if ((tile.fireUntil ?? 0) >= CAMPFIRE_AT) drawCampfire(ctx, c, opt.time, p.x * 7 + p.y);
+      else if ((tile.fireUntil ?? 0) > s.clock) {
+        // Fire: a flickering orange wash and two pixel flames.
         ctx.globalAlpha = 0.35 + 0.15 * Math.sin(opt.time / 90 + p.x * 3 + p.y);
         diamond(ctx, c.x, c.y, "#ff7a2a", "rgba(255,200,80,0.8)");
         ctx.globalAlpha = 1;
-        ctx.font = "16px system-ui, sans-serif"; ctx.textAlign = "center";
-        ctx.fillText("🔥", c.x, c.y + 4 - 2 * Math.abs(Math.sin(opt.time / 160 + p.x)));
+        drawFlame(ctx, c.x - 7, c.y + 4, 14, opt.time, p.x + p.y * 3);
+        drawFlame(ctx, c.x + 7, c.y + 2, 12, opt.time + 170, p.x * 3 + p.y);
       }
       if (tile.prop) drawProp(ctx, tile.prop, c, tile.propHp ?? 0);
       if (tile.steamUntil !== undefined) {
@@ -280,7 +403,9 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.globalAlpha = 1;
       }
       if (!flat && tile.terrain === "rock") ctx.drawImage(img["obj-rock"]!, c.x - 18, c.y - 30, 36, 36);
-      if (!flat && tile.terrain === "tree") {
+      if (!flat && tile.deco === "bedroll") drawBedroll(ctx, c, p.x + p.y);
+      if (!flat && tile.deco === "tent") drawTent(ctx, c, p.x * 3 + p.y);
+      else if (!flat && tile.terrain === "tree") {
         // See-through when someone stands right behind it, so trees never hide a unit.
         const behind = [[-1, 0], [0, -1], [-1, -1]].some(([dx, dy]) => {
           const q = unrotate(m, { x: x + dx!, y: k - x + dy! }, view.rot);
@@ -294,6 +419,12 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     }
     // A unit between two tiles goes after the whole diagonal it is entering, so nothing on that row covers it.
     for (const pl of places) if (pl.moving && depth(pl.slot) === k) drawPlace(pl);
+  }
+  // Camp fires light up what is around them.
+  for (let i = 0; i < m.tiles.length; i++) {
+    if ((m.tiles[i]!.fireUntil ?? 0) < CAMPFIRE_AT) continue;
+    const p = { x: i % m.w, y: Math.floor(i / m.w) };
+    campfireGlow(ctx, tileCenter(m, p, view.rot), opt.time, p.x * 7 + p.y);
   }
   // Effect preview: a blast's 3x3 in orange; each push as an arrow to a ghost tile, with the bump damage if it hits something.
   for (const b of opt.effects?.blasts ?? []) {
@@ -360,10 +491,9 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     if (age < 0 || age > 1.4) continue;
     const c = tileCenter(m, f.pos, view.rot);
     ctx.globalAlpha = Math.max(0, 1 - age / 1.4);
-    ctx.font = "bold 13px system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.85)";
-    ctx.strokeText(f.text, c.x, c.y - 70 - age * 24);
-    ctx.fillStyle = f.color; ctx.fillText(f.text, c.x, c.y - 70 - age * 24);
+    // A little pop as it appears, then it drifts up and fades.
+    const pop = age < 0.12 ? 1 + (0.12 - age) * 3 : 1;
+    drawRich(ctx, f.text, c.x, c.y - 74 - age * 24, Math.round(14 * pop), f.color);
     ctx.globalAlpha = 1;
   }
   ctx.restore();
@@ -434,8 +564,8 @@ function drawSurface(ctx: CanvasRenderingContext2D, tile: Tile, c: { x: number; 
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.ellipse(c.x - 4 + 4 * sheen, c.y + dy, 12, 2.2, -0.45, 0, Math.PI * 2); ctx.fill();
     }
-    ctx.font = "11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.globalAlpha = 0.85;
-    ctx.fillText("🛢", c.x + 12, c.y + 6); ctx.globalAlpha = 1;
+    ctx.globalAlpha = 0.85; ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(iconCanvas("barrel"), c.x + 6, c.y, 10, 10); ctx.globalAlpha = 1;
   }
   if (tile.surface === "sap") {
     // Sap: a sickly green ooze that pulses; a source has a glowing shard in the middle.
@@ -444,9 +574,8 @@ function drawSurface(ctx: CanvasRenderingContext2D, tile: Tile, c: { x: number; 
     ctx.fillStyle = "rgba(210, 255, 140, 0.55)";
     for (const [dx, dy] of [[-8, 1], [5, -3], [2, 5]] as const) { ctx.beginPath(); ctx.arc(c.x + dx, c.y + dy, 1.6 + pulse, 0, Math.PI * 2); ctx.fill(); }
     if (tile.sapSource) {
-      ctx.font = "15px system-ui, sans-serif"; ctx.textAlign = "center";
-      ctx.fillStyle = `rgba(200, 255, 120, ${0.75 + 0.25 * pulse})`;
-      ctx.fillText("◆", c.x, c.y + 4 - 2 * pulse);
+      ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 0.75 + 0.25 * pulse;
+      ctx.drawImage(iconCanvas("shard"), c.x - 8, Math.round(c.y - 12 - 2 * pulse), 16, 16); ctx.globalAlpha = 1;
     }
   }
   if (tile.terrain === "water" && (tile.chargedUntil ?? 0) > clock) {
@@ -454,8 +583,8 @@ function drawSurface(ctx: CanvasRenderingContext2D, tile: Tile, c: { x: number; 
     ctx.globalAlpha = 0.3 + 0.25 * Math.abs(Math.sin(time / 70 + p.x * 5 + p.y * 3));
     diamond(ctx, c.x, c.y, "#fff3a0", "rgba(255, 250, 200, 0.9)");
     ctx.globalAlpha = 1;
-    ctx.font = "13px system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.fillText("⚡", c.x, c.y + 4);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(iconCanvas("bolt"), c.x - 6, c.y - 8, 12, 12);
   }
 }
 
@@ -468,7 +597,7 @@ function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, fill: stri
 
 function drawUnit(
   ctx: CanvasRenderingContext2D, u: Unit, img: Images, c: { x: number; y: number }, active: boolean, time: number, rot: number,
-  preview?: { min: number; max: number }, focus = false, shaky = false, bare = false,
+  preview?: { min: number; max: number }, focus = false, shaky = false, bare = false, flash = false,
 ) {
   const sheet = img[`unit-${u.look}`];
   const team = u.team === "heroes" ? "#ffe680" : "#ff8a7a";
@@ -490,7 +619,10 @@ function drawUnit(
   ctx.translate(c.x, c.y + 6);
   if (f.flip && !downed) ctx.scale(-1, 1);
   if (downed) ctx.globalAlpha = base * 0.6;
+  // Just hit: a white flash (browsers without canvas filters simply skip it), and a small knock back.
+  if (flash) { ctx.filter = "brightness(2.6) saturate(0.3)"; ctx.translate(Math.round(Math.sin(time / 18) * 2), 0); }
   ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32, -64, 64, 64);
+  ctx.filter = "none";
   ctx.restore();
   if (bare) return;
   // Health bar over the head; downed units show the turns they have left.
@@ -516,23 +648,20 @@ function drawUnit(
     ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 24 + 3 * Math.sin(time / 150), 11, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = base;
   }
-  if (downed) {
-    ctx.font = "bold 11px system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.fillStyle = "#fff"; ctx.strokeStyle = "#000"; ctx.lineWidth = 3;
-    ctx.strokeText(`✚ ${u.downedTurns}`, c.x, c.y - 66); ctx.fillText(`✚ ${u.downedTurns}`, c.x, c.y - 66);
-  }
-  // Rooted and status effects: small icons in a row on the right of the health bar.
-  const icons = [...(u.rooted ? ["🌿"] : []), ...u.statuses.map((x) => STATUS[x.id].icon)];
-  if (icons.length) {
-    ctx.font = "bold 10px system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#fff";
-    icons.forEach((ic, i) => { ctx.strokeText(ic, c.x + 20 + i * 11, c.y - 56); ctx.fillText(ic, c.x + 20 + i * 11, c.y - 56); });
-  }
+  if (downed) drawRich(ctx, `✚ ${u.downedTurns}`, c.x, c.y - 70, 12, "#fff");
+  // Rooted and status effects: small pixel icons in a row on the right of the health bar.
+  const icons: IconId[] = [...(u.rooted ? ["plant" as const] : []), ...u.statuses.map((x) => x.id)];
+  ctx.imageSmoothingEnabled = false;
+  icons.forEach((ic, i) => ctx.drawImage(iconCanvas(ic), Math.round(c.x + 16 + i * 10), Math.round(c.y - 64), 10, 10));
   if (u.rival) {
     // A rival from an earlier battle: a purple star over its head.
-    ctx.font = "bold 13px system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.fillStyle = "#d9a0ff";
-    ctx.strokeText("★", c.x, c.y - 76); ctx.fillText("★", c.x, c.y - 76);
+    ctx.drawImage(iconCanvas("rival"), Math.round(c.x - 6), Math.round(c.y - 82), 12, 12);
+  }
+  if (active) {
+    // Whose turn it is: a bouncing arrow over the head, gold for the party, red for foes.
+    const bob = Math.round(Math.abs(Math.sin(time / 260)) * -5);
+    const ay = c.y - (u.rival || yielding(u) ? 104 : 90) + bob;
+    ctx.drawImage(iconCanvas(u.team === "heroes" ? "turn" : "turnFoe"), Math.round(c.x - 10), Math.round(ay), 20, 20);
   }
   // Yielding: a white flag over its head (it can be spared).
   if (yielding(u)) {
@@ -563,6 +692,7 @@ function drawUnit(
 /** Barrels and crates, drawn with plain shapes so they read at a glance in both views. */
 function drawProp(ctx: CanvasRenderingContext2D, prop: Prop, c: { x: number; y: number }, hp: number) {
   ctx.save();
+  if (prop === "boulder") { drawBoulder(ctx, c); ctx.restore(); return; }
   if (prop === "barrel") {
     ctx.fillStyle = "#8c2f1f"; ctx.strokeStyle = "#2a0f08"; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.ellipse(c.x, c.y - 4, 9, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
