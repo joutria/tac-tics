@@ -32,6 +32,7 @@ import {
   activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, unsettled, upcomingTurns, type Unit, type UnitSpec,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
+import { fxSources, type Burst } from "./render/fx";
 import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
 
 /** The run save: the run, with the battle being fought inside it. */
@@ -71,6 +72,8 @@ let rewindArmed = 0;
 /** Hold back: hits that would down a foe stop at 1 HP (sent with each cast). Remembered between battles. */
 let holdBack = false;
 const floaters: Floater[] = [];
+/** One-off smoke and steam puffs on the board (src/render/fx.ts). */
+const bursts: Burst[] = [];
 /** Units hit lately (they flash), and until when the view shakes (blasts, boulders, critical hits). */
 const flashes = new Map<string, number>();
 let shakeUntil = 0;
@@ -393,6 +396,8 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
         flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "" }[f.fx];
       const loud = f.fx === "explode" || f.fx === "flare";
       if (word) floaters.push({ pos: { ...f.at }, text: word, color: loud ? "#ffb347" : "#e8f4ff", born: now + (loud ? 0 : 100) });
+      const puff = ({ douse: "smoke", break: "smoke", explode: "smoke", steam: "steam", melt: "steam", freeze: "steam" } as const)[f.fx as string];
+      if (puff) bursts.push({ pos: { ...f.at }, born: now, kind: puff });
     }
     for (const h of ev.hits) {
       const u = unitById(state, h.unit);
@@ -417,6 +422,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
     }
   }
   while (floaters.length > 40) floaters.shift();
+  while (bursts.length > 24) bursts.shift();
 }
 
 async function maybeFoeTurn() {
@@ -1525,7 +1531,7 @@ function frame(time: number) {
   if (focus && time > focus.until) focus = null;
   const shake = time < shakeUntil ? Math.round(Math.sin(time / 22) * 3 * ((shakeUntil - time) / 320) * (window.devicePixelRatio || 1)) : 0;
   drawBattle(ctx, state, images, shake ? { ...view, ox: view.ox + shake, oy: view.oy + shake / 2 } : view, {
-    marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, motions, flashes,
+    marks: moving ? new Map() : marks(), hover, active: state.active, time, floaters, bursts, motions, flashes,
     danger: dangerTiles(), preview: moving ? undefined : previewHit(), effects: moving ? undefined : previewMoves(), focus: focus?.id,
     escapePaths: moving ? undefined : escapePaths(),
   });
@@ -1538,6 +1544,7 @@ async function start() {
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
+  Object.assign(srcs, fxSources(base));
   images = await loadImages(srcs);
   // Pixel icons everywhere: the menu hand, and every emoji any text still carries becomes a pixel icon as it lands.
   document.documentElement.style.setProperty("--pointer", `url(${iconUrl("pointer")})`);

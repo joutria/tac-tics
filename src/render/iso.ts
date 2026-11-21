@@ -7,6 +7,7 @@ import { MAX_REVIVES } from "../engine/combat";
 import { wavering, yielding } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
 import { iconCanvas, splitIcons, type IconId } from "../ui/icons";
+import { drawBurst, drawCampfireFx, drawFallingLeaf, drawFireTile, drawSteamTile, drawWater, type Burst } from "./fx";
 
 /** Fire that never goes out (camp fires on travel scenes) is drawn as a camp fire: stones, logs and a live flame. */
 const CAMPFIRE_AT = 1e11;
@@ -42,7 +43,8 @@ function drawFlame(ctx: CanvasRenderingContext2D, x: number, y: number, size: nu
 }
 
 /** A camp fire: warm light on the ground, a ring of stones, crossed logs, a tall flame and sparks rising. */
-function drawCampfire(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, time: number, seed: number) {
+function drawCampfire(ctx: CanvasRenderingContext2D, img: Images, c: { x: number; y: number }, time: number, seed: number) {
+  if (drawCampfireFx(ctx, img, c.x, c.y, time, seed)) return;
   ctx.save();
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2, sx = Math.round(c.x + Math.cos(a) * 16), sy = Math.round(c.y + 2 + Math.sin(a) * 8);
@@ -261,6 +263,8 @@ export interface DrawOptions {
   active: string | null;
   time: number;
   floaters: Floater[];
+  /** One-off puffs of smoke or steam (a fire put out, ice melting, a crate breaking). */
+  bursts?: Burst[];
   motions?: Map<string, Motion>;
   /** Tiles some foe could hit next turn (the danger zone). */
   danger?: Set<string>;
@@ -351,7 +355,8 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
           ctx.drawImage(img["side-right"]!, c.x, c.y + lvl * LEVEL);
         }
         const top = img[`top-${tile.terrain}`];
-        if (top) ctx.drawImage(top, c.x - TW / 2, c.y - TH / 2);
+        if (tile.terrain === "water" && drawWater(ctx, img, c.x, c.y, opt.time)) { /* rippling water from the fx sheet */ }
+        else if (top) ctx.drawImage(top, c.x - TW / 2, c.y - TH / 2);
         else {
           // Terrain with no tile art yet (ice, bridge): a plain diamond, with planks drawn on a bridge.
           diamond(ctx, c.x, c.y, FLAT_COLOUR[tile.terrain] ?? "#888", "rgba(0,0,0,0.3)");
@@ -380,21 +385,25 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.fillStyle = "#fff"; ctx.fillText(String(tile.h), c.x, c.y + 8);
         ctx.textBaseline = "alphabetic";
       }
-      if ((tile.fireUntil ?? 0) >= CAMPFIRE_AT) drawCampfire(ctx, c, opt.time, p.x * 7 + p.y);
+      if ((tile.fireUntil ?? 0) >= CAMPFIRE_AT) drawCampfire(ctx, img, c, opt.time, p.x * 7 + p.y);
       else if ((tile.fireUntil ?? 0) > s.clock) {
-        // Fire: a flickering orange wash and two pixel flames.
+        // Fire: a flickering orange wash, animated flames and a thin smoke column (hand-drawn flames if the sheet is missing).
         ctx.globalAlpha = 0.35 + 0.15 * Math.sin(opt.time / 90 + p.x * 3 + p.y);
         diamond(ctx, c.x, c.y, "#ff7a2a", "rgba(255,200,80,0.8)");
         ctx.globalAlpha = 1;
-        drawFlame(ctx, c.x - 7, c.y + 4, 14, opt.time, p.x + p.y * 3);
-        drawFlame(ctx, c.x + 7, c.y + 2, 12, opt.time + 170, p.x * 3 + p.y);
+        if (flat || !drawFireTile(ctx, img, c.x, c.y, opt.time, p.x * 3 + p.y)) {
+          drawFlame(ctx, c.x - 7, c.y + 4, 14, opt.time, p.x + p.y * 3);
+          drawFlame(ctx, c.x + 7, c.y + 2, 12, opt.time + 170, p.x * 3 + p.y);
+        }
       }
       if (tile.prop) drawProp(ctx, tile.prop, c, tile.propHp ?? 0);
       if (tile.steamUntil !== undefined) {
         // Steam: pale puffs drifting up, thick enough to read as "can't see through".
         ctx.globalAlpha = 0.5;
         diamond(ctx, c.x, c.y, "#e6eef4", "rgba(255,255,255,0.8)");
-        for (let i = 0; i < 4; i++) {
+        ctx.globalAlpha = 1;
+        if (!flat && drawSteamTile(ctx, img, c.x, c.y, opt.time, p.x * 5 + p.y)) { /* animated steam columns */ }
+        else for (let i = 0; i < 4; i++) {
           const rise = (opt.time / 30 + i * 10 + p.x * 7) % 40;
           ctx.globalAlpha = 0.85 * (1 - rise / 48);
           ctx.fillStyle = "#f4f8fb";
@@ -414,6 +423,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.globalAlpha = behind ? 0.45 : 1;
         ctx.drawImage(img["obj-tree"]!, c.x - 32, c.y - 56, 64, 64);
         ctx.globalAlpha = 1;
+        drawFallingLeaf(ctx, img, c.x, c.y, opt.time, p.x * 11 + p.y * 5);
       }
       const here = places.some((pl) => !pl.moving && pl.slot.x === p.x && pl.slot.y === p.y);
       if (tile.terrain === "tallgrass") tallGrass(ctx, c, p.x * 7 + p.y * 3, opt.time, false, flat);
@@ -490,6 +500,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     ctx.lineTo(b.x - 9 * Math.cos(ang + 0.5), b.y - 9 * Math.sin(ang + 0.5)); ctx.fill();
     ctx.restore();
   }
+  for (const b of opt.bursts ?? []) { const c = tileCenter(m, b.pos, view.rot); drawBurst(ctx, img, b, c.x, c.y, opt.time); }
   for (const f of opt.floaters) {
     const age = (opt.time - f.born) / 1000;
     if (age < 0 || age > 1.4) continue;
