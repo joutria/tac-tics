@@ -25,6 +25,8 @@ export interface Ability {
   heal?: { min: number; max: number };
   /** Pushes the target this many tiles away from the caster. */
   push?: number;
+  /** The shared Shove: push distance comes from Strength (combat.ts shoveDistance), and heavy units resist. */
+  shove?: boolean;
   /** Target loses all MP on its next turn. */
   root?: boolean;
   /** Caster jumps to the target tile. */
@@ -44,6 +46,7 @@ export const SAP_RICH = 3;
 
 export const ABILITIES: Record<string, Ability> = {
   // Shared by everyone.
+  shove: { id: "shove", element: "neutral", ap: 0, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 1, push: 1, shove: true },
   helpUp: { id: "helpUp", element: "neutral", ap: 3, range: [1, 1], los: false, target: "downedAlly", area: "single", cooldown: 0, perTurn: 1, revive: true },
 
   // The hero: mid-range, Light, Magic based.

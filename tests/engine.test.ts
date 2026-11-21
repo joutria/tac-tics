@@ -4,7 +4,7 @@ import { elementMultiplier } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
 import { planTurn } from "../src/engine/ai";
-import { castProblem, damageFactor, damagePreview, directionBonus, maxRange, previewEffects } from "../src/engine/combat";
+import { castProblem, fallDamage, damageFactor, damagePreview, directionBonus, maxRange, previewEffects } from "../src/engine/combat";
 import { parseMap } from "../src/engine/grid";
 import { canStep, reachable } from "../src/engine/movement";
 import { rngNext, seedFrom } from "../src/engine/rng";
@@ -600,9 +600,52 @@ describe("effect preview", () => {
       unit({ id: "f", team: "foes", pos: { x: 2, y: 0 } }),
     ] });
     const pv = previewEffects(s, unitById(s, "h"), ABILITIES.undertow!, { x: 2, y: 0 });
-    expect(pv.moves).toEqual([{ from: { x: 2, y: 0 }, to: { x: 3, y: 0 }, unit: "f", bump: 3 }]);
+    expect(pv.moves).toEqual([{ from: { x: 2, y: 0 }, to: { x: 3, y: 0 }, unit: "f", bump: 3, fall: 0, fell: 0 }]);
     const after = play(s, [{ t: "cast", unit: "h", ability: "undertow", target: { x: 2, y: 0 } }]);
     expect(unitById(after, "f").pos).toEqual({ x: 3, y: 0 });
     expect(unitById(s, "f").pos).toEqual({ x: 2, y: 0 }); // the preview never touches the real state
+  });
+});
+
+describe("falls and shove", () => {
+  const ledge = (rows = ["d3 d3 d0 d0"]) => parseMap("ledge", rows);
+  it("shove is free, once a turn, and a push down a drop hurts by the levels fallen", () => {
+    const s = createBattle({ seed: 1, map: ledge(), units: [
+      unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90 }),
+      unit({ id: "f", team: "foes", pos: { x: 1, y: 0 } }),
+    ] });
+    const pv = previewEffects(s, unitById(s, "h"), ABILITIES.shove!, { x: 1, y: 0 });
+    // 4 per level x 3 levels, x 0.9 for Agility 10, on dirt: 10.
+    expect(pv.moves).toEqual([{ from: { x: 1, y: 0 }, to: { x: 2, y: 0 }, unit: "f", bump: 0, fall: 10, fell: 3 }]);
+    const after = play(s, [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(unitById(after, "f").pos).toEqual({ x: 2, y: 0 });
+    expect(unitById(after, "f").hp).toBe(30);
+    expect(unitById(after, "h").ap).toBe(6);
+    expect(castProblem(after, unitById(after, "h"), "shove", { x: 2, y: 0 })).not.toBeNull();
+  });
+  it("fall damage grows with Strength and a hard landing, and shrinks with Agility and Stone resistance", () => {
+    const s = createBattle({ seed: 1, map: ledge(), units: [
+      unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, str: 50 }),
+      unit({ id: "f", team: "foes", pos: { x: 1, y: 0 }, agi: 0 }),
+      unit({ id: "g", team: "foes", pos: { x: 3, y: 0 }, agi: 40, res: { stone: 50 } }),
+    ] });
+    const h = unitById(s, "h"), f = unitById(s, "f"), g = unitById(s, "g");
+    expect(fallDamage(s, h, f, 2, "dirt")).toBe(12);   // 4 x 2 x 1.5
+    expect(fallDamage(s, h, f, 2, "ice")).toBe(15);    // x 1.25
+    expect(fallDamage(s, h, f, 2, "grass")).toBe(10);  // x 0.85
+    expect(fallDamage(s, h, g, 2, "dirt")).toBe(3);    // x 0.6 x 0.5
+    expect(fallDamage(s, h, f, 0, "dirt")).toBe(0);
+  });
+  it("a strong shover pushes 2 tiles, and heavy units do not budge", () => {
+    const s = createBattle({ seed: 1, map: flat(1, 5), units: [
+      unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, str: 20 }),
+      unit({ id: "f", team: "foes", pos: { x: 1, y: 0 } }),
+    ] });
+    expect(previewEffects(s, unitById(s, "h"), ABILITIES.shove!, { x: 1, y: 0 }).moves[0]!.to).toEqual({ x: 3, y: 0 });
+    const boss = createBattle({ seed: 1, map: flat(1, 5), units: [
+      unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, str: 20 }),
+      unit({ id: "f", team: "foes", pos: { x: 1, y: 0 }, heavy: true }),
+    ] });
+    expect(castProblem(boss, unitById(boss, "h"), "shove", { x: 1, y: 0 })).toBe("too heavy to shove");
   });
 });
