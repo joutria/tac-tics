@@ -16,8 +16,15 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 - **Reach and height.** Ranged abilities gain 1 range per level above the target and lose 1 per level below (never under 1). Rocks, trees and units block line of sight; high ground sees over them.
 - **Cooldowns and limits** per ability; the map shows the range in red and valid targets in bright red, and hovering a target previews the damage.
 - **Downed, not dead.** At 0 HP a unit is downed for 2 of its turns; an ally can **Help up** (25% HP). Hitting a downed unit kills it. A side with nobody standing loses.
-- **Enemy AI** scores every tile and ability with one turn of lookahead: it counts the damage you could deal next turn (ignoring your abilities on cooldown), hides out of your line of sight, takes high ground, focuses wounded or downed units, and adapts if you keep fighting from range or up close.
+- **Enemy AI** scores every tile and ability with one turn of lookahead: it counts the damage you could deal next turn (ignoring your abilities on cooldown), hides out of your line of sight, takes high ground, shoves crates, barrels and boulders into the party when they line up, focuses wounded or downed units, and adapts if you keep fighting from range or up close.
 - **View:** rotate in 90 degree steps, zoom, drag to pan, and undo moves until you use an ability.
+- **Objects.** Crates, barrels and boulders sit on some maps (`C`, `B` and `O` after a tile in the map rows). Shove
+  or Hurl can push them: a crate slides, a boulder rolls up to 5 tiles and flattens crates in its way, and either one
+  hurts the unit it runs into (more for boulders, longer slides and drops; `IMPACT` in `src/engine/terrain.ts`). A
+  barrel explodes when it hits someone or falls a level. Water swallows whatever slides in. Hovering the target shows
+  where the object stops and who it hits.
+- **Help.** Hovering or focusing any action, spell or button opens a help window with its AP, range, area, damage,
+  cooldown, why it can't be used right now, and its key. Each cast shows its name in a callout, like in FFTA.
 
 ### Sparing and mercy
 
@@ -26,7 +33,7 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
   the party has won. A marked foe under the flag keeps fighting and runs for the edge when it can.
 - **Spare** (1 AP, 1 to 2 tiles, the party only): the yielding foe kneels and leaves. A spared foe never becomes a
   rival; only foes that get away on their own do (they show a running figure while they head for the edge).
-- **Hold back** (the 🤚 button, H, or the left trigger): while it is on, a hit that would down a foe stops at 1 HP
+- **Hold back** (the Hold back button, H, or the left trigger): while it is on, a hit that would down a foe stops at 1 HP
   instead, falls and slams included, and nobody downed is finished off. The forecast says so.
 - **After a win**, every foe still on the map, downed or yielding, gets a Spare or Finish choice.
 - **What it pays.** Each spared foe hands over a gift at once (coins, a Savia shard or a heal), and joins the run's
@@ -111,6 +118,7 @@ npm run build      # production build in dist/
 | `src/engine/` | The rules, with no DOM: grid and heights (`grid.ts`), walking and Lock (`movement.ts`), line of sight (`sight.ts`), battle state, timeline and commands (`state.ts`), damage and abilities (`combat.ts`), enemy AI (`ai.ts`), seeded random (`rng.ts`), saves (`save.ts`) |
 | `src/data/` | Game data: the element wheel from Evolvlings (`elements.ts`), abilities, maps (`maps/`), units |
 | `src/render/iso.ts` | Isometric drawing and turning clicks into tiles |
+| `src/ui/icons.ts` | The 16x16 pixel icon set, and the swap that turns emoji in any text into these icons |
 | `src/run/travel.ts` | Travel scenes: the walk pieces per region, building the strip, the party's paths |
 | `src/ui/worldmap.ts` | The route map as an isometric map of tiles |
 | `src/i18n/text.ts` | Every text in Spanish and English |
@@ -145,4 +153,5 @@ Maps are text rows in `src/data/maps/`, two characters per tile: terrain (`g` gr
 
 ## Art
 
-The isometric tiles are placeholders: the Evolvlings (Ninja Adventure, CC0) top-down tiles rotated 45 degrees and squashed. To rebuild them: `python3 tools/iso-tiles.py <path to an Evolvlings checkout>` (needs Pillow). See `CREDITS.md`.
+The interface uses its own 16x16 pixel icons (`src/ui/icons.ts`, drawn as text grids; the checker makes sure every
+status, element and emoji has one) and the Pixelify Sans font. The isometric tiles are placeholders: the Evolvlings (Ninja Adventure, CC0) top-down tiles rotated 45 degrees and squashed. To rebuild them: `python3 tools/iso-tiles.py <path to an Evolvlings checkout>` (needs Pillow). See `CREDITS.md`.

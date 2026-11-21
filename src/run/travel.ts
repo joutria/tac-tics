@@ -21,7 +21,8 @@ const PIECE_X = 1, TRAIL_X = PIECE_X + 3;
 /** Fire that never goes out (camp fires, the embers of a battle). */
 const FOREVER = 1e12;
 
-/** Piece rows use the map format of src/data/maps, plus F for a fire on the tile. */
+/** Piece rows use the map format of src/data/maps, plus F for a fire on the tile, and T (a tent, on a tree tile) or
+    R (a bedroll) for camp scenery. */
 type Piece = string[];
 
 /** The walk pieces of each region: 7 wide, the trail on column 3 of the first and last row. */
@@ -66,7 +67,7 @@ const PLACES: Record<"gate" | "camp" | "shop" | "clearing", Place> = {
   // The edge of a region: a gap in a broken wall.
   gate: { rows: ["g0 g0 g0 d0 g0 g0 g0", "g0 g0 g0 d0 g0 g0 g0", "r1 r1 g0 d0 g0 r1 r1", "g0 g0C g0 d0 g0 g0B g0", "g0 g0 g0 d0 g0 g0 g0"], stand: { x: 3, y: 4 } },
   // A camp: the fire in the middle, the party around it.
-  camp: { rows: ["g0 g0 g0 d0 g0 g0 g0", "t0 g0 d0 d0 d0 g0 t0", "g0 d0 d0 d0F d0 d0 g0", "g0 g0 d0 d0 d0 g0C g0", "g0 t0 g0 g0 g0 g0 g0"], stand: { x: 3, y: 3 } },
+  camp: { rows: ["g0 g0 g0 d0 g0 g0 g0", "t0T g0 d0 d0 d0 g0 t0", "g0 d0R d0 d0F d0 d0R g0", "g0 g0 d0 d0 d0 g0C g0", "g0 t0 g0 g0 g0 t0T g0"], stand: { x: 3, y: 3 } },
   // A trader's stall: crates and barrels along the road.
   shop: { rows: ["g0 g0 g0 d0 g0 g0 g0", "g0C g0B g0 d0 g0 g0C g0C", "g0 g0 d0 d0 d0 g0 g0", "g0 g0C g0 d0 g0 g0B g0", "g0 g0 g0 g0 g0 g0 g0"], stand: { x: 3, y: 2 } },
   // Somewhere to talk: a quiet clearing.
@@ -95,11 +96,18 @@ export interface Scene {
 }
 
 const parsePiece = (id: string, rows: Piece, mirror: boolean, flip: boolean): Tile[][] => {
-  const fire = rows.map((r) => r.trim().split(/\s+/).map((c) => c.endsWith("F")));
-  const plain = rows.map((r) => r.trim().split(/\s+/).map((c) => c.replace("F", "")).join(" "));
+  const cells = rows.map((r) => r.trim().split(/\s+/));
+  const plain = cells.map((r) => r.map((c) => c.replace(/[FTR]/g, "")).join(" "));
   const m = parseMap(id, plain);
   let grid: Tile[][] = [];
-  for (let y = 0; y < m.h; y++) grid.push(m.tiles.slice(y * m.w, (y + 1) * m.w).map((t, x) => (fire[y]![x] ? { ...t, fireUntil: FOREVER } : t)));
+  for (let y = 0; y < m.h; y++) grid.push(m.tiles.slice(y * m.w, (y + 1) * m.w).map((t, x) => {
+    const c = cells[y]![x]!;
+    const out: Tile = c.includes("F") ? { ...t, fireUntil: FOREVER } : t;
+    // Camp scenery, drawn only: a tent (on a tile nobody can walk) and a bedroll (on the ground).
+    if (c.includes("T")) return { ...out, deco: "tent" as const };
+    if (c.includes("R")) return { ...out, deco: "bedroll" as const };
+    return out;
+  }));
   if (mirror) grid = grid.map((row) => [...row].reverse());
   if (flip) grid = [...grid].reverse();
   return grid;

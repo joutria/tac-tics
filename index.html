@@ -5,102 +5,170 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Tac-tics</title>
   <style>
-    :root { color-scheme: dark; --bg: #1d1f2b; --panel: rgba(20, 22, 32, 0.9); --ink: #f2efe6; --quiet: #a9a7b8; --accent: #ffd86b; --hero: #ffe680; --foe: #ff8a7a; }
+    /* FFTA-style windows: deep blue gradient, a cream frame inside a dark rim, a pixel font, a pointing hand on the
+       item in focus. Every window shares the .win look; buttons inside the battle menus are rows (.cmd). */
+    :root {
+      color-scheme: dark; --bg: #1d1f2b; --ink: #f7f3e8; --quiet: #b9c2e8; --accent: #ffe06b; --hero: #ffe680; --foe: #ff8a7a;
+      --win-top: #3a5fc2; --win-mid: #233d92; --win-bot: #172a6e; --frame: #ece6d2; --rim: #0b1033;
+      --panel: linear-gradient(180deg, var(--win-top) 0%, var(--win-mid) 55%, var(--win-bot) 100%);
+      --px: "Pixelify Sans", system-ui, sans-serif;
+    }
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.35 system-ui, sans-serif; overflow: hidden; -webkit-user-select: none; user-select: none; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 15px/1.3 var(--px); overflow: hidden; -webkit-user-select: none; user-select: none; }
     canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
-    .bar { position: fixed; left: 0; right: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; background: var(--panel); }
+    img.ico { width: 16px; height: 16px; image-rendering: pixelated; vertical-align: -3px; flex: none; }
+    img.ico.big { width: 24px; height: 24px; vertical-align: -6px; }
+    img.ico.huge { width: 32px; height: 32px; }
+    .win { background: var(--panel); border: 2px solid var(--frame); border-radius: 8px; color: var(--ink); text-shadow: 1px 1px 0 var(--rim);
+      box-shadow: 0 0 0 2px var(--rim), inset 0 0 0 1px rgba(255,255,255,0.18), 0 6px 18px rgba(0,0,0,0.55); }
+    /* The bars hold windows; empty parts let taps through to the map. */
+    .bar { position: fixed; left: 0; right: 0; display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; padding: 8px 10px; pointer-events: none; z-index: 2; }
+    .bar > * { pointer-events: auto; }
+    .bar > .spacer { pointer-events: none; }
     #top { top: 0; padding-top: max(8px, env(safe-area-inset-top)); }
-    #bottom { bottom: 0; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
-    #turn { font-weight: 600; }
-    #stats { color: var(--quiet); }
-    #queue { display: flex; gap: 4px; flex-basis: 100%; overflow-x: auto; align-items: center; color: var(--quiet); font-size: 12px; }
-    .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 3px; border-radius: 999px; border: 1px solid; white-space: nowrap; font-size: 12px; background: transparent; }
+    #bottom { bottom: 0; padding-bottom: max(8px, env(safe-area-inset-bottom)); align-items: flex-end; }
+    .spacer { flex: 1; }
+    /* The unit in play: face, name, element, HP / AP / MP. */
+    #unitCard { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 6px 10px 6px 6px; min-width: 210px; }
+    #unitCard .face { grid-row: span 3; width: 44px; height: 44px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 2px solid var(--frame); image-rendering: pixelated; object-fit: contain; }
+    #unitCard .name { display: flex; gap: 6px; align-items: center; font-size: 16px; font-weight: 600; }
+    #unitCard .name.foes { color: var(--foe); } #unitCard .name.heroes { color: var(--hero); }
+    #unitCard .round { margin-left: auto; font-size: 12px; color: var(--quiet); font-weight: 400; }
+    .gauge { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+    .gauge .track { position: relative; width: 96px; height: 8px; background: var(--rim); border: 1px solid rgba(255,255,255,0.35); border-radius: 2px; }
+    .gauge .fill { position: absolute; inset: 0 auto 0 0; background: linear-gradient(#a4f07c, #4fb03a); }
+    .gauge .fill.low { background: linear-gradient(#ffd27a, #d98a1c); } .gauge .fill.crit { background: linear-gradient(#ff8a7a, #c0392b); }
+    .pips { display: flex; gap: 2px; } .pips i { width: 7px; height: 9px; background: var(--rim); border: 1px solid rgba(255,255,255,0.3); border-radius: 1px; }
+    .pips.ap i.on { background: linear-gradient(#fff2a0, #e0a02a); } .pips.mp i.on { background: linear-gradient(#bfe6ff, #3f8ad8); }
+    .gauge b { min-width: 46px; font-weight: 400; }
+    /* View tools, top right. */
+    #tools { display: flex; gap: 4px; padding: 4px; flex-wrap: wrap; justify-content: flex-end; }
+    /* Turn order. */
+    #queue { display: flex; gap: 4px; flex-basis: 100%; overflow-x: auto; align-items: center; font-size: 12px; padding: 3px 6px; scrollbar-width: none; }
+    #queue .label { color: var(--quiet); margin-right: 2px; white-space: nowrap; }
+    .chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px 1px 2px; border-radius: 4px; border: 2px solid; white-space: nowrap; font: 12px var(--px); background: rgba(11,16,51,0.55); color: var(--ink); cursor: pointer; }
     .chip img { width: 20px; height: 20px; image-rendering: pixelated; }
-    #tip .down { color: #ff8a7a; }
-    #tip .hg { color: #ffd27a; }
-    button.armed { background: #7a2f28; border-color: #ff8a7a; }
     .chip.heroes { border-color: var(--hero); color: var(--hero); }
     .chip.foes { border-color: var(--foe); color: var(--foe); }
-    .chip.now { background: rgba(255,255,255,0.12); font-weight: 600; }
-    .spacer { flex: 1; }
-    button { font: inherit; color: var(--ink); background: #3a3d55; border: 1px solid #5a5e80; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
-    button.primary { background: #6b5a1e; border-color: var(--accent); }
-    button.go { background: #2f6b3a; border-color: #8fe39a; font-weight: 600; }
-    button.on { background: #7a2f28; border-color: #ff8a7a; }
-    button:disabled { opacity: 0.45; cursor: default; }
-    button.icon { min-width: 40px; padding: 4px 8px; font-size: 18px; line-height: 1.2; }
-    .ab { display: flex; flex-direction: column; align-items: flex-start; min-width: 74px; line-height: 1.15; }
-    .ab small { color: var(--quiet); font-size: 11px; }
-    .ab.quickToggle { border-color: #e0c060; }
-    .ab.quick { background: #3d3a28; border-color: #b49a48; }
-    .ab.quick.on { background: #7a2f28; border-color: #ff8a7a; }
-    #abilities { display: flex; gap: 6px; flex-wrap: wrap; }
-    #hint { flex-basis: 100%; font-size: 12px; color: var(--quiet); }
+    .chip.now { background: rgba(255, 224, 107, 0.25); font-weight: 600; box-shadow: 0 0 0 2px var(--rim); }
+    .chip.now::before { content: ""; width: 0; height: 0; border: 5px solid transparent; border-left-color: var(--accent); margin-right: -2px; }
+    /* Buttons: bevelled blue tiles with a cream frame; the green one confirms, the gold one ends the turn. */
+    button { font: inherit; color: var(--ink); text-shadow: 1px 1px 0 var(--rim); background: linear-gradient(#4f74d6, #2b479f); border: 2px solid var(--frame);
+      border-radius: 6px; padding: 5px 10px; cursor: pointer; box-shadow: 0 0 0 1px var(--rim), inset 0 -2px 0 rgba(0,0,0,0.25); display: inline-flex; align-items: center; gap: 5px; }
+    button:hover:not(:disabled) { filter: brightness(1.15); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button.primary { background: linear-gradient(#e6b84a, #a8741c); }
+    button.go { background: linear-gradient(#5bc46a, #2a7d38); font-weight: 600; }
+    button.on, button.armed { background: linear-gradient(#e0644f, #8e2a22); }
+    button:disabled { opacity: 0.45; cursor: default; filter: grayscale(0.6); }
+    button.icon { min-width: 34px; min-height: 34px; padding: 3px; justify-content: center; }
+    button.icon img.ico { width: 22px; height: 22px; }
+    button:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+    /* The command menu: one row per ability, the hand on the one in focus or chosen. */
+    #menu { display: flex; flex-direction: column; padding: 6px 4px; min-width: 230px; max-height: 46vh; overflow-y: auto; }
+    #menu h3 { margin: 0 8px 4px 22px; font-size: 13px; font-weight: 400; color: var(--quiet); letter-spacing: 0.5px; }
+    #abilities { display: flex; flex-direction: column; }
+    button.cmd { background: none; border: 0; box-shadow: none; border-radius: 4px; padding: 3px 8px 3px 22px; position: relative; width: 100%; justify-content: flex-start; gap: 7px; min-height: 30px; text-align: left; }
+    button.cmd .nm { flex: 1; white-space: nowrap; }
+    button.cmd .cost { display: inline-flex; gap: 2px; align-items: center; font-size: 13px; color: var(--accent); white-space: nowrap; }
+    button.cmd .cost.cd { color: var(--quiet); }
+    button.cmd:hover:not(:disabled), button.cmd:focus-visible, button.cmd.on { background: rgba(255,255,255,0.14); filter: none; outline: none; }
+    button.cmd.on { background: rgba(255, 224, 107, 0.22); }
+    button.cmd:hover::before, button.cmd:focus-visible::before, button.cmd.on::before { content: ""; position: absolute; left: 0; top: 50%; width: 20px; height: 20px; margin-top: -10px;
+      background: var(--pointer) center / contain no-repeat; image-rendering: pixelated; animation: nudge 0.6s steps(2) infinite; }
+    button.cmd.sub { padding-left: 34px; } button.cmd.sub:hover::before, button.cmd.sub:focus-visible::before, button.cmd.sub.on::before { left: 12px; }
+    button.cmd.quickToggle .nm::after { content: " ▸"; color: var(--quiet); } button.cmd.quickToggle.open .nm::after { content: " ▾"; }
+    button.cmd:disabled { opacity: 0.4; }
+    @keyframes nudge { 50% { transform: translateX(3px); } }
+    #system { display: flex; flex-direction: column; gap: 5px; padding: 6px; align-items: stretch; }
+    #system .row { display: flex; gap: 5px; }
+    #system button { justify-content: flex-start; }
+    #system #end { justify-content: center; font-weight: 600; }
+    #hint { position: fixed; left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--quiet); text-shadow: 1px 1px 0 #000; pointer-events: none; text-align: center; max-width: 90vw; z-index: 1; }
+    /* Help window: what the item under the pointer, in focus or chosen does. Under the top bar, like FFTA's help line. */
+    #help { position: fixed; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 20px)); padding: 7px 12px 8px; display: none; z-index: 3; pointer-events: none; }
+    #help .head { display: flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 600; color: var(--accent); }
+    #help .chips { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 4px 0 3px; font-size: 13px; }
+    #help .chips span { display: inline-flex; align-items: center; gap: 3px; }
+    #help p { margin: 0; font-size: 14px; line-height: 1.35; }
+    #help .why { color: #ffb3a6; margin-top: 3px; }
+    #help kbd { font: 11px var(--px); padding: 0 4px; border: 1px solid var(--frame); border-radius: 3px; background: rgba(0,0,0,0.3); margin-left: 6px; color: var(--quiet); }
+    /* The ability being used, called out at the top (FFTA style). */
+    #callout { position: fixed; left: 50%; transform: translate(-50%, -8px); display: flex; align-items: center; gap: 8px; padding: 6px 16px 6px 10px; z-index: 4;
+      pointer-events: none; opacity: 0; transition: opacity .15s, transform .15s; font-size: 18px; font-weight: 600; white-space: nowrap; }
+    #callout.show { opacity: 1; transform: translate(-50%, 0); }
+    #callout span { display: flex; flex-direction: column; line-height: 1.1; } #callout small { font-size: 11px; font-weight: 400; color: var(--quiet); }
+    #callout.foes { border-color: #ffb3a6; } #callout.foes span { color: #ffd0c8; }
     /* Floats just above the bottom bar so showing it never shifts the map under the player's finger. */
-    #act { position: fixed; left: 0; right: 0; display: flex; justify-content: center; gap: 10px; pointer-events: none; }
-    #act button { pointer-events: auto; padding: 10px 18px; font-size: 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
-    #tip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid #5a5e80; border-radius: 8px; padding: 6px 9px; font-size: 12px; max-width: 240px; display: none; }
+    #act { position: fixed; left: 0; right: 0; display: flex; justify-content: center; gap: 10px; pointer-events: none; z-index: 3; }
+    #act button { pointer-events: auto; padding: 9px 16px; font-size: 16px; box-shadow: 0 0 0 2px var(--rim), 0 4px 14px rgba(0,0,0,0.5); }
+    #tip { position: fixed; pointer-events: none; padding: 6px 9px; font-size: 13px; max-width: 270px; display: none; z-index: 4; }
     #tip b { color: var(--accent); }
     #tip .quiet { color: var(--quiet); }
-    #overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); flex-direction: column; gap: 16px; }
-    #overlay h1 { margin: 0; font-size: 40px; }
-    #mercy { display: flex; flex-direction: column; gap: 8px; align-items: stretch; max-width: min(420px, calc(100vw - 32px)); max-height: 50vh; overflow-y: auto; background: var(--panel); border: 1px solid #5a5e80; border-radius: 12px; padding: 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.6); }
+    #tip .down { color: #ffb3a6; }
+    #tip .hg { color: #ffd27a; }
+    #overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(5,8,25,0.6); flex-direction: column; gap: 14px; }
+    #overlay h1 { margin: 0; font-size: 44px; letter-spacing: 2px; color: var(--accent); text-shadow: 3px 3px 0 var(--rim), 0 0 18px rgba(255,224,107,0.5); }
+    #mercy { display: flex; flex-direction: column; gap: 8px; align-items: stretch; max-width: min(420px, calc(100vw - 32px)); max-height: 50vh; overflow-y: auto; padding: 12px; }
     #mercy:empty { display: none; }
-    #mercy h2 { margin: 0; font-size: 18px; text-align: center; }
+    #mercy h2 { margin: 0; font-size: 18px; text-align: center; color: var(--accent); }
     #mercy p { margin: 0; font-size: 13px; color: var(--quiet); text-align: center; }
-    #mercy .foe { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06); border-radius: 8px; padding: 6px 8px; }
+    #mercy .foe { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 6px 8px; }
     #mercy .foe img { width: 32px; height: 32px; image-rendering: pixelated; }
     #mercy .foe span { flex: 1; }
     #mercy .foe button { min-height: 40px; }
-    #toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: pre-line; text-align: center; max-width: 90vw; }
+    #toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 16px; opacity: 0; transition: opacity .3s; pointer-events: none; white-space: pre-line; text-align: center; max-width: 90vw; }
     #toast.show { opacity: 1; }
     .esc { color: #ffc85a; }
-  .rival { color: #d9a0ff; }
+    .rival { color: #e2b8ff; }
   #travel { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 3; }
-  #travel .bar, #runmap .bar { pointer-events: auto; }
-  #travelTop { top: 0; padding-top: max(8px, env(safe-area-inset-top)); }
-  #travelBottom, #routeBottom { bottom: 0; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
-  #runHead { font-size: 13px; } #runHead b { color: var(--accent); }
-  #runHint, #routeHint { color: var(--quiet); font-size: 13px; white-space: pre-line; }
+  #travel .bar, #runmap .bar { pointer-events: none; }
+  #travelTop, #routeTop { top: 0; padding-top: max(8px, env(safe-area-inset-top)); align-items: center; }
+  #travelBottom, #routeBottom { bottom: 0; padding-bottom: max(8px, env(safe-area-inset-bottom)); align-items: flex-end; }
+  #runHead { font-size: 14px; padding: 6px 10px; } #runHead b { color: var(--accent); }
+  #runHead:empty, #runHintBox:has(#runHint:empty) { display: none; }
+  #runHintBox, #routeHintBox { padding: 6px 12px; max-width: min(640px, 100%); }
+  #runHint, #routeHint { color: var(--ink); font-size: 14px; white-space: pre-line; }
   #routeKeys { color: var(--quiet); font-size: 12px; }
-  #routeTop { top: 0; padding-top: max(8px, env(safe-area-inset-top)); } #routeTitle { color: var(--accent); }
+  #routeTitleBox { padding: 6px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; } #routeTitle { color: var(--accent); }
   #runmap { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 5; }
-  body.mapopen #top, body.mapopen #bottom, body.mapopen #act, body.mapopen #travel, body.mapopen #overlay, body.mapopen #tip { display: none !important; }
+  body.mapopen #top, body.mapopen #bottom, body.mapopen #act, body.mapopen #travel, body.mapopen #overlay, body.mapopen #tip, body.mapopen #help, body.mapopen #hint, body.mapopen #callout { display: none !important; }
   #signs { position: absolute; inset: 0; pointer-events: none; }
   .sign { position: absolute; pointer-events: auto; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; gap: 1px;
-    padding: 5px 10px 6px; background: #5a3d1f; border: 2px solid #c9934f; border-radius: 6px; box-shadow: 0 3px 0 #2e1d0c, 0 6px 14px rgba(0,0,0,.45); white-space: nowrap; }
-  .sign::after { content: ""; position: absolute; top: 100%; left: 50%; width: 5px; height: 16px; margin-left: -2.5px; background: #4a2f15; border-radius: 0 0 2px 2px; }
-  .sign b { font-size: 20px; line-height: 1.1; } .sign span { font-size: 12px; color: #ffe9c0; }
+    padding: 5px 10px 6px; background: linear-gradient(#7a5530, #5a3d1f); border: 2px solid #d9a35f; border-radius: 6px; box-shadow: 0 0 0 2px #2e1d0c, 0 6px 14px rgba(0,0,0,.45); white-space: nowrap; flex-direction: column; }
+  .sign::after { content: ""; position: absolute; top: 100%; left: 50%; width: 6px; height: 16px; margin-left: -3px; background: #4a2f15; border: 1px solid #2e1d0c; border-top: 0; }
+  .sign span { font-size: 13px; color: #ffe9c0; }
   .sign.rival { border-color: #d9a0ff; } .sign.boss { border-color: #ff8a7a; }
   .sign.sel, .sign:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-  button:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
-  #runPanel { position: fixed; inset: 0; z-index: 6; display: none; flex-direction: column; align-items: center; justify-content: safe center; gap: 12px; background: rgba(15, 16, 24, 0.94); padding: 16px; overflow-y: auto; }
+  #runPanel { position: fixed; inset: 0; z-index: 6; display: none; flex-direction: column; align-items: center; justify-content: safe center; gap: 12px; background: rgba(8, 10, 28, 0.88); padding: 16px; overflow-y: auto; }
+  #runPanel > * { max-width: 600px; }
   #runPanel .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
   #runPanel .say { margin: 0; line-height: 1.45; }
   #runPanel .say, #runPanel pre.stats { max-width: 560px; }
-  #runPanel pre.stats { margin: 0; width: min(560px, 100%); white-space: pre-wrap; font-size: 12px; line-height: 1.5; color: var(--quiet); background: rgba(255,255,255,0.04); padding: 10px 12px; border-radius: 8px; }
+  #runPanel pre.stats { margin: 0; width: min(560px, 100%); white-space: pre-wrap; font-size: 12px; line-height: 1.5; color: var(--quiet); background: rgba(0,0,0,0.25); padding: 10px 12px; border-radius: 6px; font-family: var(--px); }
   #runPanel .say.reply { color: var(--accent); }
-  #runPanel .say.down { color: #ff8a7a; }
+  #runPanel .say.down { color: #ffb3a6; }
   #runPanel .say.ending { padding-left: 10px; border-left: 3px solid var(--quiet); }
   #runPanel .say.ending.good { border-color: #7ed957; }
   #runPanel .say.ending.bad { border-color: #ff8a7a; }
-  #runHint { white-space: pre-line; }
   #runPanel .spoils { margin: 0; color: var(--quiet); }
-  #runPanel h2 { margin: 0; font-size: 20px; color: var(--accent); text-align: center; }
-  #runPanel .cards { display: flex; flex-direction: column; gap: 10px; width: min(420px, 100%); }
-  #runPanel .card { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px 12px; }
-  #runPanel .card small { color: var(--quiet); font-size: 11px; }
+  #runPanel h2 { margin: 0; font-size: 22px; color: var(--accent); text-align: center; text-shadow: 2px 2px 0 var(--rim); }
+  #runPanel .cards { display: flex; flex-direction: column; gap: 8px; width: min(440px, 100%); }
+  #runPanel .card { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 9px 12px 9px 26px; position: relative; background: var(--panel); }
+  #runPanel .card small { color: var(--quiet); font-size: 12px; }
   #runPanel .card em { color: var(--accent); font-style: normal; font-size: 12px; }
   #runPanel .card.worn { border-color: var(--accent); }
+  #runPanel .card:hover:not(:disabled)::before, #runPanel .card:focus-visible::before { content: ""; position: absolute; left: 3px; top: 12px; width: 20px; height: 20px;
+    background: var(--pointer) center / contain no-repeat; image-rendering: pixelated; animation: nudge 0.6s steps(2) infinite; }
+  #runPanel .card:focus-visible { outline: 3px solid var(--accent); }
   /* Alignment meters: minus side left, plus side right, ticks at 20 and 50. */
-  .meters { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; align-items: center; font-size: 11px; color: var(--quiet); }
+  .meters { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; align-items: center; font-size: 12px; color: var(--quiet); }
   .meters .alignName b { color: var(--accent); }
   .meter { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-  .meter small { font-size: 10px; }
+  .meter small { font-size: 11px; }
   .meter em { font-style: normal; color: var(--ink); min-width: 2.6em; }
-  .meter .track { position: relative; display: inline-block; width: 92px; height: 7px; background: rgba(255,255,255,0.12); border-radius: 4px; }
-  .meter .fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+  .meter .track { position: relative; display: inline-block; width: 92px; height: 7px; background: rgba(0,0,0,0.35); border-radius: 2px; }
+  .meter .fill { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
   .meter.mercy .fill { background: #7ed957; } .meter.mercy .fill.neg { background: #ff8a7a; }
   .meter.purity .fill { background: #ffe680; } .meter.purity .fill.neg { background: #b0603c; }
   .meter .tick { position: absolute; top: -2px; bottom: -2px; width: 1px; background: rgba(255,255,255,0.35); }
@@ -111,56 +179,81 @@
   #runPanel h3 { margin: 6px 0 0; font-size: 15px; color: var(--accent); }
   #runPanel .card.locked { opacity: 0.6; }
   #runPanel .card.locked em { color: var(--quiet); }
-  .tag { display: inline-block; font-size: 10px; font-weight: normal; padding: 1px 6px; margin-left: 4px; border-radius: 8px; vertical-align: middle; color: #15161f; }
+  .tag { display: inline-block; font-size: 10px; font-weight: normal; padding: 1px 6px; margin-left: 4px; border-radius: 4px; vertical-align: middle; color: #15161f; text-shadow: none; }
   .tag.mercy { background: #7ed957; } .tag.severity { background: #ff8a7a; } .tag.purity { background: #ffe680; } .tag.sap { background: #c07a52; }
   #runPanel .say.ending.hero { border-color: var(--accent); }
-  @media (max-width: 420px) { .meter .track { width: 64px; } #runPanel .say .meter .track { width: 84px; } }
-  .r-common { color: var(--ink); } .r-rare { color: #7fc4ff; } .r-epic { color: #d9a0ff; }
+  .r-common { color: var(--ink); } .r-rare { color: #9fd2ff; } .r-epic { color: #e2b8ff; }
   #toast { z-index: 7; } #overlay { z-index: 4; }
-  #resultNote { color: #ffc85a; margin: 0 16px; text-align: center; }
+  #resultNote { color: #ffc85a; margin: 0 16px; text-align: center; text-shadow: 1px 1px 0 #000; }
+  #resultNote:empty { display: none; }
+  /* Phones: the menu becomes a two-column grid along the bottom, the system buttons a row of icons. */
+  @media (max-width: 720px) {
+    #top { flex-wrap: wrap; gap: 6px; padding-left: 6px; padding-right: 6px; }
+    #top > .spacer, #bottom > .spacer { display: none; }
+    #unitCard { min-width: 0; flex: 1; padding: 4px 6px 4px 4px; gap: 1px 6px; } #unitCard .face { width: 34px; height: 34px; } .gauge .track { width: 58px; }
+    #unitCard .name { font-size: 14px; } .pips i { width: 6px; }
+    #tools { display: grid; grid-template-columns: repeat(4, auto); gap: 3px; padding: 3px; }
+    #tools button.icon { min-width: 30px; min-height: 30px; padding: 2px; } #tools button.icon img.ico { width: 18px; height: 18px; }
+    #help { padding: 5px 9px 6px; } #help .head { font-size: 14px; } #help .chips { font-size: 12px; gap: 2px 8px; } #help p { font-size: 13px; }
+    #bottom { flex-wrap: nowrap; gap: 6px; padding-left: 6px; padding-right: 6px; }
+    #menu { min-width: 0; flex: 1; max-height: 34vh; padding: 4px 2px; }
+    #menu h3 { display: none; }
+    #abilities { display: grid; grid-template-columns: 1fr 1fr; }
+    button.cmd { padding: 3px 4px 3px 18px; font-size: 13px; min-height: 34px; gap: 4px; } button.cmd.sub { padding-left: 18px; }
+    button.cmd.sub:hover::before, button.cmd.sub.on::before { left: 0; }
+    button.cmd .cost { font-size: 12px; }
+    #system { padding: 4px; } #system button .lbl { display: none; } #system button { justify-content: center; padding: 4px; min-width: 40px; min-height: 36px; }
+    #system #end .lbl { display: inline; }
+    .meter .track { width: 64px; } #runPanel .say .meter .track { width: 84px; }
+    #travelTools #mapBtn .lbl, #travelTools #gearBtn .lbl, #travelTools #statsBtn .lbl, #travelTools #mapLang .lbl { display: none; }
+    #travelTools button { min-height: 34px; }
+  }
 </style>
 </head>
 <body>
   <canvas id="game"></canvas>
   <div id="top" class="bar">
-    <span id="turn"></span><span id="stats"></span>
+    <div id="unitCard" class="win"></div>
     <span class="spacer"></span>
-    <button id="zoomOut" aria-label="−">−</button><button id="zoomIn" aria-label="+">+</button>
-    <button id="rotateL" class="icon"></button><button id="rotateR" class="icon"></button>
-    <button id="flat"></button>
-    <button id="danger"></button>
-    <button id="lang"></button>
-    <div id="queue"></div>
+    <div id="tools" class="win">
+      <button id="zoomOut" class="icon"></button><button id="zoomIn" class="icon"></button>
+      <button id="rotateL" class="icon"></button><button id="rotateR" class="icon"></button>
+      <button id="flat" class="icon"></button>
+      <button id="danger" class="icon"></button>
+      <button id="lang" class="icon"></button>
+    </div>
+    <div id="queue" class="win"></div>
   </div>
   <div id="bottom" class="bar">
-    <div id="abilities"></div>
+    <div id="menu" class="win"><h3 id="menuTitle"></h3><div id="abilities"></div></div>
     <span class="spacer"></span>
-    <button id="rewind"></button>
-    <button id="undo"></button>
-    <button id="hold"></button>
-    <button id="wait"></button>
-    <button id="guard"></button>
-    <button id="end" class="primary"></button>
-    <span id="hint"></span>
+    <div id="system" class="win">
+      <div class="row"><button id="undo"></button><button id="rewind"></button></div>
+      <div class="row"><button id="hold"></button><button id="wait"></button><button id="guard"></button></div>
+      <button id="end" class="primary"></button>
+    </div>
   </div>
+  <span id="hint"></span>
+  <div id="help" class="win" role="status" aria-live="polite"></div>
+  <div id="callout" class="win" aria-live="polite"></div>
   <div id="act"><button id="cancel"></button><button id="confirm" class="go"></button></div>
-  <div id="tip"></div>
-  <div id="overlay"><h1 id="result"></h1><p id="resultNote"></p><div id="mercy"></div><button id="again" class="primary"></button></div>
+  <div id="tip" class="win"></div>
+  <div id="overlay"><h1 id="result"></h1><p id="resultNote"></p><div id="mercy" class="win"></div><button id="again" class="primary"></button></div>
   <div id="travel">
     <div id="travelTop" class="bar">
-      <div id="runHead"></div>
+      <div id="runHead" class="win"></div>
       <span class="spacer"></span>
-      <button id="mapBtn"></button><button id="gearBtn"></button><button id="statsBtn"></button><button id="mapLang"></button><button id="newRun"></button>
+      <div id="travelTools" class="win" style="display:flex;gap:4px;padding:4px;flex-wrap:wrap"><button id="mapBtn"></button><button id="gearBtn"></button><button id="statsBtn"></button><button id="mapLang"></button><button id="newRun"></button></div>
     </div>
     <div id="signs"></div>
-    <div id="travelBottom" class="bar"><span id="runHint"></span><span class="spacer"></span><button id="skipBtn"></button></div>
+    <div id="travelBottom" class="bar"><div id="runHintBox" class="win"><span id="runHint"></span></div><span class="spacer"></span><button id="skipBtn"></button></div>
   </div>
   <div id="runmap">
-    <div id="routeTop" class="bar"><b id="routeTitle"></b><span id="routeKeys"></span><span class="spacer"></span><button id="closeMap" class="primary"></button></div>
-    <div id="routeBottom" class="bar"><span id="routeHint"></span></div>
+    <div id="routeTop" class="bar"><div id="routeTitleBox" class="win"><b id="routeTitle"></b><span id="routeKeys"></span></div><span class="spacer"></span><button id="closeMap" class="primary"></button></div>
+    <div id="routeBottom" class="bar"><div id="routeHintBox" class="win"><span id="routeHint"></span></div></div>
   </div>
   <div id="runPanel"></div>
-  <div id="toast"></div>
+  <div id="toast" class="win"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

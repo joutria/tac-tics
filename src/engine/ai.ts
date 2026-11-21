@@ -5,7 +5,7 @@
    with line of sight and height (so they hide behind obstacles and look for high ground). It also reads how the
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
 import { ABILITIES, type Ability } from "../data/abilities";
-import { abilityAvailable, areaTiles, damagePreview, guardAbility, maxRange, pushOutcome, shoveDistance, stuck, throwOutcome, unitAbilities } from "./combat";
+import { abilityAvailable, areaTiles, damagePreview, guardAbility, maxRange, previewEffects, pushOutcome, shoveDistance, stuck, throwOutcome, unitAbilities } from "./combat";
 import { manhattan, NEIGHBOURS, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain";
 import { reachable } from "./movement";
@@ -162,6 +162,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (!hit) return 0;
     return isFoe(u, hit) ? Math.min(o.damage, hit.hp) + (o.damage >= hit.hp ? 25 : 0) : -(o.damage * 1.5 + 5);
   }
+  if (ab.push && ab.area === "single" && tileAt(s.map, target)?.prop && !unitAt(s, target)) return objectPushValue(s, u, ab, from, target);
   let flared = false;
   for (const p of areaTiles(ab, target)) {
     if ((ab.damage || ab.element === "fire") && tileAt(s.map, p)?.prop === "barrel") v += blastValue(s, u, p, from);
@@ -198,6 +199,22 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
   return v;
 }
 
+/** Pushing a crate, barrel or boulder: worth the damage it does to whoever it runs into, and any blast it sets off. */
+function objectPushValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos): number {
+  const me = s.units.find((x) => x.id === u.id)!;
+  const moved = samePos(me.pos, from) ? s : { ...s, units: s.units.map((x) => (x.id === u.id ? { ...x, pos: { ...from } } : x)) };
+  const fx = previewEffects(moved, { ...me, pos: { ...from } }, ab, target);
+  let v = 0;
+  for (const sp of fx.splashes) {
+    const o = s.units.find((x) => x.id === sp.unit);
+    if (!o || !sp.damage) continue;
+    if (isFoe(u, o)) v += o.life === "downed" ? 45 : Math.min(sp.damage, o.hp) + (sp.damage >= o.hp ? 25 : 0);
+    else v -= sp.damage * 1.5 + 5;
+  }
+  for (const b of fx.blasts) v += blastValue(s, u, b, from);
+  return v;
+}
+
 /** What leaving a status on `o` is worth, in points of damage. Bad ones help on enemies and hurt on friends. */
 function statusValue(st: Status, o: Unit, enemy: boolean): number {
   const good = STATUS[st.id].good;
@@ -224,6 +241,7 @@ function candidateTargets(s: BattleState, ab: Ability): Pos[] {
     if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }
   if (ab.throwProp) s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
+  if (ab.push && ab.area === "single") s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   if (ab.damage) s.map.tiles.forEach((t, i) => { if (t.prop === "barrel") { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   return [...spots.values()];
 }
@@ -275,7 +293,8 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
       for (const t of targets) {
         if (!reaches(s, ab, sp.p, t, [u.id])) continue;
         const occupant = unitAt(s, t);
-        if (ab.target === "foe" && (!occupant || !isFoe(u, occupant))) continue;
+        const pushable = !occupant && !!ab.push && ab.area === "single" && !!tileAt(s.map, t)?.prop;
+        if (ab.target === "foe" && !pushable && (!occupant || !isFoe(u, occupant))) continue;
         if (ab.target === "ally" && (!occupant || isFoe(u, occupant) || occupant.life !== "up")) continue;
         if (ab.target === "downedAlly" && (!occupant || isFoe(u, occupant) || !(occupant.life === "downed" || (ab.revive && occupant.id !== u.id && stuck(occupant))))) continue;
         if (ab.target === "yielding" && (!occupant || !isFoe(u, occupant) || !yielding(occupant))) continue;
