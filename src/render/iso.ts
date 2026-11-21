@@ -7,6 +7,7 @@ import { MAX_REVIVES } from "../engine/combat";
 import { wavering, yielding } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
 import { iconCanvas, splitIcons, type IconId } from "../ui/icons";
+import { drawPuddle } from "./puddle";
 import { drawBurst, drawFallingLeaf, drawFireTile, drawFx, drawSteamTile, drawWater, loopFrame, type Burst } from "./fx";
 
 /** Fire that never goes out (camp fires on travel scenes) is drawn as a camp fire: stones, logs and a live flame. */
@@ -156,51 +157,6 @@ function drawStump(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, s
   ctx.fillStyle = "#5b4636"; ctx.beginPath(); ctx.ellipse(x, y - 11, 6.5, 3, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = "#2a1c18"; ctx.beginPath(); ctx.ellipse(x, y - 11, 3.5, 1.6, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = "#ff8a3a"; ctx.fillRect(x - 4, y - 5, 1, 3); ctx.fillRect(x - 3, y - 3, 2, 1);
-  ctx.restore();
-}
-
-/** Oil drawn as one puddle across tiles: in each tile a rounded blob, joined to the edge towards every neighbour
-    with oil on the same level, and the corner filled where all three tiles round it have oil (autotiling, like
-    marching squares). The pieces are drawn in the tile's own grid square and clipped to it, so neighbours meet
-    seamlessly whatever the view's rotation. `oil(du, dv)` tells whether the tile one step along the rotated grid has oil. */
-function drawOil(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, time: number, seed: number, oil: (du: number, dv: number) => boolean) {
-  const E = oil(1, 0), W = oil(-1, 0), S = oil(0, 1), N = oil(0, -1);
-  const lo = 0.17, hi = 0.83, mid = 0.5;
-  const shape = (grow: number) => {
-    const path = new Path2D();
-    const a = lo - grow, b = hi + grow;
-    // The middle blob: an almost round rounded square (a circle on the ground, an oval on screen).
-    const r = 0.3 + grow;
-    path.moveTo(a + r, a); path.arcTo(b, a, b, b, r); path.arcTo(b, b, a, b, r); path.arcTo(a, b, a, a, r); path.arcTo(a, a, b, a, r); path.closePath();
-    // Bridges to oily neighbours, reaching past the edge (the clip trims them) so the join has no seam.
-    if (E) path.rect(mid, a, 1.2 - mid, b - a);
-    if (W) path.rect(-0.2, a, mid + 0.2, b - a);
-    if (S) path.rect(a, mid, b - a, 1.2 - mid);
-    if (N) path.rect(a, -0.2, b - a, mid + 0.2);
-    // Corners where the puddle wraps round: fill the quarter when both sides and the diagonal have oil.
-    if (E && S && oil(1, 1)) path.rect(mid, mid, 0.7, 0.7);
-    if (E && N && oil(1, -1)) path.rect(mid, -0.2, 0.7, 0.7);
-    if (W && S && oil(-1, 1)) path.rect(-0.2, mid, 0.7, 0.7);
-    if (W && N && oil(-1, -1)) path.rect(-0.2, -0.2, 0.7, 0.7);
-    return path;
-  };
-  ctx.save();
-  // Grid square (u, v in 0..1) -> screen: +u runs down-right, +v down-left, the square's top corner at the tile's top.
-  ctx.translate(c.x, c.y - TH / 2); ctx.transform(TW / 2, TH / 2, -TW / 2, TH / 2, 0, 0);
-  // Clip a hair past the square so joins with the next tile's oil don't show a seam where the ground tiles meet.
-  ctx.beginPath(); ctx.rect(-0.02, -0.02, 1.04, 1.04); ctx.clip();
-  ctx.fillStyle = "rgba(170, 140, 230, 0.55)"; ctx.fill(shape(0.035), "nonzero"); // a faint violet rim
-  const body = shape(0);
-  ctx.fillStyle = "#16121d"; ctx.fill(body, "nonzero");
-  // Gloss: rainbow streaks that drift slowly, and a white glint, kept inside the puddle.
-  ctx.clip(body, "nonzero");
-  // The streaks lie along the screen's horizontal (the grid's u - v direction), each tile's a little offset.
-  const drift = Math.sin(time / 900 + seed) * 0.08, o = ((seed % 5) - 2) * 0.05;
-  for (const [col, off] of [["rgba(110, 190, 255, 0.22)", -0.07], ["rgba(220, 130, 255, 0.2)", 0], ["rgba(255, 215, 110, 0.16)", 0.07]] as const) {
-    ctx.fillStyle = col;
-    ctx.beginPath(); ctx.ellipse(0.5 + o + drift + off, 0.5 + o - drift + off, 0.26, 0.05, -Math.PI / 4, 0, Math.PI * 2); ctx.fill();
-  }
-  if (seed % 3 === 0) { ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.fillRect(0.3, 0.36, 0.08, 0.035); }
   ctx.restore();
 }
 
@@ -502,11 +458,12 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         footShadows(ctx, m, x, k - x, view.rot, tile.h, c);
       }
       if (tile.scorchedAt !== undefined && !flat) drawScorch(ctx, c, p.x * 13 + p.y * 7);
-      if (tile.surface === "oil") {
-        const rx = x, ry = k - x;
-        drawOil(ctx, c, opt.time, p.x * 5 + p.y * 3, (du, dv) => {
+      if (tile.surface) {
+        // Oil and sap puddles join up with the same liquid on the same level, whatever the view's rotation.
+        const rx = x, ry = k - x, kind = tile.surface;
+        drawPuddle(ctx, kind, c, opt.time, p.x * 5 + p.y * 3, (du, dv) => {
           const q = unrotate(m, { x: rx + du, y: ry + dv }, view.rot), n = tileAt(m, q);
-          return rx + du >= 0 && ry + dv >= 0 && rx + du < d.w && ry + dv < d.h && n?.surface === "oil" && n.h === tile.h;
+          return rx + du >= 0 && ry + dv >= 0 && rx + du < d.w && ry + dv < d.h && n?.surface === kind && n.h === tile.h;
         });
       }
       drawSurface(ctx, tile, c, s.clock, opt.time, p);
@@ -527,7 +484,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       const onFire = (tile.fireUntil ?? 0) > s.clock && (tile.fireUntil ?? 0) < CAMPFIRE_AT;
       if ((tile.fireUntil ?? 0) >= CAMPFIRE_AT) drawCampfire(ctx, img, c, opt.time, p.x * 7 + p.y);
       else if (onFire && !tile.prop && tile.terrain !== "tree") groundFire(ctx, img, c, opt.time, p);
-      if (tile.prop) drawProp(ctx, tile.prop, c, tile.propHp ?? 0);
+      if (tile.prop) drawProp(ctx, img, tile.prop, c, tile.propHp ?? 0);
       // A burning crate: the flames and smoke go over the crate.
       if (onFire && tile.prop) { burningObject(ctx, img, c, opt.time, p.x * 3 + p.y, -14); }
       if (tile.steamUntil !== undefined) {
@@ -725,15 +682,12 @@ function tallGrass(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, s
   ctx.globalAlpha = 1;
 }
 
-/** Sap and charged water on top of the ground (src/engine/terrain.ts); oil is drawOil. */
+/** Sap sources and charged water on top of the ground (src/engine/terrain.ts); the puddles are drawPuddle. */
 function drawSurface(ctx: CanvasRenderingContext2D, tile: Tile, c: { x: number; y: number }, clock: number, time: number, p: Pos) {
-  if (tile.surface === "sap") {
-    // Sap: a sickly green ooze that pulses; a source has a glowing shard in the middle.
+  if (tile.surface === "sap" && tile.sapSource) {
+    // The ooze itself is a pixel puddle (drawPuddle); a source has a glowing shard in the middle.
     const pulse = 0.5 + 0.5 * Math.sin(time / 300 + p.x * 2 + p.y);
-    diamond(ctx, c.x, c.y, `rgba(120, 190, 50, ${0.38 + 0.12 * pulse})`, "rgba(190, 240, 110, 0.7)");
-    ctx.fillStyle = "rgba(210, 255, 140, 0.55)";
-    for (const [dx, dy] of [[-8, 1], [5, -3], [2, 5]] as const) { ctx.beginPath(); ctx.arc(c.x + dx, c.y + dy, 1.6 + pulse, 0, Math.PI * 2); ctx.fill(); }
-    if (tile.sapSource) {
+    {
       ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 0.75 + 0.25 * pulse;
       ctx.drawImage(iconCanvas("shard"), c.x - 8, Math.round(c.y - 12 - 2 * pulse), 16, 16); ctx.globalAlpha = 1;
     }
@@ -849,59 +803,17 @@ function drawUnit(
   }
 }
 
-/** Barrels and crates, drawn with plain shapes so they read at a glance in both views. */
-function drawProp(ctx: CanvasRenderingContext2D, prop: Prop, c: { x: number; y: number }, hp: number) {
+/** Barrels and crates: pixel sprites drawn at 2x like the trees and rocks (tools/prop-art.py). The crate is an
+    isometric cube whose edges follow the tile diamond, so it looks the same at every camera angle; a damaged crate
+    is cracked. Each sprite is placed so its base sits on the tile's centre. */
+function drawProp(ctx: CanvasRenderingContext2D, img: Images, prop: Prop, c: { x: number; y: number }, hp: number) {
+  if (prop === "boulder") { drawBoulder(ctx, c); return; }
+  const sprite = prop === "barrel" ? img["obj-barrel"] : img[hp < PROP_HP.crate ? "obj-crate-hurt" : "obj-crate"];
+  if (!sprite) return;
   ctx.save();
-  if (prop === "boulder") { drawBoulder(ctx, c); ctx.restore(); return; }
-  if (prop === "barrel") {
-    ctx.fillStyle = "#8c2f1f"; ctx.strokeStyle = "#2a0f08"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.ellipse(c.x, c.y - 4, 9, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.fillRect(c.x - 9, c.y - 22, 18, 18); ctx.strokeRect(c.x - 9, c.y - 22, 18, 18);
-    ctx.beginPath(); ctx.ellipse(c.x, c.y - 22, 9, 4, 0, 0, Math.PI * 2); ctx.fillStyle = "#b5432c"; ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "#ffd23f"; ctx.font = "bold 10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText("!", c.x, c.y - 9);
-  } else {
-    drawCrate(ctx, c, hp < PROP_HP.crate);
-  }
+  ctx.imageSmoothingEnabled = false;
+  // Crate: base diamond centre at sprite (12, 16); barrel: base at (9, 15). Sprites are 1x, drawn at 2x.
+  const [ax, ay] = prop === "barrel" ? [9, 15] : [12, 16];
+  ctx.drawImage(sprite, Math.round(c.x - ax * 2), Math.round(c.y + 1 - ay * 2), sprite.width * 2, sprite.height * 2);
   ctx.restore();
-}
-
-/** A wooden crate as a small isometric cube sitting on the tile: a lit top, a mid left side and a shaded right
-    side, each with a plank frame and a cross brace. The cube lines up with the tile diamond, so it looks the
-    same at every camera angle. A damaged crate is darker and cracked. */
-function drawCrate(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, hurt: boolean) {
-  const w = 19, d = w / 2, H = 21; // half width, half depth (2:1 like the tiles), height
-  const x = c.x, y = c.y + 1; // base diamond centre
-  const top = (u: number, v: number) => ({ x: x + (u - v) * w, y: y - H + (u + v - 1) * d }); // u,v in 0..1 across the top
-  const left = (u: number, t: number) => ({ x: x - w + u * w, y: y + u * d - t * H }); // front-left side, t = up
-  const right = (u: number, t: number) => ({ x: x + u * w, y: y + d - u * d - t * H }); // front-right side
-  const tone = hurt ? [0.78, 0.78, 0.78] : [1, 1, 1];
-  const shade = (r: number, g: number, b: number) => `rgb(${Math.round(r * tone[0]!)},${Math.round(g * tone[1]!)},${Math.round(b * tone[2]!)})`;
-  const face = (f: (a: number, b: number) => { x: number; y: number }, fill: string, plank: string) => {
-    const poly = (pts: [number, number][]) => { ctx.beginPath(); pts.forEach(([a, b], i) => { const q = f(a, b); if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.closePath(); };
-    poly([[0, 0], [1, 0], [1, 1], [0, 1]]);
-    ctx.fillStyle = fill; ctx.fill();
-    // Plank frame: a lighter inset border, then a diagonal brace.
-    const k = 0.16;
-    ctx.strokeStyle = plank; ctx.lineWidth = 1.6;
-    poly([[k, k], [1 - k, k], [1 - k, 1 - k], [k, 1 - k]]); ctx.stroke();
-    const a = f(k, k), b = f(1 - k, 1 - k);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    ctx.strokeStyle = "#3d2810"; ctx.lineWidth = 1.2;
-    poly([[0, 0], [1, 0], [1, 1], [0, 1]]); ctx.stroke();
-  };
-  // Soft contact shadow so the crate sits on the ground.
-  ctx.fillStyle = "rgba(0,0,0,0.28)";
-  ctx.beginPath(); ctx.moveTo(x - w - 2, y); ctx.lineTo(x, y + d + 1); ctx.lineTo(x + w + 2, y); ctx.lineTo(x, y - d - 1); ctx.closePath(); ctx.fill();
-  face(left, shade(150, 104, 54), shade(184, 136, 78));
-  face(right, shade(112, 76, 38), shade(146, 104, 58));
-  face((u, v) => top(u, v), shade(196, 146, 84), shade(226, 182, 118));
-  if (hurt) {
-    // Cracks on the two sides you can see.
-    ctx.strokeStyle = "#24160a"; ctx.lineWidth = 1.3;
-    const crack = (f: (a: number, b: number) => { x: number; y: number }, pts: [number, number][]) => {
-      ctx.beginPath(); pts.forEach(([a, b], i) => { const q = f(a, b); if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.stroke();
-    };
-    crack(left, [[0.62, 1], [0.5, 0.72], [0.66, 0.5], [0.55, 0.3]]);
-    crack(right, [[0.2, 0], [0.34, 0.3], [0.24, 0.52]]);
-  }
 }
