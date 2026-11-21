@@ -856,7 +856,7 @@ export const icon = (id: IconId, cls = "") => `<img class="ico${cls ? ` ${cls}` 
 
 /** Emoji the texts and the map still use, and the pixel icon that stands in for each. */
 export const EMOJI_ICON: Record<string, IconId> = {
-  "💥": "boom", "💢": "boom", "🔥": "fire", "⚡": "bolt", "❄️": "ice", "❄": "ice", "💧": "water", "☠": "poison", "✚": "heal", "⛨": "shield",
+  "💥": "boom", "💢": "boom", "🔥": "fire", "⚡": "bolt", "❄️": "ice", "❄": "ice", "💧": "water", "☠": "poison", "✚": "heal", "⛨": "shield", "🛡": "shield",
   "🤚": "hold", "🏳": "spare", "★": "rival", "⏳": "cooldown", "⚠": "danger", "◆": "shard", "🪙": "coin", "☀️": "light", "☀": "light",
   "🌿": "plant", "🪨": "stone", "🍄": "mush", "💫": "stun", "🐌": "slow", "⚔": "battle", "♛": "boss", "🗺": "map", "🎒": "gear",
   "📊": "stats", "☺": "recruit", "❖": "quest", "🛢": "barrel",

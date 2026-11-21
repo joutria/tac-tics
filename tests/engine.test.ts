@@ -881,3 +881,72 @@ describe("surfaces", () => {
     expect(unitById(a, "f").statuses.some((x) => x.id === "poison")).toBe(true);
   });
 });
+
+describe("guard", () => {
+  Object.assign(ABILITIES, {
+    gHit: { id: "gHit", element: "neutral", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 8, max: 8, stat: "str" } } as Ability,
+    gFar: { id: "gFar", element: "neutral", ap: 3, range: [2, 5], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 9, max: 9, stat: "mag" } } as Ability,
+  });
+  const field = (units: UnitSpec[], rows = ["g0 g0 g0 g0 g0 g0"]) => createBattle({ seed: 3, map: parseMap("t", rows), units });
+  const guardian = (o: Partial<UnitSpec> = {}) => unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90, abilities: ["gHit"], ...o });
+
+  it("ends the turn with a full delay and strikes the first enemy that steps next to it, once", () => {
+    let s = field([guardian(), unit({ id: "f", team: "foes", pos: { x: 4, y: 0 }, hp: 40, mp: 4 }), unit({ id: "g", team: "foes", pos: { x: 5, y: 1 }, hp: 40, mp: 6 })], ["g0 g0 g0 g0 g0 g0", "g0 g0 g0 g0 g0 g0"]);
+    const r = applyCommand(s, { t: "guard", unit: "h" });
+    if (!r.ok) throw new Error(r.error);
+    expect(unitById(r.state, "h").ct).toBe(unitById(s, "h").ct + delayFor(90));
+    s = r.state;
+    while (s.active !== "f") s = play(s, [{ t: "endTurn", unit: s.active }]);
+    const m = applyCommand(s, { t: "move", unit: "f", to: { x: 1, y: 0 } });
+    if (!m.ok) throw new Error(m.error);
+    expect(m.events.some((e) => e.e === "guardHit" && e.unit === "h" && e.target === "f")).toBe(true);
+    expect(unitById(m.state, "f").hp).toBe(40 - 8);
+    expect(unitById(m.state, "f").pos).toEqual({ x: 1, y: 0 });
+    expect(unitById(m.state, "h").guard).toBeUndefined();
+    // Spent: the next enemy to come close is not hit.
+    s = play(m.state, [{ t: "endTurn", unit: "f" }]);
+    while (s.active !== "g") s = play(s, [{ t: "endTurn", unit: s.active }]);
+    const n = applyCommand(s, { t: "move", unit: "g", to: { x: 0, y: 1 } });
+    if (!n.ok) throw new Error(n.error);
+    expect(n.events.some((e) => e.e === "guardHit")).toBe(false);
+  });
+  it("a guard hit that downs the walker stops it there and ends its turn", () => {
+    let s = field([guardian(), unit({ id: "f", team: "foes", pos: { x: 4, y: 0 }, hp: 5, mp: 5 }), unit({ id: "g", team: "foes", pos: { x: 5, y: 1 }, hp: 40 })], ["g0 g0 g0 g0 g0 g0", "g0 g0 g0 g0 g0 g0"]);
+    s = play(s, [{ t: "guard", unit: "h" }]);
+    while (s.active !== "f") s = play(s, [{ t: "endTurn", unit: s.active }]);
+    const m = applyCommand(s, { t: "move", unit: "f", to: { x: 0, y: 1 } });
+    if (!m.ok) throw new Error(m.error);
+    const f = unitById(m.state, "f");
+    expect(f.life).not.toBe("up");
+    expect(m.state.active).not.toBe("f");
+  });
+  it("needs AP for an attack that reaches the next tile, and ends at the guard's next turn", () => {
+    const far = field([guardian({ abilities: ["gFar"] }), unit({ id: "f", team: "foes", pos: { x: 5, y: 0 } })]);
+    expect(applyCommand(far, { t: "guard", unit: "h" }).ok).toBe(false);
+    let s = play(field([guardian(), unit({ id: "f", team: "foes", pos: { x: 5, y: 0 }, mp: 0 })]), [{ t: "guard", unit: "h" }]);
+    expect(unitById(s, "h").guard).toBe("gHit");
+    while (s.active !== "h") s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(unitById(s, "h").guard).toBeUndefined();
+  });
+});
+
+describe("ice slides and Help up frees", () => {
+  Object.assign(ABILITIES, {
+    iPush: { id: "iPush", element: "neutral", ap: 1, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 9, push: 1 } as Ability,
+  });
+  it("a push that ends on ice slides one tile further", () => {
+    const s = createBattle({ seed: 1, map: parseMap("t", ["g0 g0 i0 i0 g0 g0"]), units: [unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90, abilities: ["iPush"] }), unit({ id: "f", team: "foes", pos: { x: 1, y: 0 } })] });
+    const a = play(s, [{ t: "cast", unit: "h", ability: "iPush", target: { x: 1, y: 0 } }]);
+    expect(unitById(a, "f").pos).toEqual({ x: 3, y: 0 });
+    const dry = createBattle({ seed: 1, map: parseMap("t", ["g0 g0 g0 g0 g0 g0"]), units: [unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90, abilities: ["iPush"] }), unit({ id: "f", team: "foes", pos: { x: 1, y: 0 } })] });
+    expect(unitById(play(dry, [{ t: "cast", unit: "h", ability: "iPush", target: { x: 1, y: 0 } }]), "f").pos).toEqual({ x: 2, y: 0 });
+  });
+  it("Help up frees a standing ally from Root and Stun", () => {
+    const s = createBattle({ seed: 1, map: parseMap("t", ["g0 g0 g0 g0 g0 g0"]), units: [unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90 }), unit({ id: "a", team: "heroes", pos: { x: 1, y: 0 } }), unit({ id: "f", team: "foes", pos: { x: 5, y: 0 } })] });
+    expect(castProblem(s, unitById(s, "h"), "helpUp", { x: 1, y: 0 })).toBe("needs a downed, rooted or stunned ally");
+    const a = unitById(s, "a"); a.rooted = true; a.statuses.push({ id: "stun", turns: 1, power: 0 });
+    const r = play(s, [{ t: "cast", unit: "h", ability: "helpUp", target: { x: 1, y: 0 } }]);
+    expect(unitById(r, "a").rooted).toBe(false);
+    expect(unitById(r, "a").statuses.some((x) => x.id === "stun")).toBe(false);
+  });
+});

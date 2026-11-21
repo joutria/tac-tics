@@ -9,7 +9,7 @@ import { MEADOW } from "./data/maps/meadow";
 import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
-import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
+import { abilityAvailable, areaTiles, castProblem, guardAbility, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
@@ -353,6 +353,17 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       floaters.push({ pos: { ...u.pos }, text: `🔥 ${t(lang, "st.burn")}`, color: STATUS.burn.colour, born: now });
       continue;
     }
+    if (ev.e === "guardHit") {
+      const g = unitById(state, ev.unit), v = unitById(state, ev.target);
+      floaters.push({ pos: { ...g.pos }, text: `🛡 ${t(lang, "guard")}!`, color: "#8fd0ff", born: now });
+      toast(t(lang, "guardToast", { name: g.name, target: v.name }));
+      continue;
+    }
+    if (ev.e === "guarded") {
+      const g = unitById(state, ev.unit);
+      floaters.push({ pos: { ...g.pos }, text: `🛡 ${t(lang, "guard")}`, color: "#8fd0ff", born: now });
+      continue;
+    }
     if (ev.e === "shocked") {
       const u = unitById(state, ev.unit);
       floaters.push({ pos: { ...u.pos }, text: "⚡", color: STATUS.stun.colour, born: now });
@@ -395,6 +406,8 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       if (h.revived) add(t(lang, "revived"), "#7ed957");
       if (h.maxHpLost) add(t(lang, "maxHpDown", { n: h.maxHpLost }), "#c9a0ff", 350);
       if (h.rooted) add(t(lang, "rooted"), "#b9e08a", 250);
+      if (h.freed) add(`🌿 ✕`, "#8fd0ff", 250);
+      if (h.slid) add(`❄ ${t(lang, "slid")}`, "#cfefff", 200);
       if (h.shielded) add(`${STATUS.shield.icon} ${h.shielded}`, STATUS.shield.colour, 150);
       for (const id of h.statuses ?? []) add(`${STATUS[id].icon} ${t(lang, `st.${id}` as TextKey)}`, STATUS[id].colour, 450);
       for (const id of h.cleansed ?? []) add(`${STATUS[id].icon} ✕`, "#8fd0ff", 450);
@@ -649,6 +662,10 @@ function refresh() {
   }
   $<HTMLButtonElement>("end").disabled = !mine;
   $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited || !!u.usedThisTurn.quick;
+  const guardWith = mine && u.escape === "none" ? guardAbility(u) : null;
+  const gb = $<HTMLButtonElement>("guard");
+  gb.disabled = !guardWith;
+  dress("guard", "shield", t(lang, "guard"), () => plainHelp(t(lang, "guard"), guardWith ? t(lang, "guardHint", { ab: abilityName(lang, guardWith) }) : t(lang, "guardNo"), "shield"));
   $<HTMLButtonElement>("undo").disabled = !canUndo();
   const rw = $<HTMLButtonElement>("rewind");
   const left = rulesOf(journey).rewinds - (save.rewindsUsed ?? 0);
@@ -755,6 +772,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
     }
   }
+  if (target.guard) lines.push(`<span style="color:#8fd0ff">🛡 ${t(lang, "guard")}</span> · ${t(lang, "guardingInfo")}`);
   for (const st of target.statuses) lines.push(`<span style="color:${STATUS[st.id].colour}">${STATUS[st.id].icon} ${t(lang, `st.${st.id}` as TextKey)}</span> · ${t(lang, `st.${st.id}.d` as TextKey, { n: st.power })} · ${t(lang, "turnsLeft", { n: st.turns })}`);
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
   if (yielding(target)) lines.push(`<b>${t(lang, "yieldingTag")}</b> · ${cowering(target) ? `${t(lang, "cowerInfo")} ` : ""}${t(lang, "yieldInfo")}`);
@@ -1405,7 +1423,7 @@ function actionAt(p: Pos): { cmd: Command } | { why: string } | null {
 function act(cmd: Command) {
   const ok = run(cmd);
   if (cmd.t === "cast" && ok) { if (ABILITIES[cmd.ability]?.quick) quickOpen = false; selected = null; }
-  if (cmd.t === "endTurn" || cmd.t === "wait") quickOpen = false;
+  if (cmd.t === "endTurn" || cmd.t === "wait" || cmd.t === "guard") quickOpen = false;
   pending = null;
   refresh();
   if (cmd.t === "cast") maybeFoeTurn();
@@ -1598,12 +1616,13 @@ async function start() {
   const turn = (dir: 1 | -1) => { view.rot = (view.rot + dir + 4) % 4; hover = null; tooltip(null); };
   $("rotateL").addEventListener("click", () => turn(-1));
   $("rotateR").addEventListener("click", () => turn(1));
-  const pass = (t_: "endTurn" | "wait") => {
+  const pass = (t_: "endTurn" | "wait" | "guard") => {
     if (!heroTurn() || busy || animating()) return;
     run({ t: t_, unit: activeUnit(state).id }); selected = null; pending = null; tooltip(null); refresh(); maybeFoeTurn();
   };
   $("end").addEventListener("click", () => pass("endTurn"));
   $("wait").addEventListener("click", () => pass("wait"));
+  $("guard").addEventListener("click", () => pass("guard"));
   $("rewind").addEventListener("click", rewind);
   $("danger").addEventListener("click", () => { dangerAll = !dangerAll; refresh(); });
   $("flat").addEventListener("click", () => { setFlat(!isFlat()); safeSet(VIEW_KEY, isFlat() ? "flat" : "iso"); tooltip(null); refresh(); });

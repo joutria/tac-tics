@@ -6,11 +6,12 @@
    Turn order is a timeline: each unit has a time (ct) for its next turn; the lowest goes next. A full turn
    pushes a unit's time back by its delay (faster units, shorter delay). A turn that spends no AP (only moving,
    or nothing) costs 70% of the delay, so it comes back sooner. Wait passes the turn to act right after the next
-   character. */
+   character. Guard ends the turn like a full action and readies a free hit on the first enemy that steps next to
+   the unit before its next turn (the move goes on unless the hit downs it). */
 import type { Passive } from "../data/jobs";
 import { ABILITIES } from "../data/abilities";
 import type { Element } from "../data/elements";
-import { abilityAvailable, castProblem, hurt, resolveCast, type Hit } from "./combat";
+import { abilityAvailable, castProblem, guardAbility, hurt, resolveCast, type Hit } from "./combat";
 import { absorb, removeStatus, statusOf, tickDown, POISON_HEAL_FACTOR, type Status, type StatusId } from "./status";
 import { GridMap, NEIGHBOURS, Pos, samePos, standable, tileAt } from "./grid";
 import { routeTo } from "./movement";
@@ -86,6 +87,8 @@ export interface Unit extends UnitSpec {
   usedThisTurn: Record<string, number>;
   /** Aim was used: the next ranged ability reaches 1 further. */
   aiming?: boolean;
+  /** Guarding until its next turn, with this ability: the first enemy to step next to it takes a free hit. */
+  guard?: string;
   /** Dipped in fire (burn) or Sap (poison): the next attack gives enemies it hits that status. */
   dipped?: false | "burn" | "poison";
   rooted: boolean;
@@ -133,6 +136,8 @@ export type Command =
   /** `hold`: Hold back. A hit that would down someone stops at 1 HP, and nobody downed is finished off. */
   | { t: "cast"; unit: string; ability: string; target: Pos; hold?: boolean }
   | { t: "wait"; unit: string }
+  /** End the turn on Guard (see the top of this file). */
+  | { t: "guard"; unit: string }
   | { t: "endTurn"; unit: string }
   /** A retreating or fleeing unit on the edge of the map leaves the battle. */
   | { t: "escape"; unit: string }
@@ -155,6 +160,9 @@ export type BattleEvent =
   /** A status acting at the start of a turn (Burn, Poison, Regen). */
   | { e: "tick"; unit: string; status: StatusId; damage: number; heal: number; downed: boolean; died: boolean }
   | { e: "stunned"; unit: string }
+  | { e: "guarded"; unit: string }
+  /** A guarding unit's free hit on `target`, which stepped next to it; a "cast" event with the hits follows. */
+  | { e: "guardHit"; unit: string; target: string }
   /** Started a turn next to charged water and was stunned by it. */
   | { e: "shocked"; unit: string }
   /** Ended a move or started a turn in Sap: Poison for the party, Regen for foes. */
@@ -247,6 +255,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
     if (!u) return;
     s.clock = u.ct;
     s.active = u.id;
+    delete u.guard;
     updateTiles(s);
     if (u.life === "downed") {
       u.downedTurns -= 1;
@@ -327,12 +336,24 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
     case "move": {
       const route = routeTo(s.map, actor.pos, cmd.to, moveRules(s, actor));
       if (!route) return { ok: false, error: "cannot reach that tile" };
-      const last = route.path[route.path.length - 1]!, before = route.path[route.path.length - 2] ?? actor.pos;
-      actor.facing = facingOf(before, last);
-      actor.pos = { ...last };
+      // Walk it step by step: stepping next to a guarding enemy draws its free hit, and a hit that downs the
+      // walker ends the walk there.
+      const walked: Pos[] = [], after: BattleEvent[] = [];
+      let prevPos = actor.pos;
+      for (const step of route.path) {
+        walked.push(step);
+        actor.facing = facingOf(prevPos, step);
+        const was = actor.pos;
+        actor.pos = { ...step };
+        prevPos = step;
+        guardHits(s, actor, was, after);
+        if (actor.life !== "up") break;
+      }
       actor.mp -= route.cost;
       actor.moved = true;
-      events.push({ e: "moved", unit: actor.id, path: route.path });
+      events.push({ e: "moved", unit: actor.id, path: walked }, ...after);
+      s.winner = winnerOf(s);
+      if (actor.life !== "up") return applyEnd(s, actor, events);
       if (fireUnder(s, actor)) events.push({ e: "caughtFire", unit: actor.id });
       const sap = sapUnder(s, actor);
       if (sap) events.push({ e: "sapped", unit: actor.id, status: sap });
@@ -391,21 +412,51 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       advance(s, events);
       break;
     }
+    case "guard": {
+      const id = guardAbility(actor);
+      if (actor.escape !== "none" || !id) return { ok: false, error: "needs AP left for an attack that reaches next to you" };
+      actor.guard = id;
+      actor.spentAp = true;
+      events.push({ e: "guarded", unit: actor.id });
+      return applyEnd(s, actor, events);
+    }
     case "endTurn": {
-      const delay = delayFor(actor.speed);
-      actor.ct += actor.spentAp ? delay : Math.round(delay * MOVE_ONLY_FACTOR);
-      actor.seq = ++s.seqCounter;
-      actor.waited = false;
-      actor.stunGuard = false;
-      tickDown(actor);
-      for (const k of Object.keys(actor.cooldowns)) {
-        actor.cooldowns[k] = Math.max(0, actor.cooldowns[k]! - 1);
-        if (!actor.cooldowns[k]) delete actor.cooldowns[k];
-      }
-      advance(s, events);
-      break;
+      return applyEnd(s, actor, events);
     }
   }
+  updateEscapes(s, events);
+  s.winner = winnerOf(s);
+  return { ok: true, state: s, events };
+}
+
+/** Enemies on Guard that `mover` just stepped next to (from `was`) strike it, each once. */
+function guardHits(s: BattleState, mover: Unit, was: Pos, events: BattleEvent[]) {
+  for (const g of s.units) {
+    if (!g.guard || g.life !== "up" || !isFoe(g, mover) || statusOf(g, "stun") || mover.life !== "up") continue;
+    const near = (p: Pos) => Math.abs(p.x - g.pos.x) + Math.abs(p.y - g.pos.y) === 1;
+    if (!near(mover.pos) || near(was)) continue;
+    const ab = ABILITIES[g.guard]!;
+    delete g.guard;
+    g.facing = facingOf(g.pos, mover.pos);
+    const fx: TerrainFx[] = [];
+    const hits = resolveCast(s, g, ab, { ...mover.pos }, fx);
+    events.push({ e: "guardHit", unit: g.id, target: mover.id }, { e: "cast", unit: g.id, ability: ab.id, target: { ...mover.pos }, hits, fx });
+    for (const h of hits) if (h.died) events.push({ e: "died", unit: h.unit });
+  }
+}
+
+function applyEnd(s: BattleState, actor: Unit, events: BattleEvent[]): Result {
+  const delay = delayFor(actor.speed);
+  actor.ct += actor.spentAp ? delay : Math.round(delay * MOVE_ONLY_FACTOR);
+  actor.seq = ++s.seqCounter;
+  actor.waited = false;
+  actor.stunGuard = false;
+  tickDown(actor);
+  for (const k of Object.keys(actor.cooldowns)) {
+    actor.cooldowns[k] = Math.max(0, actor.cooldowns[k]! - 1);
+    if (!actor.cooldowns[k]) delete actor.cooldowns[k];
+  }
+  advance(s, events);
   updateEscapes(s, events);
   s.winner = winnerOf(s);
   return { ok: true, state: s, events };

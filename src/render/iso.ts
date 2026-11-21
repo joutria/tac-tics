@@ -650,7 +650,7 @@ function drawUnit(
   }
   if (downed) drawRich(ctx, `✚ ${u.downedTurns}`, c.x, c.y - 70, 12, "#fff");
   // Rooted and status effects: small pixel icons in a row on the right of the health bar.
-  const icons: IconId[] = [...(u.rooted ? ["plant" as const] : []), ...u.statuses.map((x) => x.id)];
+  const icons: IconId[] = [...(u.guard ? ["shield" as const] : []), ...(u.rooted ? ["plant" as const] : []), ...u.statuses.map((x) => x.id)];
   ctx.imageSmoothingEnabled = false;
   icons.forEach((ic, i) => ctx.drawImage(iconCanvas(ic), Math.round(c.x + 16 + i * 10), Math.round(c.y - 64), 10, 10));
   if (u.rival) {
