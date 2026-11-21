@@ -4,6 +4,7 @@ import { GROWTH, ITEMS, LEVEL_CAP, PERKS, xpToNext, type Mods, type Slot } from 
 import { rngInt, seedFrom } from "../engine/rng";
 import type { UnitSpec } from "../engine/state";
 import { JOBS, type Job } from "../data/jobs";
+import { twinOf, type Twin } from "../data/twins";
 
 export interface HeroProgress {
   level: number;
@@ -14,6 +15,8 @@ export interface HeroProgress {
   bag: string[];
   /** The job taken halfway through the first region. */
   job?: Job;
+  /** Cards switched to their twin (data/twins.ts), by the original card's id. */
+  twins?: string[];
 }
 
 export const newProgress = (): HeroProgress => ({ level: 1, xp: 0, perks: [], gear: {}, bag: [] });
@@ -25,8 +28,9 @@ function apply(spec: UnitSpec, m: Mods, times = 1) {
   for (const [e, v] of Object.entries(m.res ?? {})) spec.res[e as keyof UnitSpec["res"]] = (spec.res[e as keyof UnitSpec["res"]] ?? 0) + v! * times;
 }
 
-/** The hero as it fights: base spec, levels, perks and worn items (and the abilities they teach). */
-export function heroSpec(base: UnitSpec, p: HeroProgress): UnitSpec {
+/** The hero as it fights: base spec, levels, perks and worn items (and the abilities they teach), and the twins
+    picked, where `canWear` allows them (the run's meters; without it, no twin swaps in). */
+export function heroSpec(base: UnitSpec, p: HeroProgress, canWear?: (tw: Twin, abilities: string[]) => boolean): UnitSpec {
   const spec = structuredClone(base);
   apply(spec, GROWTH, p.level - 1);
   for (const id of p.perks) apply(spec, PERKS[id]!.mods);
@@ -38,6 +42,10 @@ export function heroSpec(base: UnitSpec, p: HeroProgress): UnitSpec {
   if (p.job) {
     for (const a of JOBS[p.job].abilities) if (!spec.abilities.includes(a)) spec.abilities.push(a);
     spec.passive = JOBS[p.job].passive;
+  }
+  if (canWear && p.twins?.length) {
+    const own = [...spec.abilities];
+    spec.abilities = own.map((a) => { const tw = twinOf(a); return tw && p.twins!.includes(a) && canWear(tw, own) ? tw.twin : a; });
   }
   for (const e of Object.keys(spec.res) as (keyof UnitSpec["res"])[]) spec.res[e] = Math.min(75, spec.res[e]!);
   return spec;

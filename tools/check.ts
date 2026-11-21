@@ -12,6 +12,8 @@ import { ITEMS, PERKS } from "../src/data/gear";
 import { COMPANIONS, TALKS } from "../src/data/companions";
 import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
 import { HELP_LINES } from "../src/data/mercy";
+import { ALIGNMENTS, GRID, HERO_ENDINGS, SIDE_NAMES } from "../src/data/alignment";
+import { TWINS } from "../src/data/twins";
 
 const problems: string[] = [];
 const fail = (msg: string) => problems.push(msg);
@@ -38,6 +40,28 @@ for (const [id, ab] of Object.entries(ABILITIES)) {
   if (ab.ap < 0 || (ab.ap === 0 && !ab.shove) || ab.perTurn <= 0) fail(`ability ${id}: AP and uses per turn must be positive (only Shove is free)`);
 }
 for (const u of TEST_UNITS) for (const a of u.abilities) if (!ABILITIES[a]) fail(`unit ${u.id} has unknown ability ${a}`);
+
+// Twin cards: both sides exist, each card has at most one twin, and a twin keeps the card's AP cost.
+const twinned = new Set<string>();
+for (const tw of TWINS) {
+  if (twinned.has(tw.base) || twinned.has(tw.twin)) fail(`twin ${tw.base}: a card has more than one twin`);
+  twinned.add(tw.base); twinned.add(tw.twin);
+  if (!ABILITIES[tw.base] || !ABILITIES[tw.twin]) fail(`twin ${tw.base} -> ${tw.twin}: unknown ability`);
+  else if (ABILITIES[tw.base]!.ap !== ABILITIES[tw.twin]!.ap) fail(`twin ${tw.twin}: AP cost differs from ${tw.base}`);
+  if (!!tw.tag !== !!tw.tier) fail(`twin ${tw.twin}: a tag needs a tier and a tier needs a tag`);
+}
+
+// Alignment: nine distinct alignments, every line filled in both languages.
+const nine = Object.values(GRID).flatMap((r) => Object.values(r));
+if (new Set(nine).size !== 9) fail("alignment grid must hold nine different alignments");
+const alignLines = [
+  ...Object.entries(ALIGNMENTS).flatMap(([k, v]) => [[`alignment ${k}`, v.name], [`alignment ${k} desc`, v.desc]] as const),
+  ...Object.entries(SIDE_NAMES).map(([k, v]) => [`side ${k}`, v] as const),
+  ...Object.entries(HERO_ENDINGS.corners).flatMap(([k, v]) => [[`ending ${k}`, v.full], [`ending ${k} variant`, v.variant]] as const),
+  ...Object.entries(HERO_ENDINGS.edges).map(([k, v]) => [`ending ${k}`, v] as const),
+  ["regular ending", HERO_ENDINGS.regular] as const,
+];
+for (const [where, line] of alignLines) if (!line.es || !line.en) fail(`${where}: empty in a language`);
 
 // Elements: opposites point both ways; every circle element beats exactly one other.
 for (const e of ELEMENT_IDS) {

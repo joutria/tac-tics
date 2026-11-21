@@ -3,13 +3,18 @@
    canvas (main.ts, src/run/travel.ts, src/ui/worldmap.ts). */
 import { ELEMENTS, type Element } from "../data/elements";
 import { ITEMS, PERKS, SHOP, xpToNext, type Mods } from "../data/gear";
-import { abilityName, t, type Lang } from "../i18n/text";
+import { abilityDesc, abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
 import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
 import { JOBS } from "../data/jobs";
 import { ALTAR, questChoices, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
 import { endingOf, readyForLesson, type Member } from "../run/party";
+import { ALIGN, ALIGNMENTS, type Align, type Meter } from "../data/alignment";
+import { TWINS } from "../data/twins";
+import { alignOf, alignmentOf, heroEnding, lockWarning, twinBar } from "../run/alignment";
+import { heroSpec } from "../run/hero";
+import { HERO } from "../data/region";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛" };
 
@@ -29,6 +34,8 @@ export interface MapActions {
   heal: () => void;
   leave: () => void;
   wear: (itemId: string) => void;
+  /** Swaps a card for its twin, or back. */
+  twin?: (base: string, on: boolean) => void;
   /** Starts a new run (from the epilogue). */
   newRun?: () => void;
 }
@@ -57,10 +64,37 @@ function rewardCard(r: RewardOption, lang: Lang): string {
   return `<b>✚ ${t(lang, "healReward", { n: r.n })}</b>`;
 }
 
+/** "Mercy +5 · Sap +1": what a fight or a choice moved. Empty when nothing moved. */
+export function alignShiftText(a: Align | undefined, lang: Lang): string {
+  if (!a) return "";
+  const parts: string[] = [];
+  if (a.mercy) parts.push(t(lang, "alignShift", { side: t(lang, a.mercy > 0 ? "side.mercy" : "side.severity"), n: `+${Math.abs(a.mercy)}` }));
+  if (a.purity) parts.push(t(lang, "alignShift", { side: t(lang, a.purity > 0 ? "side.purity" : "side.sap"), n: `+${Math.abs(a.purity)}` }));
+  return parts.join(" · ");
+}
+
+/** One meter as a small bar: the minus side on the left, the plus side on the right, ticks at the marks. */
+export function meterBar(a: Align, m: Meter, lang: Lang, locked?: string): string {
+  const v = a[m], left = m === "mercy" ? "side.severity" : "side.sap", right = m === "mercy" ? "side.mercy" : "side.purity";
+  const pct = (x: number) => 50 + (x / ALIGN.max) * 50;
+  const fill = v >= 0 ? `left:50%;width:${pct(v) - 50}%` : `left:${pct(v)}%;width:${50 - pct(v)}%`;
+  const ticks = [-ALIGN.signature, -ALIGN.mark, ALIGN.mark, ALIGN.signature].map((x) => `<i class="tick${Math.abs(x) >= ALIGN.signature ? " sig" : ""}" style="left:${pct(x)}%"></i>`).join("");
+  return `<span class="meter ${m}" role="meter" aria-valuemin="${-ALIGN.max}" aria-valuemax="${ALIGN.max}" aria-valuenow="${v}" aria-label="${html(t(lang, right))} ${v}">`
+    + `<small>${html(t(lang, left))}</small><span class="track"><b class="fill${v < 0 ? " neg" : ""}" style="${fill}"></b>${ticks}<i class="zero"></i></span>`
+    + `<small>${html(t(lang, right))}</small><em>${v > 0 ? "+" : ""}${v}${locked ? " 🔒" : ""}</em></span>`;
+}
+
+/** Both meters and the alignment they make. */
+export function metersHtml(run: RunState, lang: Lang): string {
+  const a = alignOf(run), id = alignmentOf(a);
+  return `<span class="meters"><span class="alignName">${html(t(lang, "align"))}: <b>${html(ALIGNMENTS[id].name[lang])}</b></span>`
+    + meterBar(a, "mercy", lang, run.alignLock?.mercy) + meterBar(a, "purity", lang, run.alignLock?.purity) + `</span>`;
+}
+
 /** The first thing to answer (perk, reward or shop), or the gear panel when `gearOpen`. */
 function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActions, gearOpen: boolean, closeGear: () => void) {
   const offer = run.offers[0];
-  const epilogue = !!run.over && run.party.length > 0 && !gearOpen;
+  const epilogue = !!run.over && (run.party.length > 0 || run.over === "won") && !gearOpen;
   panel.style.display = offer || gearOpen || epilogue ? "flex" : "none";
   if (!offer && !gearOpen && !epilogue) { panel.replaceChildren(); return; }
   const button = (inner: string, onClick: () => void, cls = "card", disabled = false) => {
@@ -73,10 +107,19 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
   const sp = run.spoils;
   const spoils = document.createElement("p"); spoils.className = "spoils";
   if (sp && offer && offer.kind !== "shop") spoils.textContent = t(lang, "spoils", { c: sp.coins, x: sp.xp })
-    + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: run.hero.level }) : "");
+    + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: run.hero.level }) : "")
+    + (alignShiftText(sp.align, lang) ? ` · ${alignShiftText(sp.align, lang)}` : "");
   if (epilogue) {
     // The run is over: one short epilogue per companion ever recruited.
     title.textContent = t(lang, "epilogue");
+    // The hero's own ending comes first, from where the two meters ended up.
+    if (run.over === "won") {
+      const a = alignOf(run), end = heroEnding(a);
+      const p = document.createElement("p"); p.className = `say ending hero ${end.kind}`;
+      p.innerHTML = `<b>${html(t(lang, "heroEnding", { name: ALIGNMENTS[end.alignment].name[lang] }))}</b><br>${html(end.text[lang])}`;
+      const m = document.createElement("p"); m.className = "say"; m.innerHTML = metersHtml(run, lang);
+      list.append(m, p);
+    }
     for (const m of run.party) {
       const q = QUESTS[m.id];
       if (!q) continue;
@@ -141,6 +184,31 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     foot.append(button(t(lang, "leave"), act.leave, "primary"));
   } else {
     title.textContent = t(lang, "gear");
+    // The hero sheet: both meters, then the twin cards they open.
+    const meters = document.createElement("p"); meters.className = "say"; meters.innerHTML = metersHtml(run, lang);
+    list.append(meters);
+    const warn = lockWarning(run);
+    if (warn) { const w = document.createElement("p"); w.className = "say down"; w.textContent = `⚠ ${t(lang, "lockWarn", { side: t(lang, `side.${warn.side}`) })}`; list.append(w); }
+    const own = heroSpec(HERO, run.hero).abilities;
+    const twins = TWINS.filter((tw) => own.includes(tw.base));
+    if (twins.length) {
+      const h = document.createElement("h3"); h.textContent = t(lang, "twins");
+      const hint = document.createElement("p"); hint.className = "spoils"; hint.textContent = t(lang, "twinsHint");
+      list.append(h, hint);
+    }
+    for (const tw of twins) {
+      const bar = twinBar(run, tw, own), on = !!run.hero.twins?.includes(tw.base);
+      const chip = tw.tag ? `<span class="tag ${tw.tag}">${html(t(lang, `side.${tw.tag}`))}${tw.tier === "signature" ? " ★" : ""}</span>` : "";
+      const why = bar ? (bar.k === "level" ? t(lang, "twinBar.level", { n: bar.n }) : bar.k === "job" ? t(lang, "twinBar.job")
+        : bar.k === "needs" ? t(lang, "twinBar.needs", { side: t(lang, `side.${bar.side}`), n: bar.n }) : t(lang, "twinBar.locked", { side: t(lang, `side.${bar.side}`) })) : "";
+      const state = on && !bar ? t(lang, "twinOn") : bar ? `🔒 ${why}` : t(lang, "twinUse");
+      const inner = `<b>${html(abilityName(lang, tw.base))} ⇄ ${html(abilityName(lang, tw.twin))} ${chip}</b>`
+        + `<span>${html(abilityDesc(lang, tw.twin))}</span><em>${html(state)}</em>`;
+      const b = button(inner, () => act.twin?.(tw.base, !on), `card twin${on && !bar ? " worn" : ""}${bar ? " locked" : ""}`, !!bar && !on);
+      b.dataset.twin = tw.base;
+      if (on) b.title = t(lang, "twinBase");
+      list.append(b);
+    }
     const out = fielded(run);
     for (const m of run.party.filter((x) => x.status === "with" || x.status === "leaving")) {
       const p = document.createElement("p"); p.className = "say";
@@ -174,7 +242,8 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
   const lv = run.hero.level;
   root.querySelector("#runHead")!.innerHTML =
     `<b>${html(regionOf(run).name[lang])}</b> · ${t(lang, `diff.${run.difficulty ?? "normal"}`)} · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
-    + `${t(lang, "level", { n: lv })} · ${t(lang, "xpBar", { a: run.hero.xp, b: xpToNext(lv) })} · ${t(lang, "hp")} ${run.heroHp}/${heroMaxHp(run)} · 🪙 ${run.coins} · ◆ ${run.shards}`;
+    + `${t(lang, "level", { n: lv })} · ${t(lang, "xpBar", { a: run.hero.xp, b: xpToNext(lv) })} · ${t(lang, "hp")} ${run.heroHp}/${heroMaxHp(run)} · 🪙 ${run.coins} · ◆ ${run.shards}`
+    + `<br>${metersHtml(run, lang)}`;
   const waiting = nextNodes(run).flatMap((n) => run.rivals.filter((r) => r.id === n.rival && !r.settled)).map((r) => rivalName(r, lang));
   const party = fielded(run).map((m) => `${COMPANIONS[m.id]!.spec.name} ${m.hp}/${memberMaxHp(run, m)} (${moodOf(m, lang)})`);
   if (party.length) root.querySelector("#runHead")!.innerHTML += `<br>${t(lang, "party")}: ${html(party.join(", "))}`;

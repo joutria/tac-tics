@@ -41,6 +41,8 @@ export interface Ability {
   cleanse?: boolean;
   /** Its area touches only the caster's side. */
   alliesOnly?: boolean;
+  /** Sap-fed: the caster loses this much HP on use (never below 1). */
+  selfHurt?: number;
 }
 
 /** Shards the run must hold for Moheda's Sap Cap to grow stronger. */
@@ -102,5 +104,15 @@ export const ABILITIES: Record<string, Ability> = {
   sear: { id: "sear", element: "light", ap: 4, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 7, max: 9, stat: "mag" }, status: { id: "burn", turns: 2, power: 3 } },
   dazzle: { id: "dazzle", element: "light", ap: 3, range: [1, 5], los: true, target: "foe", area: "single", cooldown: 4, perTurn: 1, damage: { min: 2, max: 4, stat: "mag" }, status: { id: "stun", turns: 1, power: 0 } },
   /** Sap Cap when the run holds SAP_RICH shards or more. */
+  // The hero's twin cards (data/twins.ts): each replaces one card above when the player picks it on the run map.
+  sidestep: { id: "sidestep", element: "light", ap: 2, range: [1, 2], los: false, target: "emptyTile", area: "single", cooldown: 1, perTurn: 1, teleport: true },
+  graceGlow: { id: "graceGlow", element: "light", ap: 3, range: [0, 4], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 4, max: 6 }, status: { id: "regen", turns: 2, power: 3 } },
+  verdict: { id: "verdict", element: "neutral", ap: 3, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 9, max: 11, stat: "mag" } },
+  cleansingFlare: { id: "cleansingFlare", element: "light", ap: 4, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, cleanse: true },
+  sapRay: { id: "sapRay", element: "neutral", ap: 3, range: [1, 5], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 10, max: 13, stat: "mag" }, selfHurt: 3 },
+  sanctuary: { id: "sanctuary", element: "light", ap: 4, range: [0, 3], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, heal: { min: 5, max: 7 }, status: { id: "shield", turns: 2, power: 12 } },
+  purge: { id: "purge", element: "light", ap: 2, range: [0, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, cleanse: true, heal: { min: 3, max: 4 } },
+  brand: { id: "brand", element: "light", ap: 4, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 10, max: 13, stat: "mag" }, status: { id: "weaken", turns: 2, power: 0 } },
+  sapBloom: { id: "sapBloom", element: "neutral", ap: 3, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 8, max: 11, stat: "mag" }, status: { id: "poison", turns: 2, power: 4 }, selfHurt: 5 },
   sapCapRich: { id: "sapCapRich", element: "mush", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 4, max: 6 }, status: { id: "regen", turns: 3, power: 5 } },
 };

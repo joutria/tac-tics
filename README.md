@@ -33,9 +33,29 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
   spared list. At later stops one of them may come back, once each: it fights beside the party for one battle, warns
   of an ambush (which is then called off), or minds a shop stall at 25% off. The more you spare, the likelier.
   Numbers in `MERCY` (`src/data/mercy.ts`). Remanso likes sparing and dislikes finishing a yielding foe.
-- **Hooks for later:** each spare adds 5 to `run.mercy` for the Mercy/Severity meter, and `relapses()` in
-  `src/run/run.ts` is where a spared foe may turn on a hero who leans towards the Sap. Neither is shown yet.
+- **The Sap pulls back.** While the hero is Sap-touched (Purity/Sap at -20 or lower), spared foes stop coming back
+  to help (`relapses()` in `src/run/run.ts`).
 - `npm run simulate:run -- 100 normal --mercy` plays runs that spare every foe they can, to compare with the default.
+
+### Alignment, twin cards and endings
+
+- **Two meters**, each from -100 to +100, shown under the header and on the hero sheet (🎒 Gear), with ticks at 20 and 50:
+  **Mercy / Severity** and **Purity / Sap**. Each has three bands (20 or more on a side, or the middle), which gives
+  nine alignments: Lantern, Shepherd, Graft / Warden, Wanderer, Bargainer / Purifier, Hunter, Crown.
+- **What moves them** (`SHIFT` in `src/data/alignment.ts`): spare a foe Mercy +5, finish a yielding, fleeing or downed
+  foe -3, help an ally up +2 (at most 8 per meter per fight); spare a rival +10, finish one -10; burn shards at a rest's
+  fire Purity +5, buy Sap-forged (epic) gear with shards Sap +5; each tagged twin card used moves its side by 1, once
+  per card per fight. The spoils line after a fight says what moved, and crossing 20 or 50 is said once.
+- **Lock-in.** When a meter reaches 50 on one side, it locks: the other side's signature twins close for the rest of
+  the run. The hero sheet warns from 40. Switch to locking when a region's boss falls instead with
+  `ALIGN.lockAt = "regionEnd"`.
+- **Twin cards** (`src/data/twins.ts`). From level 6, each of the hero's cards has a twin with the same AP cost; swap
+  them for free on the hero sheet between stops. Tagged twins also need 20 on their side, and the job cards' signature
+  twins need 50. A worn twin whose side drops below the mark fights as the original until it is open again. Sap twins
+  hit harder but cost the hero HP.
+- **Hero ending.** After the last boss, the epilogue opens with the hero's ending: a full one for each corner (Lantern,
+  Graft, Purifier, Crown), a variant of the nearest corner plus a line of its own for each edge, and the regular ending
+  for the Wanderer. Companion endings follow as before.
 
 ### Between battles: travel scenes and the route map
 
@@ -68,6 +88,7 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 | Battle: danger zone | | Y |
 | Battle: Hold back on or off | H | LT |
 | After a win: Spare / Finish | Arrow keys, Enter | D-pad, A |
+| Hero sheet: swap a card and its twin | Arrow keys, Enter | D-pad, A |
 | Pick a sign at the fork | 1 to 3 | |
 
 ## Run it

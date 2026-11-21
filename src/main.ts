@@ -14,13 +14,13 @@ import { dangerZone } from "./engine/threat";
 import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
+import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
 import { choices } from "./run/map";
 import { memberSpec } from "./run/party";
 import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, type Difficulty } from "./data/region";
-import { NODE_ICON, nodeLabel, renderRunMap } from "./ui/runmap";
+import { alignShiftText, NODE_ICON, nodeLabel, renderRunMap } from "./ui/runmap";
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
@@ -152,6 +152,8 @@ function showMap() {
     heal: () => { const before = journey; safely(() => shopHeal(journey)); if (journey !== before) record(logShopHeal(PLAYER, before)); },
     leave: () => { record(logShopLeave(PLAYER, journey)); update(leaveShop(journey)); },
     wear: (id) => { journey = wear(journey, id); record(logWear(PLAYER, journey, id)); showMap(); },
+    // Keeps keyboard and controller focus on the card just swapped.
+    twin: (base, on) => { try { update(wearTwin(journey, base, on)); document.querySelector<HTMLButtonElement>(`[data-twin="${base}"]`)?.focus(); } catch (e) { console.warn(e); } },
     newRun: () => startRun(),
   }, gearOpen, () => { gearOpen = false; showMap(); });
   if (choosingDifficulty) renderDifficulty($("runPanel"));
@@ -236,7 +238,8 @@ function afterBattleButton() {
   } catch (e) { console.warn("play log:", e); }
   if (journey.region !== region) { toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
   const sp = journey.spoils;
-  if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : ""), 2600);
+  if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : "")
+    + (alignShiftText(sp.align, lang) ? ` · ${alignShiftText(sp.align, lang)}` : ""), 2600);
   showMap();
 }
 
@@ -354,7 +357,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
       const start = was.get(h.unit);
       const wait = h.pushedTo && start ? 120 + PUSH_STEP_MS * Math.max(1, manhattan(start, h.pushedTo)) : 0;
       const add = (text: string, color: string, delay = 0) => floaters.push({ pos: { ...u.pos }, text, color, born: now + wait + delay });
-      const tag = h.source === "blast" ? "💥 " : h.source === "chain" ? "⚡ " : "";
+      const tag = h.source === "blast" ? "💥 " : h.source === "chain" ? "⚡ " : h.source === "sap" ? "◆ " : "";
       if (h.damage) add(`${tag}-${h.damage}${h.crit ? "!" : ""}`, h.crit ? "#ffd86b" : "#ff8a7a", h.source ? 200 : 0);
       if (h.heal) add(`+${h.heal}`, "#7ed957");
       if (h.revived) add(t(lang, "revived"), "#7ed957");
