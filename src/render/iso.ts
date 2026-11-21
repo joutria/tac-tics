@@ -350,7 +350,11 @@ export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: numbe
   return near?.p ?? null;
 }
 
-export type Mark = "move" | "range" | "blocked" | "target" | "area" | "chosen";
+export type Mark = "move" | "range" | "blocked" | "target" | "area" | "chosen" | "short";
+/** Small notes on reach: up = reached only thanks to height, down = lost to lower ground. */
+export type ReachBadge = "up" | "down";
+/** A line of sight cut by `blocker`, drawn over the board while aiming at a blocked tile. */
+export interface SightLine { from: Pos; to: Pos; blocker: Pos }
 export interface Floater { pos: Pos; text: string; color: string; born: number }
 
 /** A unit on its way somewhere. The rules already put it at the end; this only draws the trip.
@@ -409,6 +413,12 @@ export interface DrawOptions {
   escapePaths?: Pos[][];
   /** What the chosen ability would move or set off: where pushed units and crates end up, and barrel blasts. */
   effects?: { moves: { from: Pos; to: Pos; bump: number; fall?: number }[]; blasts: Pos[]; splashes?: { unit: string; damage: number }[] };
+  /** Reach notes drawn on tiles while aiming (see ReachBadge). */
+  badges?: Map<string, ReachBadge>;
+  /** The cut line of sight to the tile being aimed at. */
+  sightLine?: SightLine;
+  /** Trace the border of the ability's reach, so its shape reads at a glance. */
+  outline?: boolean;
   /** Scenery mode (travel scenes, the route map): units without health bars, rings or badges. */
   bare?: boolean;
 }
@@ -440,7 +450,10 @@ const MARK_STYLE: Record<Mark, [string, string]> = {
   blocked: ["rgba(40, 40, 52, 0.55)", "rgba(150, 150, 165, 0.7)"], // in range, but something stands in the way
   area: ["rgba(255, 170, 60, 0.5)", "rgba(255, 230, 160, 1)"],
   chosen: ["rgba(255, 216, 107, 0.6)", "rgba(255, 255, 255, 1)"],
+  short: ["rgba(20, 16, 30, 0.22)", "rgba(255, 170, 150, 0.28)"], // inside the card's reach, but too close or too low
 };
+/** Marks inside an ability's reach: the outline runs around them. */
+const IN_REACH = new Set<Mark>(["range", "target", "blocked", "area", "chosen"]);
 
 export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: Images, view: View, opt: DrawOptions) {
   const m = s.map, d = dims(m, view.rot);
@@ -512,9 +525,12 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       drawSurface(ctx, tile, c, s.clock, opt.time, p);
       const mark = opt.marks.get(k2);
       if (mark) diamond(ctx, c.x, c.y, ...MARK_STYLE[mark], mark === "chosen" ? 2.5 : 1);
+      if (mark && opt.outline && IN_REACH.has(mark)) reachRim(ctx, m, x, k - x, view.rot, c, opt.marks);
       // Danger zone: a dull purple wash (bright colours over many tiles tire the eye), on top of other marks.
       if (opt.danger?.has(k2)) diamond(ctx, c.x, c.y, "rgba(120, 70, 170, 0.38)", "rgba(200, 160, 255, 0.55)");
       if (opt.hover && opt.hover.x === p.x && opt.hover.y === p.y) diamond(ctx, c.x, c.y, "rgba(255, 255, 255, 0.2)", "#fff");
+      const badge = opt.badges?.get(k2);
+      if (badge) reachBadge(ctx, badge, c);
       // Height cues, part 2: a dark-and-light rim on every edge that drops to lower ground (drawn over marks, so
       // the shape of the ground stays readable while aiming).
       if (!flat) ledges(ctx, m, x, k - x, view.rot, tile.h, c);
@@ -636,6 +652,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     ctx.lineTo(b.x - 9 * Math.cos(ang + 0.5), b.y - 9 * Math.sin(ang + 0.5)); ctx.fill();
     ctx.restore();
   }
+  if (opt.sightLine) drawSightLine(ctx, m, view.rot, opt.sightLine, opt.time);
   for (const b of opt.bursts ?? []) { const c = tileCenter(m, b.pos, view.rot); drawBurst(ctx, img, b, c.x, c.y, opt.time); }
   for (const f of opt.floaters) {
     const age = (opt.time - f.born) / 1000;
@@ -658,6 +675,58 @@ const EDGES = [
   { dx: 0, dy: 1, a: [0, 1], b: [-1, 0], back: false }, // bottom -> left
   { dx: -1, dy: 0, a: [-1, 0], b: [0, -1], back: true }, // left -> top
 ] as const;
+
+/** The border of an ability's reach: a bright line on every edge whose neighbour is out of reach. */
+function reachRim(ctx: CanvasRenderingContext2D, m: GridMap, rx: number, ry: number, rot: number, c: { x: number; y: number }, marks: Map<string, Mark>) {
+  const d = dims(m, rot);
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const e of EDGES) {
+    const nx = rx + e.dx, ny = ry + e.dy;
+    const off = nx < 0 || ny < 0 || nx >= d.w || ny >= d.h;
+    if (!off) { const q = unrotate(m, { x: nx, y: ny }, rot), nm = marks.get(`${q.x},${q.y}`); if (nm && IN_REACH.has(nm)) continue; }
+    // Pulled in a little, so neighbouring rims at another height never merge.
+    const ax = c.x + e.a[0] * TW / 2 * 0.94, ay = c.y + e.a[1] * TH / 2 * 0.94, bx = c.x + e.b[0] * TW / 2 * 0.94, by = c.y + e.b[1] * TH / 2 * 0.94;
+    ctx.strokeStyle = "rgba(40, 8, 4, 0.7)"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 196, 170, 1)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** A small note in the corner of a tile: ▲ height adds the reach to it, ▼ lower ground takes it away. */
+function reachBadge(ctx: CanvasRenderingContext2D, b: ReachBadge, c: { x: number; y: number }) {
+  const x = c.x + 14, y = c.y + 2, up = b === "up";
+  ctx.save();
+  ctx.fillStyle = up ? "#ffd86b" : "#ff8a7a"; ctx.strokeStyle = "#1a1208"; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  if (up) { ctx.moveTo(x, y - 5); ctx.lineTo(x + 5, y + 3); ctx.lineTo(x - 5, y + 3); }
+  else { ctx.moveTo(x, y + 5); ctx.lineTo(x + 5, y - 3); ctx.lineTo(x - 5, y - 3); }
+  ctx.closePath(); ctx.stroke(); ctx.fill();
+  ctx.restore();
+}
+
+/** The line of sight to a blocked tile: clear up to what blocks it, a red X there, and a dashed red line after. */
+function drawSightLine(ctx: CanvasRenderingContext2D, m: GridMap, rot: number, l: SightLine, time: number) {
+  const eye = (p: Pos) => { const c = tileCenter(m, p, rot); return { x: c.x, y: c.y - 22 }; };
+  const a = eye(l.from), b = eye(l.to), k = eye(l.blocker);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(k.x, k.y); ctx.stroke();
+  ctx.strokeStyle = "rgba(255, 240, 200, 0.95)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(k.x, k.y); ctx.stroke();
+  ctx.setLineDash([5, 5]); ctx.lineDashOffset = -time / 60;
+  ctx.strokeStyle = "rgba(255, 107, 91, 0.9)";
+  ctx.beginPath(); ctx.moveTo(k.x, k.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.setLineDash([]);
+  for (const [col, w] of [["#1a0d0d", 5], ["#ff6b5b", 2.5]] as const) {
+    ctx.strokeStyle = col; ctx.lineWidth = w;
+    ctx.beginPath(); ctx.moveTo(k.x - 6, k.y - 6); ctx.lineTo(k.x + 6, k.y + 6); ctx.moveTo(k.x + 6, k.y - 6); ctx.lineTo(k.x - 6, k.y + 6); ctx.stroke();
+  }
+  ctx.restore();
+}
 
 /** Height of the neighbour across an edge, in rotated grid steps; off the map counts as no neighbour. */
 function neighbourH(m: GridMap, rx: number, ry: number, rot: number): number | null {
