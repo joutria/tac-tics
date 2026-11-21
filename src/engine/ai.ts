@@ -148,6 +148,10 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
       const extra = Math.min(out.fall + out.bump, o.hp);
       const moved = !samePos(out.to, o.pos);
       v += extra + (out.fall + out.bump >= o.hp ? 25 : 0) + (ab.shove ? (moved ? 1 : -1) : 4);
+      // Whoever it is slammed into or lands on, and a barrel it sets off.
+      const hit = out.other ? s.units.find((x) => x.id === out.other) : undefined;
+      if (hit && out.splash) v += isFoe(u, hit) ? Math.min(out.splash, hit.hp) : -(out.splash * 1.5 + 5);
+      if (out.blocker === "barrel" && out.at) v += blastValue(s, u, out.at, from);
     }
     if (ab.status && o.life === "up" && (o.id !== u.id || !ab.damage)) v += statusValue(ab.status, o, enemy);
   }

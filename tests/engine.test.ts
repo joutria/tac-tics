@@ -600,7 +600,7 @@ describe("effect preview", () => {
       unit({ id: "f", team: "foes", pos: { x: 2, y: 0 } }),
     ] });
     const pv = previewEffects(s, unitById(s, "h"), ABILITIES.undertow!, { x: 2, y: 0 });
-    expect(pv.moves).toEqual([{ from: { x: 2, y: 0 }, to: { x: 3, y: 0 }, unit: "f", bump: 3, fall: 0, fell: 0 }]);
+    expect(pv.moves).toEqual([{ from: { x: 2, y: 0 }, to: { x: 3, y: 0 }, unit: "f", bump: 4, fall: 0, fell: 0, slammed: "rock" }]); // 3 x 1.5 for rock
     const after = play(s, [{ t: "cast", unit: "h", ability: "undertow", target: { x: 2, y: 0 } }]);
     expect(unitById(after, "f").pos).toEqual({ x: 3, y: 0 });
     expect(unitById(s, "f").pos).toEqual({ x: 2, y: 0 }); // the preview never touches the real state
@@ -647,5 +647,46 @@ describe("falls and shove", () => {
       unit({ id: "f", team: "foes", pos: { x: 1, y: 0 }, heavy: true }),
     ] });
     expect(castProblem(boss, unitById(boss, "h"), "shove", { x: 1, y: 0 })).toBe("too heavy to shove");
+  });
+});
+
+describe("what a push slams into", () => {
+  const setup = (row: string[], extra: UnitSpec[] = [], str = 0) => createBattle({ seed: 1, map: parseMap("slam", row), units: [
+    unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, speed: 90, str }),
+    unit({ id: "f", team: "foes", pos: { x: 1, y: 0 } }),
+    ...extra,
+  ] });
+  const shove = (s: BattleState) => play(s, [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+  it("rock and trees hit harder than the map edge, water softer, and a tall wall harder per level", () => {
+    expect(unitById(shove(setup(["g0 g0 r0"])), "f").hp).toBe(40 - 4);  // 3 x 1.5
+    expect(unitById(shove(setup(["g0 g0 t0"])), "f").hp).toBe(40 - 4);
+    expect(unitById(shove(setup(["g0 g0"])), "f").hp).toBe(40 - 3);     // edge
+    expect(unitById(shove(setup(["g0 g0 w0"])), "f").hp).toBe(40 - 1);  // 3 x 0.5
+    expect(unitById(shove(setup(["g0 g0 g3"])), "f").hp).toBe(40 - 5);  // 3 x 1.75
+  });
+  it("a crate takes the slam too, and a barrel goes off", () => {
+    const c = shove(setup(["g0 g0 g0C"]));
+    expect(c.map.tiles[2]!.propHp).toBe(12 - 3);
+    const b = shove(setup(["g0 g0 g0B g0"]));
+    expect(b.map.tiles[2]!.prop).toBeUndefined();
+    expect(unitById(b, "f").hp).toBe(40 - 3 - 10); // slam + blast
+  });
+  it("a unit slammed into takes half", () => {
+    const s = shove(setup(["g0 g0 g0"], [unit({ id: "g", team: "foes", pos: { x: 2, y: 0 } })], 20)); // 2 tiles, stopped at once: 6
+    expect(unitById(s, "f").hp).toBe(40 - 6);
+    expect(unitById(s, "g").hp).toBe(40 - 3);
+  });
+  it("falling onto a unit below hurts it fully and the faller half, and knocks it aside when it can", () => {
+    const g = unit({ id: "g", team: "foes", pos: { x: 2, y: 0 } });
+    const pv = previewEffects(setup(["d3 d3 d0 d0"], [g]), unitById(setup(["d3 d3 d0 d0"], [g]), "h"), ABILITIES.shove!, { x: 1, y: 0 });
+    expect(pv.splashes).toEqual([{ unit: "g", damage: 10 }]);
+    const s = shove(setup(["d3 d3 d0 d0"], [g]));
+    expect(unitById(s, "g").hp).toBe(40 - 10);   // the full 3-level fall
+    expect(unitById(s, "f").hp).toBe(40 - 5);    // half, cushioned
+    expect(unitById(s, "f").pos).toEqual({ x: 2, y: 0 });
+    expect(unitById(s, "g").pos).toEqual({ x: 3, y: 0 });
+    const blocked = shove(setup(["d3 d3 d0 r0"], [g]));
+    expect(unitById(blocked, "f").pos).toEqual({ x: 1, y: 0 }); // bounces back onto the ledge
+    expect(unitById(blocked, "g").hp).toBe(40 - 10);
   });
 });
