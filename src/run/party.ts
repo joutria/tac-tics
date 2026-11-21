@@ -16,13 +16,18 @@ export interface Member {
   crossed: number;
   /** The player has heard what this companion will not forgive (warnings show from then on). */
   known: boolean;
-  status: "with" | "leaving" | "left" | "fallen" | "turned";
+  /** "stayed": left the party by choice at their quest's alternative good path (Centella stays to rebuild). */
+  status: "with" | "leaving" | "left" | "fallen" | "turned" | "stayed";
   /** Escalation lines already said, so each is said once. */
   said: ("cold" | "refuses" | "leaves" | "betrays")[];
   /** Has seen what their flaw costs (their quest's "seen it" condition). */
   seen?: boolean;
   /** What they did at their quest's lesson moment. */
   lesson?: Lesson;
+  /** Their quest takes its alternative path (Centella: a rival was finished while she was at camp). */
+  altPath?: boolean;
+  /** Share of max HP lost for the rest of the run (Moheda's alternative good path). */
+  hpCut?: number;
 }
 
 /** Ready for the lesson: approval high enough and the cost of their flaw seen. */
@@ -30,9 +35,10 @@ export const readyForLesson = (m: Member) => !!m.seen && m.approval >= LESSON_AP
 
 /** A companion's ending when the run is over (M3 draft, "Endings"). */
 export function endingOf(m: Member): Ending {
+  if (m.status === "stayed" && m.lesson === "alt") return "good";
   if (m.status !== "with") return "bad";
   if (m.lesson === "double") return "bad";
-  if (m.lesson === "sacrifice") return "good";
+  if (m.lesson === "sacrifice" || m.lesson === "alt") return "good";
   if (m.lesson === "hold" && m.seen && QUESTS[m.id]?.heldAfterSeenIsBad) return "bad";
   return "regular";
 }
@@ -49,9 +55,9 @@ export function memberSpec(m: Member, heroLevel: number, pos: UnitSpec["pos"], s
   const up = heroLevel - 1;
   const spec: UnitSpec = {
     ...structuredClone(c.spec), pos: { ...pos },
-    hp: c.spec.hp + (GROWTH.hp ?? 0) * up, str: c.spec.str + (GROWTH.str ?? 0) * up, mag: c.spec.mag + (GROWTH.mag ?? 0) * up,
+    hp: Math.round((c.spec.hp + (GROWTH.hp ?? 0) * up) * (1 - (m.hpCut ?? 0))), str: c.spec.str + (GROWTH.str ?? 0) * up, mag: c.spec.mag + (GROWTH.mag ?? 0) * up,
   };
-  spec.hpNow = m.hp;
+  spec.hpNow = Math.min(m.hp, spec.hp);
   if (shards >= SAP_RICH) spec.abilities = spec.abilities.map((a) => (a === "sapCap" ? "sapCapRich" : a));
   if (m.approval < APPROVAL.refuses && c.forbidden.includes("killFleeing")) spec.refuses = "fleeing";
   return spec;

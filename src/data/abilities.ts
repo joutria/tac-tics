@@ -5,7 +5,7 @@
 import type { Element } from "./elements";
 import type { Status } from "../engine/status";
 
-export type Area = "single" | "cross1";
+export type Area = "single" | "cross1" | "square1";
 export type TargetKind = "foe" | "ally" | "downedAlly" | "any" | "emptyTile" | "yielding" | "prop" | "unit";
 
 export interface Ability {
@@ -49,6 +49,15 @@ export interface Ability {
   spare?: boolean;
   /** Left on every standing unit it hits (see src/engine/status.ts). */
   status?: Status;
+  /** A second status left alongside `status` (Halo: Shield and Regen). */
+  also?: Status;
+  /** Its area touches only the other side (combos: the partner standing in it is spared). */
+  foesOnly?: boolean;
+  /** A combo: usable only while `partner` (a unit id) stands on the caster's side within `reach` tiles. Combos are
+      unlocked by a companion's personal quest (run.combos) and added to the caster for battles the partner is in. */
+  combo?: { partner: string; reach: number; onPartner?: boolean };
+  /** Given to the combo partner when it is cast. */
+  partnerStatus?: Status;
   /** Removes harmful statuses from those it touches. */
   cleanse?: boolean;
   /** Its area touches only the caster's side. */
@@ -120,7 +129,7 @@ export const ABILITIES: Record<string, Ability> = {
   wilt: { id: "wilt", element: "mush", ap: 3, range: [1, 5], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, status: { id: "weaken", turns: 2, power: 0 } },
   sapCap: { id: "sapCap", element: "mush", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 3, max: 4 }, status: { id: "regen", turns: 3, power: 3 } },
   // Hero jobs. Beacon: protector at mid range.
-  halo: { id: "halo", element: "light", ap: 4, range: [0, 3], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, heal: { min: 3, max: 5 }, status: { id: "shield", turns: 2, power: 8 } },
+  halo: { id: "halo", element: "light", ap: 4, range: [0, 3], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, heal: { min: 3, max: 5 }, status: { id: "shield", turns: 2, power: 8 }, also: { id: "regen", turns: 2, power: 2 } },
   dawn: { id: "dawn", element: "light", ap: 2, range: [0, 4], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, cleanse: true, heal: { min: 2, max: 3 } },
   // Blaze: aggressive caster.
   sear: { id: "sear", element: "light", ap: 4, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 7, max: 9, stat: "mag" }, status: { id: "burn", turns: 2, power: 3 } },
@@ -132,9 +141,26 @@ export const ABILITIES: Record<string, Ability> = {
   verdict: { id: "verdict", element: "neutral", ap: 3, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 1, perTurn: 1, damage: { min: 9, max: 11, stat: "mag" } },
   cleansingFlare: { id: "cleansingFlare", element: "light", ap: 4, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, cleanse: true },
   sapRay: { id: "sapRay", element: "neutral", ap: 3, range: [1, 5], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 10, max: 13, stat: "mag" }, selfHurt: 3 },
-  sanctuary: { id: "sanctuary", element: "light", ap: 4, range: [0, 3], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, heal: { min: 5, max: 7 }, status: { id: "shield", turns: 2, power: 12 } },
+  sanctuary: { id: "sanctuary", element: "light", ap: 4, range: [0, 3], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, heal: { min: 5, max: 7 }, status: { id: "shield", turns: 2, power: 12 }, also: { id: "regen", turns: 2, power: 3 } },
   purge: { id: "purge", element: "light", ap: 2, range: [0, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, cleanse: true, heal: { min: 3, max: 4 } },
   brand: { id: "brand", element: "light", ap: 4, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 10, max: 13, stat: "mag" }, status: { id: "weaken", turns: 2, power: 0 } },
   sapBloom: { id: "sapBloom", element: "neutral", ap: 3, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 8, max: 11, stat: "mag" }, status: { id: "poison", turns: 2, power: 4 }, selfHurt: 5 },
   sapCapRich: { id: "sapCapRich", element: "mush", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 4, max: 6 }, status: { id: "regen", turns: 3, power: 5 } },
+
+  // Combos (M3 draft): two companions acting together, unlocked by a personal quest. The caster pays the AP.
+  // Lighthouse Wall (the hero with Guijo): the hero's light bounces off Guijo's shield and dazzles the foes around him.
+  lighthouseWall: { id: "lighthouseWall", element: "light", ap: 4, range: [0, 5], los: true, target: "ally", area: "square1", cooldown: 4, perTurn: 1, foesOnly: true,
+    damage: { min: 4, max: 6, stat: "mag" }, status: { id: "weaken", turns: 2, power: 0 }, combo: { partner: "guijo", reach: 5, onPartner: true }, partnerStatus: { id: "shield", turns: 2, power: 12 } },
+  // Thunderhead (Centella with Remanso): his water drawn up into a storm cloud, her bolt let loose through it.
+  thunderhead: { id: "thunderhead", element: "bolt", ap: 4, range: [2, 5], los: true, target: "any", area: "square1", cooldown: 5, perTurn: 1, foesOnly: true,
+    damage: { min: 5, max: 7, stat: "mag" }, status: { id: "stun", turns: 1, power: 0 }, combo: { partner: "remanso", reach: 3 } },
+  // Mycelium Net (Guijo with Moheda): his tremor cracks the ground and her spores run through the cracks.
+  myceliumNet: { id: "myceliumNet", element: "stone", ap: 4, range: [1, 2], los: false, target: "any", area: "square1", cooldown: 4, perTurn: 1, foesOnly: true,
+    damage: { min: 3, max: 5, stat: "str" }, status: { id: "poison", turns: 2, power: 4 }, also: { id: "slow", turns: 1, power: 1 }, combo: { partner: "moheda", reach: 3 } },
 };
+
+/** Combos by id, for the run (which unlocks them) and the screen. */
+export const COMBOS = ["lighthouseWall", "thunderhead", "myceliumNet"] as const;
+export type ComboId = typeof COMBOS[number];
+/** Who casts each combo. */
+export const COMBO_CASTER: Record<ComboId, string> = { lighthouseWall: "hero", thunderhead: "centella", myceliumNet: "guijo" };

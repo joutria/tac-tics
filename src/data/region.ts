@@ -61,6 +61,8 @@ export interface Region {
   natives?: Species[];
   /** Companions met here, by map layer. */
   recruits: RecruitSpot[];
+  /** Layer of the region's Floodgate, if it has one (a choice node that floods one path and freezes the other). */
+  floodgate?: number;
 }
 
 /** A species as a region fields it, in the player's language. */
@@ -105,6 +107,7 @@ export const REGIONS: Region[] = [
     natives: RESERVOIR_NATIVES,
     boss: { species: 0, hp: 1, stat: 0, mp: 0, name: { es: "Mira Quebrada", en: "Broken Mira" }, unit: BROKEN_MIRA },
     recruits: [{ layer: 1, talk: "centella.meet" }, { layer: 3, talk: "moheda.meet" }],
+    floodgate: 2,
   },
 ];
 

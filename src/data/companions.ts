@@ -250,7 +250,8 @@ export const TALKS: Record<string, Talk> = {
 /** Approval a companion needs to be ready for their lesson. */
 export const LESSON_APPROVAL = 25;
 
-export type Lesson = "sacrifice" | "hold" | "double";
+/** "alt": the alternative good path (M3 draft, "Alternative good"), when the usual lesson can't happen. */
+export type Lesson = "sacrifice" | "hold" | "double" | "alt";
 export type Ending = "good" | "regular" | "bad";
 
 export interface Quest {
@@ -258,7 +259,7 @@ export interface Quest {
   lines: Line[];
   /** Said instead of the sacrifice choice while the companion is not ready. */
   notReady: Line;
-  choices: Record<Lesson, { text: Line; reply: Line }>;
+  choices: Record<Exclude<Lesson, "alt">, { text: Line; reply: Line }>;
   /** Doubling down makes them leave the party. */
   doubleLeaves?: boolean;
   /** Holding on after seeing the cost is the bad ending, not the regular one (Centella). */
@@ -266,6 +267,11 @@ export interface Quest {
   /** Said when the companion first sees what their flaw costs. */
   seen: Line;
   endings: Record<Ending, Line>;
+  /** The alternative good path. Its lines and choices replace the usual ones where given; run.ts questView says
+      when it applies. */
+  alt?: { lines?: Line[]; notReady?: Line; choices: Partial<Record<Lesson, { text: Line; reply: Line }>> };
+  /** What the quest unlocks, by the lesson taken: a combo (data/abilities.ts COMBOS) and a line saying so. */
+  unlocks?: Partial<Record<Lesson, { combo?: string; poisonWard?: number; line: Line }>>;
 }
 
 export const QUESTS: Record<string, Quest> = {
@@ -287,6 +293,18 @@ export const QUESTS: Record<string, Quest> = {
       regular: { es: "Remanso sigue perdonando a todos. Casi siempre sale bien. No habla de las veces que no.", en: "He keeps sparing everyone. Most of the time it works. He doesn't talk about the times it didn't." },
       bad: { es: "El rival que salvó inunda el molino. Encuentran a Remanso río abajo, vivo, repitiendo que podía haber cambiado.", en: "The rival he saved floods the mill. Remanso is found downstream, alive, still saying it could have changed." },
     },
+    // No rival left to face: the test is the mill itself.
+    alt: {
+      lines: [
+        { es: "Volvéis al molino. El agua del canal brilla dorada: la Savia se ha metido en el estanque que lo mantiene seco.", en: "You come back to the mill. The water in the channel glows gold: the Sap has got into the pond that keeps it dry." },
+        { es: "Remanso: «Si rompo la presa, el río se lleva la Savia… y el molino con ella. Es lo único que me queda».", en: "Remanso: \"If I break the dam, the river washes the Sap out… and the mill with it. It's all I have left.\"" },
+      ],
+      notReady: { es: "Remanso mira la presa y niega con la cabeza. «Seguro que hay otra manera».", en: "Remanso looks at the dam and shakes his head. \"There has to be another way.\"" },
+      choices: {
+        alt: { text: { es: "«Rómpela, Remanso. Que el río lo limpie.»", en: "\"Break it, Remanso. Let the river clean it.\"" }, reply: { es: "Remanso arranca la primera piedra con sus propias patas. El molino cae entero al río. Él no aparta la vista.", en: "Remanso pulls out the first stone with his own paws. The whole mill goes into the river. He doesn't look away." } },
+        hold: { text: { es: "«Lo filtraremos. Ya encontraremos la forma.»", en: "\"We'll filter it. We'll find a way.\"" }, reply: { es: "Remanso cuela el agua con redes toda la noche. Por la mañana el estanque sigue brillando.", en: "Remanso strains the water with nets all night. By morning the pond still glows." } },
+      },
+    },
   },
   guijo: {
     companion: "guijo",
@@ -306,6 +324,12 @@ export const QUESTS: Record<string, Quest> = {
       good: { es: "Guijo levanta un muro alrededor del campamento con la piedra que cortó aquel día. Cada mañana talla un nombre en él.", en: "He builds a wall around the camp with the stone he cut that day. He carves one name on it every morning." },
       regular: { es: "El campamento crece. También las manchas grises de sus paredes. Guijo sigue cargando gente.", en: "The camp grows. So do the grey patches on its walls. Guijo keeps carrying people." },
       bad: { es: "La cantera está en silencio. A veces los mineros oyen golpes muy abajo, constantes, como alguien que cuenta.", en: "The quarry is quiet now. Sometimes the miners hear knocking from deep below, steady, like someone counting." },
+    },
+    // In battle (run.ts finishBattle): with his approval high, the party leaves a downed ally to win, and he holds.
+    alt: { choices: { alt: { text: { es: "", en: "" }, reply: { es: "Guijo mira al que se quedó en el suelo. Luego mira a los que siguen en pie. «Hoy hemos salvado a más de los que hemos perdido. Lo cargaré igual». No se rompe.", en: "Guijo looks at the one left on the ground. Then at the ones still standing. \"Today we saved more than we lost. I'll carry it anyway.\" He doesn't break." } } } },
+    unlocks: {
+      sacrifice: { combo: "lighthouseWall", line: { es: "Combo desbloqueado: Muro Faro (el héroe con Guijo).", en: "Combo unlocked: Lighthouse Wall (the hero with Guijo)." } },
+      alt: { combo: "lighthouseWall", line: { es: "Combo desbloqueado: Muro Faro (el héroe con Guijo).", en: "Combo unlocked: Lighthouse Wall (the hero with Guijo)." } },
     },
   },
   centella: {
@@ -328,6 +352,19 @@ export const QUESTS: Record<string, Quest> = {
       regular: { es: "Consiguió lo que quería. Sigue esperando sentirlo.", en: "She got what she wanted. She keeps waiting to feel it." },
       bad: { es: "Caza a toda criatura marcada que encuentra. Una noche, su propio pelaje empieza a brillar dorado.", en: "She hunts every Sap-marked creature she can find. One night her own fur starts to glow gold." },
     },
+    // Someone else killed a rival while she waited at camp: the hunt is over, and what is left is the burned village.
+    alt: {
+      lines: [
+        { es: "El juncal quemado. No queda presa: otro acabó con un rival mientras Centella esperaba en el campamento. Solo quedan las aldeas que ardieron.", en: "The burned reeds. There is no prey left: someone else finished a rival while Centella waited at camp. All that is left are the villages that burned." },
+        { es: "Los aldeanos la reconocen. Nadie dice nada. Centella tampoco.", en: "The villagers recognise her. Nobody says anything. Neither does Centella." },
+      ],
+      choices: {
+        alt: { text: { es: "«Quédate. Respóndeles tú.»", en: "\"Stay. Answer to them yourself.\"" }, reply: { es: "Centella se sienta entre las cenizas. «Id sin mí. Esto lo tengo que arreglar yo». Deja el grupo para el resto del viaje.", en: "Centella sits down among the ashes. \"Go on without me. This one is mine to fix.\" She leaves the party for the rest of the run." } },
+        hold: { text: { es: "«Vámonos. No es culpa tuya.»", en: "\"Let's go. It's not your fault.\"" }, reply: { es: "Centella sale del juncal la primera, muy deprisa, sin mirar atrás.", en: "Centella is first out of the reeds, very fast, not looking back." } },
+        double: { text: { es: "«Hay más marcados. Ve a por ellos.»", en: "\"There are more marked ones. Go after them.\"" }, reply: { es: "Centella sale disparada hacia la tormenta sin mirar atrás.", en: "Centella bolts into the storm without looking back." } },
+      },
+    },
+    unlocks: { sacrifice: { combo: "thunderhead", line: { es: "Combo desbloqueado: Nubarrón (Centella con Remanso).", en: "Combo unlocked: Thunderhead (Centella with Remanso)." } } },
   },
   moheda: {
     companion: "moheda",
@@ -347,5 +384,8 @@ export const QUESTS: Record<string, Quest> = {
       regular: { es: "Su cura salva a unos y marca a otros. Lleva una lista de ambos y no se la enseña a nadie.", en: "Her cure saves some people and marks others. She keeps a list of both and never shows anyone." },
       bad: { es: "Las casas de bombas se llenan de esporas que brillan. Algo ahí dentro aún responde a su nombre.", en: "The pump houses fill with spores that glow. Someone in there still answers to her name." },
     },
+    // Before she has seen the cost: she can still take the risk herself instead of passing it on.
+    alt: { choices: { alt: { text: { es: "«Prueba la última muestra en ti, no en el paciente.»", en: "\"Test the last sample on yourself, not on the patient.\"" }, reply: { es: "Moheda se bebe la muestra despacio y anota cada síntoma. El paciente vive. Ella queda más débil el resto del viaje.", en: "Moheda drinks the sample slowly and notes every symptom. The patient lives. She stays weaker for the rest of the run." } } } },
+    unlocks: { hold: { combo: "myceliumNet", poisonWard: 1, line: { es: "Combo desbloqueado: Red de Micelio (Guijo con Moheda). El grupo resiste algo mejor el veneno.", en: "Combo unlocked: Mycelium Net (Guijo with Moheda). The party resists poison a little better." } } },
   },
 };

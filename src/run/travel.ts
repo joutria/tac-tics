@@ -293,6 +293,6 @@ export function approachScene(seed: string, region: string, col: number, dest: D
 export function placeOf(kind: RunNode["kind"]): keyof typeof PLACES | null {
   if (kind === "rest") return "camp";
   if (kind === "shop") return "shop";
-  if (kind === "recruit" || kind === "quest") return "clearing";
+  if (kind === "recruit" || kind === "quest" || kind === "floodgate") return "clearing";
   return null;
 }

@@ -77,6 +77,8 @@ export interface UnitSpec {
   quick?: string;
   /** A rival's learned habit: it goes for units that can heal first. */
   hunts?: "healer";
+  /** Poison hurts this much less per turn (Moheda's research, finished). */
+  poisonWard?: number;
 }
 
 export interface Unit extends UnitSpec {
@@ -328,7 +330,7 @@ function startOfTurnTicks(s: BattleState, u: Unit, events: BattleEvent[]): boole
       const amount = statusOf(u, "poison") ? Math.floor(st.power * POISON_HEAL_FACTOR) : st.power;
       ev.heal = Math.min(amount, u.maxHp - u.hp); u.hp += ev.heal;
     } else {
-      ev.damage = absorb(u, st.power);
+      ev.damage = absorb(u, id === "poison" ? Math.max(0, st.power - (u.poisonWard ?? 0)) : st.power);
       hurt(u, ev.damage, ev);
     }
     events.push(ev);
