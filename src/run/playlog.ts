@@ -33,7 +33,7 @@ export type PlayEvent = Base & (
     /** Who downed or killed the hero, if anyone did. */
     heroFelledBy?: string;
   }
-  | { ev: "pick"; offer: "reward" | "perk" | "talk" | "altar" | "job" | "quest"; options: string[]; chose: number; region: number; layer: number }
+  | { ev: "pick"; offer: "reward" | "perk" | "talk" | "altar" | "job" | "quest" | "floodgate"; options: string[]; chose: number; region: number; layer: number }
   | { ev: "buy"; item: string; price: number; currency: string; coins: number; shards: number }
   | { ev: "shopHeal"; hp: number; coins: number }
   | { ev: "shopLeave"; stock: string[] }
@@ -133,7 +133,8 @@ export function logChoice(ctx: LogContext, before: RunState, index: number): Pla
   const o = before.offers[0];
   if (!o || o.kind === "shop" || ((o.kind === "talk" || o.kind === "quest") && o.reply)) return null;
   const options = o.kind === "reward" ? o.options.map(rewardKey) : o.kind === "perk" || o.kind === "job" ? [...o.options]
-    : o.kind === "altar" ? ["burn", "keep"] : o.kind === "quest" ? [`quest:${o.companion}`] : [`talk:${o.id}`];
+    : o.kind === "altar" ? ["burn", "keep"] : o.kind === "quest" ? [`quest:${o.companion}`]
+    : o.kind === "floodgate" ? (o.paths.length === 1 ? ["flood", "freeze"] : o.paths.map((p) => `flood:${p}`)) : [`talk:${o.id}`];
   return make(ctx, before, "pick", { offer: o.kind, options, chose: index, ...where(before) });
 }
 

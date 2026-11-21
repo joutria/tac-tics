@@ -202,6 +202,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (!o) continue;
     const enemy = isFoe(u, o);
     if (ab.alliesOnly && enemy) continue;
+    if (ab.foesOnly && !enemy) continue;
     if (ab.cleanse && !enemy && o.life === "up") v += 5 * o.statuses.filter((x) => x.turns > 0 && !["shield", "regen"].includes(x.id)).length;
     if (ab.damage) {
       const dmg = avg(damagePreview(s, u, o, ab, from));
@@ -226,7 +227,10 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
       if (out.blocker === "barrel" && out.at) v += blastValue(s, u, out.at, from);
     }
     if (ab.status && o.life === "up" && (o.id !== u.id || !ab.damage)) v += statusValue(ab.status, o, enemy);
+    if (ab.also && o.life === "up" && (o.id !== u.id || !ab.damage)) v += statusValue(ab.also, o, enemy);
   }
+  const partner = ab.partnerStatus && ab.combo ? s.units.find((x) => x.id === ab.combo!.partner && x.life === "up") : undefined;
+  if (partner) v += statusValue(ab.partnerStatus!, partner, false);
   return v;
 }
 
@@ -269,7 +273,8 @@ function candidateTargets(s: BattleState, ab: Ability): Pos[] {
   for (const o of s.units) {
     if (!onMap(o)) continue;
     spots.set(key(o.pos), o.pos);
-    if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
+    if (ab.area === "square1") for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const p = { x: o.pos.x + dx, y: o.pos.y + dy }; spots.set(key(p), p); }
+    else if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }
   if (ab.throwProp) s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   if (ab.push && ab.area === "single") s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });

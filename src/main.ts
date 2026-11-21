@@ -9,7 +9,7 @@ import { MEADOW } from "./data/maps/meadow";
 import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
-import { abilityAvailable, areaTiles, castProblem, guardAbility, CRIT_MULT, HEIGHT_CAP, HEIGHT_PER_LEVEL, SIDE_BONUS, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
+import { abilityAvailable, areaTiles, castProblem, comboProblem, guardAbility, CRIT_MULT, HEIGHT_CAP, HEIGHT_PER_LEVEL, SIDE_BONUS, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
@@ -498,6 +498,7 @@ function explain(why: string): string {
     ["outside the map", "err.outside"], ["out of range", "err.range"], ["no line of sight", "noSight"],
     ["needs an enemy", "err.foe"], ["needs a standing ally", "err.ally"], ["needs a downed", "err.downedAlly"], ["hidden in tall grass", "err.hidden"],
     ["needs an empty tile", "err.empty"], ["needs a yielding foe", "err.yielding"], ["not enough AP", "err.ap"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
+    ["the combo partner is not standing", "err.comboDown"], ["the combo partner is too far", "err.comboFar"], ["needs the combo partner", "err.comboTarget"],
   ];
   const hit = map.find(([k]) => why.startsWith(k));
   return hit ? t(lang, hit[1]) : why;
@@ -564,15 +565,18 @@ function abilityHelp(id: string, u: Unit | null): string {
   chip("ap", ab.ap ? `${ab.ap} ${t(lang, "ap")}` : t(lang, "free"));
   chip("range", ab.range[1] === 0 ? t(lang, "h.self") : t(lang, "h.range", { r: ab.range[0] === ab.range[1] ? `${ab.range[1]}` : `${ab.range[0]}–${ab.range[1]}` }));
   if (ab.area === "cross1") chip("area", t(lang, "h.area"));
+  if (ab.area === "square1") chip("area", t(lang, "h.square"));
+  if (ab.combo) chip("recruit", t(lang, "h.combo", { name: state.units.find((x) => x.id === ab.combo!.partner)?.name ?? ab.combo.partner, n: ab.combo.reach }));
   if (ab.los) chip("sight", t(lang, "h.sight"));
   if (ab.damage) chip("sword", `${ab.damage.min}–${ab.damage.max} · ${t(lang, ab.damage.stat)}`);
   if (ab.heal) chip("heal", `+${ab.heal.min}–${ab.heal.max}`);
   if (ab.push) chip("push", t(lang, "h.push", { n: ab.shove ? "1–2" : ab.push }));
   if (ab.status) chip(ab.status.id, `${t(lang, `st.${ab.status.id}` as TextKey)} · ${t(lang, "turnsLeft", { n: ab.status.turns })}`);
+  if (ab.also) chip(ab.also.id, `${t(lang, `st.${ab.also.id}` as TextKey)} · ${t(lang, "turnsLeft", { n: ab.also.turns })}`);
   if (ab.cooldown) chip("cooldown", t(lang, "h.cd", { n: ab.cooldown }));
   if (ab.perTurn > 1 && ab.perTurn < 4) chip(null, t(lang, "h.perTurn", { n: ab.perTurn }));
   if (ab.quick) chip("quick", t(lang, "h.quick"));
-  const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
+  const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
   const el = ELEMENTS[ab.element];
   const key = u ? menuOrder(u).indexOf(id) + 1 : 0;
   return `<div class="head">${icon(abilityIcon(id, ab.element), "big")}<span>${abilityName(lang, id)}</span>${key > 0 && key <= 9 ? `<kbd>${key}</kbd>` : ""}`
@@ -656,7 +660,7 @@ function refresh() {
     const ab = ABILITIES[id]!;
     const b = document.createElement("button");
     b.className = `cmd${ab.quick ? " sub" : ""}${selected === id ? " on" : ""}`;
-    const why = abilityAvailable(u, id) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
+    const why = abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
     b.innerHTML = `${icon(abilityIcon(id, ab.element))}<span class="nm">${abilityName(lang, id)}</span>`

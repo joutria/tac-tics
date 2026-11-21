@@ -3,7 +3,7 @@
    the same seed always gives the same map. */
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
 
-export type NodeKind = "battle" | "elite" | "rest" | "shop" | "recruit" | "rival" | "quest" | "boss";
+export type NodeKind = "battle" | "elite" | "rest" | "shop" | "recruit" | "rival" | "quest" | "boss" | "floodgate";
 
 export interface RunNode {
   id: number;
@@ -19,6 +19,9 @@ export interface RunNode {
   rival?: string;
   /** Companion whose personal quest waits here (data/companions.ts QUESTS), for kind "quest". */
   quest?: string;
+  /** Set by a Floodgate choice: the fight here is flooded (more water, one foe fewer) or frozen (the water turns
+      to ice, and the ice gives up what sank in it: more coins). */
+  flood?: "flooded" | "frozen";
 }
 
 export interface RunMap { layers: number; width: number; nodes: RunNode[] }
@@ -131,4 +134,36 @@ export function placeQuest(map: RunMap, at: number | null, companion: string, se
   const node = near[i]!;
   node.kind = "quest"; node.quest = companion;
   return node.id;
+}
+
+/** A Floodgate (the Broken Reservoir's choice node) on a fight of `layer`, preferring one with two ways on. */
+export function placeFloodgate(map: RunMap, layer: number, seed: string | number): number | null {
+  // A plain battle on the layer, else an elite there, else the same on the next layer.
+  const on = (l: number, kind: NodeKind) => map.nodes.filter((n) => n.layer === l && n.kind === kind);
+  const spots = [on(layer, "battle"), on(layer, "elite"), on(layer + 1, "battle"), on(layer + 1, "elite")].find((x) => x.length) ?? [];
+  if (!spots.length) return null;
+  const forks = spots.filter((n) => n.next.length > 1);
+  const pool = forks.length ? forks : spots;
+  const [i] = rngInt(seedFrom(`${seed}:floodgate`), 0, pool.length - 1);
+  pool[i]!.kind = "floodgate";
+  return pool[i]!.id;
+}
+
+/** Floods the path through `first` and freezes the others leaving the Floodgate at `gate`, two layers deep. A node
+    both ways lead to stays flooded. With a single way on, `first` is that way and `kind` says which it gets. */
+export function setFloodgate(map: RunMap, gate: number, first: number | null, single?: "flooded" | "frozen") {
+  const mark = (id: number, kind: "flooded" | "frozen") => {
+    const n = map.nodes[id]!;
+    if (n.kind === "boss" || n.flood === "flooded") return;
+    n.flood = kind;
+  };
+  const ways = map.nodes[gate]!.next;
+  const kindOf = (id: number) => (single ?? (id === first ? "flooded" : "frozen"));
+  // The frozen ones first, so a node a flooded way also reaches ends up flooded.
+  const order = [...ways].sort((a, b) => (kindOf(a) === "frozen" ? -1 : 1) - (kindOf(b) === "frozen" ? -1 : 1));
+  for (const id of order) {
+    const k = kindOf(id);
+    mark(id, k);
+    for (const nx of map.nodes[id]!.next) mark(nx, k);
+  }
 }

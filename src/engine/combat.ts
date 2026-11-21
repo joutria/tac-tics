@@ -182,6 +182,20 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, fr
     case "any": break;
   }
   if (ab.dip && !dipSource(s, from)) return "needs fire or Sap next to you";
+  if (ab.combo) {
+    const why = comboProblem(s, u, ab, from);
+    if (why) return why;
+    if (ab.combo.onPartner && other?.id !== ab.combo.partner) return "needs the combo partner";
+  }
+  return null;
+}
+
+/** A combo needs its partner standing on the caster's side within reach. */
+export function comboProblem(s: BattleState, u: Unit, ab: Ability, from: Pos = u.pos): string | null {
+  if (!ab.combo) return null;
+  const p = s.units.find((x) => x.id === ab.combo!.partner);
+  if (!p || p.life !== "up" || isFoe(u, p)) return "the combo partner is not standing";
+  if (manhattan(from, p.pos) > ab.combo.reach) return "the combo partner is too far";
   return null;
 }
 
@@ -202,6 +216,11 @@ function jumpProblem(s: BattleState, u: Unit, from: Pos, to: Pos): string | null
 
 export function areaTiles(ab: Ability, target: Pos): Pos[] {
   if (ab.area === "single") return [target];
+  if (ab.area === "square1") {
+    const out: Pos[] = [];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) out.push({ x: target.x + dx, y: target.y + dy });
+    return out;
+  }
   return [target, ...NEIGHBOURS.map((d) => ({ x: target.x + d.x, y: target.y + d.y }))];
 }
 
@@ -271,7 +290,7 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
     touchTile(s, ab, from, p, fx, ground, hurtByTerrain, caster.str);
     const u = unitAt(s, p);
     // An area attack hits allies caught in it, but never the one who casts it (so it can be used point-blank).
-    if (!u || (u.id === caster.id && ab.damage) || (ab.alliesOnly && isFoe(caster, u))) continue;
+    if (!u || (u.id === caster.id && ab.damage) || (ab.alliesOnly && isFoe(caster, u)) || (ab.foesOnly && !isFoe(caster, u))) continue;
     const hit: Hit = { unit: u.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false };
     if (ab.revive && u.life === "up") {
       if (u.rooted) { u.rooted = false; hit.freed = true; }
@@ -312,7 +331,8 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
     // Dipped in fire or Sap: the attack sets enemies it hits burning, or poisons them.
     if (caster.dipped && ab.damage && hit.damage > 0 && u.life === "up" && isFoe(caster, u) && addStatus(u, { id: caster.dipped, turns: 2, power: 3 }))
       hit.statuses = [...(hit.statuses ?? []), caster.dipped];
-    if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [ab.status.id];
+    if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [...(hit.statuses ?? []), ab.status.id];
+    if (ab.also && u.life === "up" && addStatus(u, ab.also)) hit.statuses = [...(hit.statuses ?? []), ab.also.id];
     const extra: Hit[] = [];
     if (ab.push && u.life === "up") push(s, caster, u, from, ab.shove ? shoveDistance(caster, u) : ab.push, hit, extra, fx, ground, hurtByTerrain);
     credit(u, hit);
@@ -320,6 +340,10 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
     for (const e of extra) { credit(s.units.find((x) => x.id === e.unit)!, e); hits.push(e); }
   }
   if (ab.throwProp) throwProp(s, caster, from, target, hits, fx, ground, hurtByTerrain);
+  // A combo's gift to the partner (Lighthouse Wall's shield on Guijo).
+  const partner = ab.partnerStatus && ab.combo ? s.units.find((x) => x.id === ab.combo!.partner && x.life === "up") : undefined;
+  if (partner && addStatus(partner, ab.partnerStatus!))
+    hits.push({ unit: partner.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false, statuses: [ab.partnerStatus!.id] });
   // Aim and Dip last until the next ability that is not a quick action.
   if (!ab.quick) { caster.aiming = false; if (ab.damage) caster.dipped = false; }
   if (ab.element === "bolt" && ab.damage) chainBolt(s, caster, hits, fx, ground, hurtByTerrain);

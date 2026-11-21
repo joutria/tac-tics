@@ -24,8 +24,8 @@ export const JOBS: Record<Job, JobInfo> = {
     id: "beacon",
     name: { es: "Faro", en: "Beacon" },
     desc: {
-      es: "Protector a media distancia. Halo escuda y cura a los aliados en cruz; Alba quita un mal estado. Los aliados junto al héroe reciben un 10% menos de daño.",
-      en: "Protector at mid range. Halo shields and heals allies in a cross; Dawn clears an ailment. Allies next to the hero take 10% less damage.",
+      es: "Protector a media distancia. Halo escuda, cura y regenera a los aliados en cruz; Alba quita un mal estado. Los aliados junto al héroe reciben un 10% menos de daño.",
+      en: "Protector at mid range. Halo shields, heals and regenerates allies in a cross; Dawn clears an ailment. Allies next to the hero take 10% less damage.",
     },
     abilities: ["halo", "dawn"],
     passive: "guard",

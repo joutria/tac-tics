@@ -99,7 +99,7 @@ if (logFile) { writeFileSync(logFile, JSON.stringify({ game: "tac-tics", log: 1,
 function answerOffers(run: RunState): RunState {
   while (run.offers.length) {
     const o = run.offers[0]!;
-    if (o.kind === "perk" || o.kind === "talk" || o.kind === "quest" || o.kind === "job") { keep(logChoice(ctx, run, 0)); run = choose(run, 0); }
+    if (o.kind === "perk" || o.kind === "talk" || o.kind === "quest" || o.kind === "job" || o.kind === "floodgate") { keep(logChoice(ctx, run, 0)); run = choose(run, 0); }
     else if (o.kind === "altar") { const i = run.heroHp < heroMaxHp(run) * 0.5 ? 0 : 1; keep(logChoice(ctx, run, i)); run = choose(run, i); }
     else if (o.kind === "reward") {
       const hurt = run.heroHp < heroMaxHp(run) * 0.4;

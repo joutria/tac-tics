@@ -13,8 +13,8 @@ import { standable, tileAt, type GridMap, type Pos } from "../engine/grid";
 import type { BattleSave } from "../engine/save";
 import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
 import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
-import { aheadOf, choices, generateMap, MAP_LAYERS, placeQuest, placeRival, type RunMap, type RunNode } from "./map";
-import { COMPANIONS, QUESTS, TALKS, type Lesson } from "../data/companions";
+import { aheadOf, choices, generateMap, MAP_LAYERS, placeFloodgate, placeQuest, placeRival, setFloodgate, type RunMap, type RunNode } from "./map";
+import { COMPANIONS, LESSON_APPROVAL, QUESTS, TALKS, type Lesson } from "../data/companions";
 import { JOB_LAYER, type Job } from "../data/jobs";
 import type { Line } from "../data/rivals";
 import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, type Member } from "./party";
@@ -24,6 +24,7 @@ import { unsettled } from "../engine/state";
 import { ALIGN, SHIFT, type Align, type Meter, type Side } from "../data/alignment";
 import { alignOf, battleShift, lockIn, shiftAlign, twinBar } from "./alignment";
 import { twinOf } from "../data/twins";
+import { ABILITIES, COMBO_CASTER, type ComboId } from "../data/abilities";
 
 export const RUN_VERSION = 5;
 /** Share of max HP a rest node gives back. */
@@ -55,7 +56,10 @@ export type Offer =
   /** The hero's job: the one the run leans towards, or both on a tie. */
   | { kind: "job"; options: Job[] }
   /** A companion's personal quest: its lesson moment (choices from questChoices), then the reply. */
-  | { kind: "quest"; companion: string; reply?: Line };
+  | { kind: "quest"; companion: string; reply?: Line }
+  /** The Floodgate: flood one of `paths` (the ways on) and freeze the rest; with one way on, flood it (0) or
+      freeze it (1). */
+  | { kind: "floodgate"; paths: number[] };
 
 export interface RunState {
   version: number;
@@ -97,6 +101,10 @@ export interface RunState {
   mercy?: number;
   /** A spared foe helping at the stop being entered. */
   help?: { node: number; region: number; foe: string; kind: HelpKind };
+  /** Combos the party's quests have unlocked (data/abilities.ts COMBOS). */
+  combos?: string[];
+  /** Poison hurts the party this much less per turn (Moheda's research, finished). */
+  poisonWard?: number;
 }
 
 export interface SparedFoe {
@@ -112,13 +120,19 @@ export interface SparedFoe {
 
 export function newRun(seed: string, difficulty: Difficulty = "normal"): RunState {
   return {
-    version: RUN_VERSION, seed, difficulty, region: 0, map: generateMap(regionSeed(seed, 0), REGIONS[0]!.recruits), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
+    version: RUN_VERSION, seed, difficulty, region: 0, map: regionMap(seed, 0), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
     coins: 0, shards: 0, rivals: [], party: [], remarks: [], offers: [], over: null,
   };
 }
 
 /** The first region keeps the plain seed, so runs started before regions existed keep their maps. */
 const regionSeed = (seed: string, region: number) => (region ? `${seed}:region:${region}` : seed);
+/** A region's node map, with its Floodgate if it has one. */
+function regionMap(seed: string, region: number): RunMap {
+  const r = REGIONS[region]!, map = generateMap(regionSeed(seed, region), r.recruits);
+  if (r.floodgate !== undefined) placeFloodgate(map, r.floodgate, regionSeed(seed, region));
+  return map;
+}
 export const regionOf = (run: RunState): Region => REGIONS[run.region ?? 0]!;
 export const isLastRegion = (run: RunState) => (run.region ?? 0) >= REGIONS.length - 1;
 /** Depth added per region already crossed. Less than a whole map: each region starts a little above where the
@@ -181,8 +195,12 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   if (node.kind === "boss") count = 2;
   if (node.layer >= 2 && node.kind !== "boss") count += rulesOf(run).extraFoes;
   count = Math.min(4, count + fielded(run).length);
+  // A flooded fight: the rising water carried one foe off.
+  if (node.flood === "flooded") count = Math.max(1, count - FLOOD.foesFewer);
   const units: UnitSpec[] = [{ ...heroOf(run), pos: { ...arena.hero }, hpNow: run.heroHp }];
   fielded(run).forEach((m, i) => { if (arena.allies[i]) units.push(memberSpec(m, run.hero.level, arena.allies[i]!, run.shards)); });
+  addCombos(run, units);
+  if (run.poisonWard) for (const u of units) u.poisonWard = run.poisonWard;
   for (let i = 0; i < count; i++) {
     const pos = arena.foes[i]!;
     const id = run.region ? `r${run.region}n${node.id}-${i}` : `n${node.id}-${i}`;
@@ -199,9 +217,44 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   const help = run.help && run.help.node === nodeId && run.help.region === (run.region ?? 0) ? run.help : undefined;
   const helper = help?.kind === "join" ? run.spared?.find((f) => f.id === help.foe) : undefined;
   if (helper) units.push(helperSpec(helper, arena, units));
-  if (!isAmbush(run, node) || help?.kind === "warn") return { seed: `${rs}:battle:${node.id}`, map: arena.map, units };
-  placeAmbush(arena.map, units, seedFrom(`${rs}:ambush-spots:${node.id}`));
-  return { seed: `${rs}:battle:${node.id}`, map: arena.map, units, ambush: true };
+  const map = node.flood ? floodMap(arena.map, node.flood, units.map((u) => u.pos), seedFrom(`${rs}:flood:${node.id}`)) : arena.map;
+  if (!isAmbush(run, node) || help?.kind === "warn") return { seed: `${rs}:battle:${node.id}`, map, units };
+  placeAmbush(map, units, seedFrom(`${rs}:ambush-spots:${node.id}`));
+  return { seed: `${rs}:battle:${node.id}`, map, units, ambush: true };
+}
+
+/** The Floodgate's effects: a flooded fight has FLOOD.foesFewer foe fewer, a frozen one pays FLOOD.frozenCoins
+    times the coins. `spread` is the share of dry low ground next to the water that floods. */
+export const FLOOD = { foesFewer: 1, frozenCoins: 1.25, spread: 0.5 };
+
+/** An arena after the Floodgate. Frozen: every pool turns to ice (walkable). Flooded: the ice melts, and some of the
+    flat ground next to the water goes under, never where a unit starts or where something stands. */
+export function floodMap(map: GridMap, kind: "flooded" | "frozen", keep: Pos[], seed: number): GridMap {
+  const out = structuredClone(map);
+  out.id = `${map.id}-${kind}`;
+  const at = (x: number, y: number) => (x >= 0 && y >= 0 && x < map.w && y < map.h ? map.tiles[y * map.w + x] : undefined);
+  let rng = seed;
+  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+    const t = out.tiles[y * map.w + x]!, was = map.tiles[y * map.w + x]!;
+    if (kind === "frozen") { if (was.terrain === "water") t.terrain = "ice"; continue; }
+    if (was.terrain === "ice") { t.terrain = "water"; continue; }
+    if ((was.terrain !== "grass" && was.terrain !== "dirt") || was.h !== 0 || was.prop || was.surface) continue;
+    if (keep.some((p) => p.x === x && p.y === y)) continue;
+    const wet = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const n = at(x + dx!, y + dy!); return n?.terrain === "water" || n?.terrain === "ice"; });
+    if (!wet) continue;
+    let v: number; [v, rng] = rngNext(rng);
+    if (v < FLOOD.spread) t.terrain = "water";
+  }
+  return out;
+}
+
+/** The combos the party has unlocked, on whoever casts them, for battles their partner fights in too. */
+function addCombos(run: RunState, units: UnitSpec[]) {
+  for (const id of run.combos ?? []) {
+    const ab = ABILITIES[id], caster = units.find((u) => u.id === COMBO_CASTER[id as ComboId]);
+    if (!ab?.combo || !caster || !units.some((u) => u.id === ab.combo!.partner)) continue;
+    if (!caster.abilities.includes(id)) caster.abilities = [...caster.abilities, id];
+  }
 }
 
 /** Share of plain fights and elites (from layer 1 on) where the foes lie in wait. Rivals and bosses never hide:
@@ -294,7 +347,7 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
     next.spared!.find((f) => f.id === help.foe)!.helped = true;
     if (help.kind === "discount") next.remarks.push({ es: helpLine(next, "es"), en: helpLine(next, "en") });
   }
-  if (node.kind === "rest" || node.kind === "shop" || node.kind === "recruit" || node.kind === "quest") {
+  if (node.kind === "rest" || node.kind === "shop" || node.kind === "recruit" || node.kind === "quest" || node.kind === "floodgate") {
     if (node.kind === "rest") {
       next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * (REST_HEAL + rulesOf(next).healBonus)));
       for (const m of next.party) {
@@ -315,6 +368,9 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
     } else if (node.quest) {
       const m = next.party.find((x) => x.id === node.quest);
       if (m && m.status === "with" && !m.lesson) next.offers.push({ kind: "quest", companion: m.id });
+    } else if (node.kind === "floodgate") {
+      const paths = [...node.next].sort((a, b) => next.map.nodes[a]!.col - next.map.nodes[b]!.col);
+      next.offers.push({ kind: "floodgate", paths });
     }
     next.at = nodeId; next.path.push(nodeId);
     placeQuests(next);
@@ -352,6 +408,15 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   if (shards > 0) deeds.shardsGained = 1;
   lean(next, { beacon: deeds.helpUp + deeds.letEscape + deeds.noneDowned + deeds.spare, blaze: deeds.killFleeing + deeds.rivalBeaten + deeds.finishDowned + deeds.finishYielding });
   next.remarks = [];
+  // Guijo's alternative good path: ready (approval high) and his lesson not yet taken, he watches an ally bleed out
+  // in a fight that was won, and holds. It is not the forbidden deed then: it is what he had to learn.
+  const guijo = fielded(next).find((m) => m.id === "guijo");
+  const guijoUp = guijo && end.units.find((u) => u.id === "guijo")?.life !== "dead";
+  const guijoDeeds = guijo && guijoUp && !guijo.lesson && guijo.approval >= LESSON_APPROVAL && deeds.allyBledOut > 0 ? { ...deeds, allyBledOut: 0 } : null;
+  if (guijoDeeds) { guijo!.lesson = "alt"; next.remarks.push(QUESTS.guijo!.alt!.choices.alt!.reply); unlock(next, "guijo", "alt"); }
+  // A rival finished while Centella waited at camp: her own hunt can only end at the burned village now.
+  const centella = next.party.find((m) => m.id === "centella" && m.status === "with" && !m.lesson);
+  if (centella && deeds.rivalBeaten > 0 && !fielded(next).includes(centella)) centella.altPath = true;
   // The alignment meters: sparing and helping up against finishing, the tagged twins used, rivals settled.
   const alignBefore = alignOf(next);
   const crossed = shiftAlign(next, battleShift(b.setup, b.commands, end, deeds));
@@ -362,7 +427,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
     if (u.life === "dead") { m.status = "fallen"; continue; }
     const max = memberMaxHp(next, m);
     m.hp = Math.min(max, Math.max(1, u.hp) + Math.round(max * Math.max(0, AFTER_WIN_HEAL + rulesOf(next).healBonus)));
-    const { member, remarks } = react(m, deeds);
+    const { member, remarks } = react(m, m.id === "guijo" && guijoDeeds ? guijoDeeds : deeds);
     Object.assign(m, member);
     next.remarks.push(...remarks);
     if (m.status === "turned") {
@@ -380,7 +445,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
 
   // Spoils: every foe put down (not the ones that got away), scaled by depth and the kind of node.
   const mult = (1 + REWARD.perLayer * depthOf(next, node)) * (node.kind === "boss" ? REWARD.bossMult : node.kind === "elite" ? REWARD.eliteMult : node.kind === "rival" ? REWARD.rivalMult : 1);
-  const coins = Math.round(beaten.length * REWARD.coinsPerFoe * mult * rulesOf(next).coins);
+  const coins = Math.round(beaten.length * REWARD.coinsPerFoe * mult * rulesOf(next).coins * (node.flood === "frozen" ? FLOOD.frozenCoins : 1));
   const xp = Math.round(beaten.length * REWARD.xpPerFoe * mult);
   next.coins += coins; next.shards += shards;
   const before = heroMaxHp(next);
@@ -407,7 +472,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
     if (isLastRegion(next)) { next.over = "won"; next.offers = []; return next; }
     // On to the next region: a fresh map, the party and everything carried, and a breather.
     next.region = (next.region ?? 0) + 1;
-    next.map = generateMap(regionSeed(next.seed, next.region), regionOf(next).recruits);
+    next.map = regionMap(next.seed, next.region);
     next.at = null; next.path = [];
     next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * REGION_REST));
     for (const m of fielded(next)) m.hp = Math.min(memberMaxHp(next, m), m.hp + Math.round(memberMaxHp(next, m) * REGION_REST));
@@ -451,8 +516,38 @@ function offerJob(run: RunState) {
 
 /** The choices a companion's lesson moment offers: the sacrifice only once they are ready for it. */
 export function questChoices(run: RunState, companion: string): Lesson[] {
-  const m = run.party.find((x) => x.id === companion);
-  return m && readyForLesson(m) ? ["sacrifice", "hold", "double"] : ["hold", "double"];
+  return questView(run, companion).choices.map((c) => c.lesson);
+}
+
+/** Moheda's alternative good path costs her this share of max HP for the rest of the run. */
+export const ALT_HP_CUT = 0.2;
+
+/** A quest as it plays out now: its usual lesson, or its alternative good path (M3 draft, "Alternative good"):
+    - Remanso: no rival the party let go is still out there, so the test is his mill (he must break its dam).
+    - Centella: a rival was finished while she waited at camp, so the test is facing the village she burned.
+    - Moheda: not yet seen what her remedies cost, but trusted (approval high): she can test the last sample on
+      herself instead of a patient.
+    Guijo's alternative happens in battle (finishBattle). */
+export function questView(run: RunState, companion: string) {
+  const q = QUESTS[companion]!, m = run.party.find((x) => x.id === companion);
+  const trusted = !!m && m.approval >= LESSON_APPROVAL, ready = !!m && readyForLesson(m);
+  const pick = (lessons: Lesson[], alt = false) => lessons.map((lesson) => ({ lesson, ...((alt && q.alt?.choices[lesson]) || q.choices[lesson as Exclude<Lesson, "alt">]) }));
+  if (companion === "remanso" && !run.rivals.some((r) => !r.settled && r.cause.kind === "escaped"))
+    return { lines: q.alt!.lines!, notReady: q.alt!.notReady!, ready: trusted, alt: true, choices: pick(trusted ? ["alt", "hold"] : ["hold"], true) };
+  if (companion === "centella" && m?.altPath)
+    return { lines: q.alt!.lines!, notReady: q.notReady, ready, alt: true, choices: pick(ready ? ["alt", "hold", "double"] : ["hold", "double"], true) };
+  if (companion === "moheda" && !ready && trusted)
+    return { lines: q.lines, notReady: q.notReady, ready: true, alt: true, choices: pick(["alt", "hold", "double"], true) };
+  return { lines: q.lines, notReady: q.notReady, ready, alt: false, choices: pick(ready ? ["sacrifice", "hold", "double"] : ["hold", "double"]) };
+}
+
+/** What a lesson unlocks: a combo, and Moheda's poison ward. */
+function unlock(run: RunState, companion: string, lesson: Lesson) {
+  const u = QUESTS[companion]?.unlocks?.[lesson];
+  if (!u) return;
+  if (u.combo && !(run.combos ??= []).includes(u.combo)) run.combos.push(u.combo);
+  if (u.poisonWard) run.poisonWard = Math.max(run.poisonWard ?? 0, u.poisonWard);
+  run.remarks.push(u.line);
 }
 
 /** A companion sees what their flaw costs: said once, remembered for their quest. */
@@ -561,12 +656,26 @@ export function choose(run: RunState, index: number): RunState {
   }
   if (offer.kind === "quest") {
     if (offer.reply) { next.offers.shift(); return next; }
-    const lesson = questChoices(run, offer.companion)[index];
-    if (!lesson) throw new Error("no such choice");
+    const pick = questView(run, offer.companion).choices[index];
+    if (!pick) throw new Error("no such choice");
+    const lesson = pick.lesson;
     const q = QUESTS[offer.companion]!, m = next.party.find((x) => x.id === offer.companion)!;
     m.lesson = lesson;
-    (next.offers[0] as { reply?: Line }).reply = q.choices[lesson].reply;
+    (next.offers[0] as { reply?: Line }).reply = pick.reply;
     if (lesson === "double" && q.doubleLeaves) m.status = "left";
+    // Centella stays behind at the village; Moheda stays weaker.
+    if (lesson === "alt" && offer.companion === "centella") m.status = "stayed";
+    if (lesson === "alt" && offer.companion === "moheda") { m.hpCut = ALT_HP_CUT; m.hp = Math.min(m.hp, memberMaxHp(next, m)); }
+    next.remarks = [];
+    unlock(next, offer.companion, lesson);
+    return next;
+  }
+  if (offer.kind === "floodgate") {
+    const single = offer.paths.length === 1;
+    const first = single ? offer.paths[0]! : offer.paths[index];
+    if (first === undefined || (single && index > 1)) throw new Error("no such choice");
+    next.offers.shift();
+    setFloodgate(next.map, next.at!, first, single ? (index === 0 ? "flooded" : "frozen") : undefined);
     return next;
   }
   if (offer.kind === "talk") {

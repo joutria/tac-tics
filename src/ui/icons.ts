@@ -772,6 +772,26 @@ const BOOM = pad([
   "..kk..kook..kk..",
   ".......kk.......",
 ]);
+/** The Floodgate: a sluice gate between two stone posts, water spilling under it. */
+const SLUICE = pad([
+  "................",
+  ".kkkk......kkkk.",
+  ".klsk......klsk.",
+  ".klskkkkkkkklsk.",
+  ".klsknnnnnnklsk.",
+  ".klskNNNNNNklsk.",
+  ".klsknnnnnnklsk.",
+  ".klskNNNNNNklsk.",
+  ".klskkkkkkkklsk.",
+  ".klsk.bccb.klsk.",
+  ".klskbbbbbbklsk.",
+  "kkkkkbcbbcbkkkkk",
+  "kbbbbbbbbbbbbbbk",
+  "kbcbbbcbbbcbbbBk",
+  ".kBBBBBBBBBBBBk.",
+  "..kkkkkkkkkkkk..",
+]);
+
 const POINTER = pad([
   "................",
   "................",
@@ -804,7 +824,7 @@ export const ICONS = {
   skip: CHEVRONS, spare: recolor(FLAG, { r: "w", w: "l" }), coin: COIN, shard: SHARD,
   // Run map stops.
   battle: overlay(SWORD, mirror(SWORD)), elite: recolor(SKULL, { p: "w", P: "R" }), rest: CAMPFIRE, shop: COIN, recruit: FACE,
-  rival: recolor(STAR, { y: "p", Y: "P" }), quest: recolor(DIAMOND, { l: "c", s: "b" }), boss: CROWN,
+  rival: recolor(STAR, { y: "p", Y: "P" }), quest: recolor(DIAMOND, { l: "c", s: "b" }), boss: CROWN, floodgate: SLUICE,
   // Interface bits: the menu pointer, the arrow over whoever's turn it is, camp fire logs.
   boom: BOOM, flameB: mirror(FLAME), pointer: POINTER, turn: recolor(DOWN, { r: "y", R: "Y" }), turnFoe: DOWN, logs: LOGS,
 } satisfies Record<string, Rows>;
@@ -814,7 +834,7 @@ export type IconId = keyof typeof ICONS;
 /** The icon for each ability: the special moves get their own, the rest show their element. */
 const ABILITY_ICON: Partial<Record<string, IconId>> = {
   shove: "push", hurl: "push", undertow: "push", jump: "jump", throw: "throw", helpUp: "heal", spare: "spare", aim: "range",
-  blink: "quick", dash: "quick", sidestep: "quick", zip: "quick", bulwark: "shield", halo: "shield", sanctuary: "shield",
+  blink: "quick", dash: "quick", sidestep: "quick", zip: "quick", bulwark: "shield", halo: "shield", sanctuary: "shield", lighthouseWall: "shield",
   mend: "heal", glow: "heal", graceGlow: "heal", sapCap: "heal", sapCapRich: "heal", dawn: "heal", purge: "heal",
 };
 export function abilityIcon(id: string, element: string): IconId {

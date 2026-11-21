@@ -8,7 +8,7 @@ import type { NodeKind, RunNode } from "../run/map";
 import { rivalName } from "../run/rivals";
 import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
 import { JOBS } from "../data/jobs";
-import { ALTAR, questChoices, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
+import { ALTAR, questView, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
 import { endingOf, readyForLesson, type Member } from "../run/party";
 import { ALIGN, ALIGNMENTS, type Align, type Meter } from "../data/alignment";
 import { TWINS } from "../data/twins";
@@ -16,7 +16,7 @@ import { alignOf, alignmentOf, heroEnding, lockWarning, twinBar } from "../run/a
 import { heroSpec } from "../run/hero";
 import { HERO } from "../data/region";
 
-export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛" };
+export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛", floodgate: "💧" };
 
 
 export function moodOf(m: Member, lang: Lang): string {
@@ -137,17 +137,30 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     }
     if (offer.options.length === 1) { const p = document.createElement("p"); p.className = "spoils"; p.textContent = t(lang, "jobLocked"); list.append(p); }
   } else if (offer?.kind === "quest") {
-    const q = QUESTS[offer.companion]!;
+    const view = questView(run, offer.companion);
     title.textContent = t(lang, "questOf", { name: COMPANIONS[offer.companion]!.spec.name });
-    for (const l of q.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
+    for (const l of view.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
     if (offer.reply) {
       const p = document.createElement("p"); p.className = "say reply"; p.textContent = offer.reply[lang]; list.append(p);
+      for (const l of run.remarks) { const r = document.createElement("p"); r.className = "spoils"; r.textContent = l[lang]; list.append(r); }
       foot.append(button(t(lang, "goOn"), () => act.choose(0), "primary"));
     } else {
-      const m = run.party.find((x) => x.id === offer.companion)!;
-      if (!readyForLesson(m)) { const p = document.createElement("p"); p.className = "say down"; p.textContent = q.notReady[lang]; list.append(p); }
-      questChoices(run, offer.companion).forEach((lesson, i) => list.append(button(`<span>${html(q.choices[lesson].text[lang])}</span>`, () => act.choose(i))));
+      if (!view.ready) { const p = document.createElement("p"); p.className = "say down"; p.textContent = view.notReady[lang]; list.append(p); }
+      view.choices.forEach((c, i) => list.append(button(`<span>${html(c.text[lang])}</span>`, () => act.choose(i), c.lesson === "alt" || c.lesson === "sacrifice" ? "card lesson" : "card")));
     }
+  } else if (offer?.kind === "floodgate") {
+    title.textContent = t(lang, "floodTitle");
+    const p = document.createElement("p"); p.className = "say"; p.textContent = t(lang, "floodText"); list.append(p);
+    const nodes = offer.paths.map((id) => run.map.nodes[id]!);
+    const where = (n: RunNode) => `${t(lang, `side.${n.col === 0 ? "left" : n.col === 2 ? "right" : "middle"}`)} (${nodeLabel(run, n, lang, true)})`;
+    if (nodes.length === 1) {
+      list.append(button(`<b>💧 ${html(t(lang, "floodOpen"))}</b><span>${html(t(lang, "floodOpenHint"))}</span><small>${html(where(nodes[0]!))}</small>`, () => act.choose(0)));
+      list.append(button(`<b>❄ ${html(t(lang, "floodShut"))}</b><span>${html(t(lang, "floodShutHint"))}</span><small>${html(where(nodes[0]!))}</small>`, () => act.choose(1)));
+    } else nodes.forEach((n, i) => {
+      const others = nodes.filter((x) => x !== n).map(where).join(", ");
+      list.append(button(`<b>💧 ${html(t(lang, "floodPath", { side: t(lang, `side.${n.col === 0 ? "left" : n.col === 2 ? "right" : "middle"}`) }))}</b>`
+        + `<span>${html(t(lang, "floodPathHint", { a: where(n), b: others }))}</span>`, () => act.choose(i)));
+    });
   } else if (offer?.kind === "talk") {
     const talk = TALKS[offer.id]!;
     title.textContent = COMPANIONS[talk.companion]!.spec.name;
@@ -209,6 +222,11 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
       if (on) b.title = t(lang, "twinBase");
       list.append(b);
     }
+    if (run.combos?.length) {
+      const c = document.createElement("p"); c.className = "say";
+      c.textContent = t(lang, "combosHave", { list: run.combos.map((id) => abilityName(lang, id)).join(" · ") });
+      list.append(c);
+    }
     const out = fielded(run);
     for (const m of run.party.filter((x) => x.status === "with" || x.status === "leaving")) {
       const p = document.createElement("p"); p.className = "say";
@@ -231,8 +249,9 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
 export function nodeLabel(run: RunState, n: RunNode, lang: Lang, short = false): string {
   const rival = n.rival ? run.rivals.find((r) => r.id === n.rival && !r.settled) : undefined;
   if (rival) return short ? t(lang, "rival", { n: rival.level }) : `${rivalName(rival, lang)} · ${t(lang, "rival", { n: rival.level })}`;
-  if (n.quest && COMPANIONS[n.quest]) return t(lang, "questOf", { name: COMPANIONS[n.quest]!.spec.name });
-  return t(lang, `node.${n.kind}`);
+  const flood = n.flood && !short ? ` · ${t(lang, `flood.${n.flood}`)}` : n.flood ? ` ${n.flood === "flooded" ? "💧" : "❄"}` : "";
+  if (n.quest && COMPANIONS[n.quest]) return t(lang, "questOf", { name: COMPANIONS[n.quest]!.spec.name }) + flood;
+  return t(lang, `node.${n.kind}`) + flood;
 }
 
 /** The text around the travel scene and the route map: the header (region, level, HP, purse, party) and the hint
