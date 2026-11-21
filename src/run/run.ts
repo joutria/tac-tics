@@ -9,6 +9,7 @@
 import { ITEMS, PERKS, REWARD, SHOP, type Rarity } from "../data/gear";
 import { DEPTH_HP, DEPTH_STAT, DIFFICULTY, HERO, REGIONS, regionalSpecies, type Difficulty, type Region, type Species } from "../data/region";
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
+import { standable, tileAt, type GridMap, type Pos } from "../engine/grid";
 import type { BattleSave } from "../engine/save";
 import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
 import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
@@ -113,7 +114,7 @@ export const heroMaxHp = (run: RunState) => heroOf(run).hp;
 export const nextNodes = (run: RunState): RunNode[] => (run.over || run.offers.length ? [] : choices(run.map, run.at));
 
 /** Which arena a node uses: picked from the seed so revisiting the save gives the same one. */
-function arenaFor(run: RunState, node: RunNode) {
+export function arenaFor(run: RunState, node: RunNode) {
   const arenas = regionOf(run).arenas;
   const [i] = rngInt(seedFrom(`${regionSeed(run.seed, run.region ?? 0)}:arena:${node.id}`), 0, arenas.length - 1);
   return arenas[i]!;
@@ -161,7 +162,44 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
     }
     units.push(foeSpec(run, pick(), id, pos, depth));
   }
-  return { seed: `${rs}:battle:${node.id}`, map: arena.map, units };
+  if (!isAmbush(run, node)) return { seed: `${rs}:battle:${node.id}`, map: arena.map, units };
+  placeAmbush(arena.map, units, seedFrom(`${rs}:ambush-spots:${node.id}`));
+  return { seed: `${rs}:battle:${node.id}`, map: arena.map, units, ambush: true };
+}
+
+/** Share of plain fights and elites (from layer 1 on) where the foes lie in wait. Rivals and bosses never hide:
+    they want to be seen. */
+export const AMBUSH_CHANCE = 0.3;
+export function isAmbush(run: RunState, node: RunNode): boolean {
+  if ((node.kind !== "battle" && node.kind !== "elite") || node.layer < 1) return false;
+  const [v] = rngNext(seedFrom(`${regionSeed(run.seed, run.region ?? 0)}:ambush:${node.id}`));
+  return v < AMBUSH_CHANCE;
+}
+
+/** An ambush: the foes start close to the party (2 or 3 tiles from the nearest member, never next to one) and on
+    its flanks, taking turns left, right and behind. */
+function placeAmbush(map: GridMap, units: UnitSpec[], seed: number) {
+  const party = units.filter((u) => u.team === "heroes"), foes = units.filter((u) => u.team === "foes");
+  const cx = party.reduce((a, u) => a + u.pos.x, 0) / party.length, cy = party.reduce((a, u) => a + u.pos.y, 0) / party.length;
+  const near = (p: Pos) => Math.min(...party.map((u) => Math.abs(u.pos.x - p.x) + Math.abs(u.pos.y - p.y)));
+  const spots: { p: Pos; side: number; roll: number }[] = [];
+  let rng = seed;
+  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+    const p = { x, y }, d = near(p);
+    if (d < 2 || d > 3 || !standable(tileAt(map, p))) continue;
+    // Sides: 0 left of the party, 1 right of it, 2 behind it (further from the foes' usual side, the top).
+    const side = y > cy + 1 ? 2 : x < cx ? 0 : 1;
+    let roll: number; [roll, rng] = rngNext(rng);
+    spots.push({ p, side, roll });
+  }
+  const used: Pos[] = [];
+  foes.forEach((f, i) => {
+    const want = [0, 1, 2, 0][i % 4]!;
+    const free = spots.filter((s) => !used.some((u) => u.x === s.p.x && u.y === s.p.y) && !used.some((u) => Math.abs(u.x - s.p.x) + Math.abs(u.y - s.p.y) < 2));
+    const pick = free.filter((s) => s.side === want).sort((a, b) => a.roll - b.roll)[0] ?? free.sort((a, b) => a.roll - b.roll)[0];
+    if (!pick) return; // no room: this foe keeps its usual spot
+    f.pos = { ...pick.p }; used.push(pick.p);
+  });
 }
 
 /** Goes to a node the player can go to: rests heal, shops open, battles start. */

@@ -154,6 +154,8 @@ export interface DrawOptions {
   escapePaths?: Pos[][];
   /** What the chosen ability would move or set off: where pushed units and crates end up, and barrel blasts. */
   effects?: { moves: { from: Pos; to: Pos; bump: number; fall?: number }[]; blasts: Pos[]; splashes?: { unit: string; damage: number }[] };
+  /** Scenery mode (travel scenes, the route map): units without health bars, rings or badges. */
+  bare?: boolean;
 }
 
 const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
@@ -200,7 +202,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
   const drawPlace = (pl: (typeof places)[number]) => {
     ctx.globalAlpha = pl.alpha;
     const pv = opt.preview && opt.preview.unit === pl.u.id ? opt.preview : undefined;
-    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round));
+    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round), opt.bare);
     ctx.globalAlpha = 1;
   };
   // Painter's order: back diagonals first; on each tile its ground, then what stands on it.
@@ -418,17 +420,19 @@ function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, fill: stri
 
 function drawUnit(
   ctx: CanvasRenderingContext2D, u: Unit, img: Images, c: { x: number; y: number }, active: boolean, time: number, rot: number,
-  preview?: { min: number; max: number }, focus = false, shaky = false,
+  preview?: { min: number; max: number }, focus = false, shaky = false, bare = false,
 ) {
   const sheet = img[`unit-${u.look}`];
   const team = u.team === "heroes" ? "#ffe680" : "#ff8a7a";
   const base = ctx.globalAlpha; // lets a blinking unit fade as a whole
   ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
   ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 16, 7, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = team; ctx.lineWidth = active ? 2.5 : 1;
-  ctx.globalAlpha = base * (active ? 1 : 0.6);
-  ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 20, 9, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.globalAlpha = base;
+  if (!bare) {
+    ctx.strokeStyle = team; ctx.lineWidth = active ? 2.5 : 1;
+    ctx.globalAlpha = base * (active ? 1 : 0.6);
+    ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 20, 9, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = base;
+  }
   if (!sheet) return;
   const downed = u.life === "downed";
   const f = FACING_FRAME[rotFacing(u.facing, rot)];
@@ -440,6 +444,7 @@ function drawUnit(
   if (downed) ctx.globalAlpha = base * 0.6;
   ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32, -64, 64, 64);
   ctx.restore();
+  if (bare) return;
   // Health bar over the head; downed units show the turns they have left.
   const w = 30, ratio = u.hp / u.maxHp;
   ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(c.x - w / 2 - 1, c.y - 62, w + 2, 5);

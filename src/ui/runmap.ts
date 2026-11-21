@@ -1,6 +1,6 @@
-/* The run map screen: the region's nodes in layers from the bottom (the town's edge) to the top (the boss),
-   the path taken so far, and the nodes the player can go to next. Plain SVG in a DOM overlay, so it stays sharp
-   and easy to tap on a phone. */
+/* The text and panels of the screen between battles: the header, the hint line and the panel of choices
+   (rewards, perks, shops, talks, the epilogue). The travel scene and the route map themselves are drawn on the
+   canvas (main.ts, src/run/travel.ts, src/ui/worldmap.ts). */
 import { ELEMENTS, type Element } from "../data/elements";
 import { ITEMS, PERKS, SHOP, xpToNext, type Mods } from "../data/gear";
 import { abilityName, t, type Lang } from "../i18n/text";
@@ -13,12 +13,6 @@ import { endingOf, readyForLesson, type Member } from "../run/party";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛" };
 
-const SVG = "http://www.w3.org/2000/svg";
-const el = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>) => {
-  const e = document.createElementNS(SVG, tag);
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
-  return e;
-};
 
 export function moodOf(m: Member, lang: Lang): string {
   if (m.status === "leaving") return t(lang, "mood.leaving");
@@ -165,18 +159,18 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
   panel.replaceChildren(title, ...(spoils.textContent ? [spoils] : []), list, foot);
 }
 
-export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: MapActions, gearOpen = false, closeGear: () => void = () => {}) {
-  const onPick = act.pick;
-  renderPanel(root.querySelector<HTMLElement>("#runPanel")!, run, lang, act, gearOpen, closeGear);
-  const open = new Set(nextNodes(run).map((n) => n.id));
-  const done = new Set(run.path);
-  const { layers, width } = run.map;
-  const W = 320, H = 520, padX = 50, padY = 46;
-  const pos = (n: RunNode) => ({
-    x: padX + (width === 1 ? 0.5 : n.col / (width - 1)) * (W - 2 * padX),
-    y: H - padY - (n.layer / (layers - 1)) * (H - 2 * padY),
-  });
+/** Node label: a rival's name and level, a companion's quest, or the kind of stop. `short` keeps it to a few words. */
+export function nodeLabel(run: RunState, n: RunNode, lang: Lang, short = false): string {
+  const rival = n.rival ? run.rivals.find((r) => r.id === n.rival && !r.settled) : undefined;
+  if (rival) return short ? t(lang, "rival", { n: rival.level }) : `${rivalName(rival, lang)} · ${t(lang, "rival", { n: rival.level })}`;
+  if (n.quest && COMPANIONS[n.quest]) return t(lang, "questOf", { name: COMPANIONS[n.quest]!.spec.name });
+  return t(lang, `node.${n.kind}`);
+}
 
+/** The text around the travel scene and the route map: the header (region, level, HP, purse, party) and the hint
+    line (what companions said, rivals waiting ahead), and the panel of whatever has to be answered first. */
+export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: MapActions, gearOpen = false, closeGear: () => void = () => {}) {
+  renderPanel(root.querySelector<HTMLElement>("#runPanel")!, run, lang, act, gearOpen, closeGear);
   const lv = run.hero.level;
   root.querySelector("#runHead")!.innerHTML =
     `<b>${html(regionOf(run).name[lang])}</b> · ${t(lang, `diff.${run.difficulty ?? "normal"}`)} · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
@@ -185,39 +179,8 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
   const party = fielded(run).map((m) => `${COMPANIONS[m.id]!.spec.name} ${m.hp}/${memberMaxHp(run, m)} (${moodOf(m, lang)})`);
   if (party.length) root.querySelector("#runHead")!.innerHTML += `<br>${t(lang, "party")}: ${html(party.join(", "))}`;
   const said = run.remarks.map((l) => l[lang]).join("\n");
-  root.querySelector("#runHint")!.textContent = run.over === "won" ? t(lang, "runWon") : run.over === "lost" ? t(lang, "runLost")
-    : [said, waiting.length ? t(lang, "rivalsAhead", { names: waiting.join(", ") }) : "", t(lang, "runHint")].filter(Boolean).join("\n");
-
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": regionOf(run).name[lang] });
-  // Links first, so nodes sit on top. Links on the path taken are bright.
-  for (const n of run.map.nodes) for (const id of n.next) {
-    const m = run.map.nodes[id]!, a = pos(n), b = pos(m);
-    const taken = done.has(n.id) && (done.has(id) || open.has(id));
-    svg.append(el("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: taken ? "link taken" : "link" }));
-  }
-  for (const n of run.map.nodes) {
-    const p = pos(n);
-    const g = el("g", { class: `node ${n.kind}${open.has(n.id) ? " open" : ""}${done.has(n.id) ? " done" : ""}`, transform: `translate(${p.x} ${p.y})` });
-    g.append(el("circle", { r: n.kind === "boss" ? 24 : 18 }));
-    const icon = el("text", { "text-anchor": "middle", "dominant-baseline": "central", "font-size": n.kind === "boss" ? 22 : 17 });
-    icon.textContent = NODE_ICON[n.kind];
-    g.append(icon);
-    const rival = n.rival ? run.rivals.find((r) => r.id === n.rival && !r.settled) : undefined;
-    const label = rival ? `${rivalName(rival, lang)} · ${t(lang, "rival", { n: rival.level })}`
-      : n.quest && COMPANIONS[n.quest] ? t(lang, "questOf", { name: COMPANIONS[n.quest]!.spec.name }) : t(lang, `node.${n.kind}`);
-    const title = el("title", {}); title.textContent = label; g.append(title);
-    if (open.has(n.id)) {
-      g.setAttribute("tabindex", "0"); g.setAttribute("role", "button"); g.setAttribute("aria-label", label);
-      g.addEventListener("click", () => onPick(n.id));
-      g.addEventListener("keydown", (ev) => { if ((ev as KeyboardEvent).key === "Enter") onPick(n.id); });
-      // Open nodes say what they are, since the player is choosing between them.
-      const tag = el("text", { y: n.kind === "boss" ? 38 : 32, "text-anchor": "middle", class: "tag" });
-      // Short, so neighbouring tags never overlap; the full rival name is in the title and the hint line.
-      tag.textContent = rival ? t(lang, "rival", { n: rival.level }) : t(lang, `node.${n.kind}`);
-      g.append(tag);
-    }
-    svg.append(g);
-  }
-  const box = root.querySelector("#runSvg")!;
-  box.replaceChildren(svg);
+  const hint = run.over === "won" ? t(lang, "runWon") : run.over === "lost" ? t(lang, "runLost")
+    : [said, waiting.length ? t(lang, "rivalsAhead", { names: waiting.join(", ") }) : ""].filter(Boolean).join("\n");
+  root.querySelector("#runHint")!.textContent = hint;
+  root.querySelector("#routeHint")!.textContent = hint || t(lang, "runHint");
 }
