@@ -282,15 +282,58 @@ export function pickTile(m: GridMap, px: number, py: number, rot: number): Pos |
   return null;
 }
 
-/** What a tap or click at a point means. Units win over ground, because their sprites stand up over the tiles
-    behind them; then the tile whose top face is under the point; then, for a finger landing on a cliff side or
+/** Where each unit's sprite frame was last drawn (map pixels), so a click counts as on a unit only where the
+    sprite actually has paint: a tile peeking out beside or behind a character can still be picked. */
+interface DrawnSprite { map: GridMap; sheet: HTMLImageElement; sx: number; sy: number; x: number; y: number; flip: boolean }
+const drawnSprites = new Map<string, DrawnSprite>();
+/** The map of the battle being drawn, so sprites recorded for a travel scene never answer clicks in a fight. */
+let spriteMap: GridMap | null = null;
+/** Each sheet's alpha channel, read once. */
+const sheetAlpha = new WeakMap<HTMLImageElement, { w: number; a: Uint8ClampedArray } | null>();
+
+function alphaOf(sheet: HTMLImageElement) {
+  if (sheetAlpha.has(sheet)) return sheetAlpha.get(sheet)!;
+  let out: { w: number; a: Uint8ClampedArray } | null = null;
+  try {
+    const cv = document.createElement("canvas");
+    cv.width = sheet.naturalWidth || sheet.width; cv.height = sheet.naturalHeight || sheet.height;
+    const g = cv.getContext("2d", { willReadFrequently: true })!;
+    g.drawImage(sheet, 0, 0);
+    out = { w: cv.width, a: g.getImageData(0, 0, cv.width, cv.height).data };
+  } catch { out = null; } // no canvas, or a tainted image: fall back to the box
+  sheetAlpha.set(sheet, out);
+  return out;
+}
+
+/** Is there paint under a point (map pixels), allowing one sprite pixel of slack so edges are not fiddly? */
+function spriteHit(d: DrawnSprite, px: number, py: number) {
+  let lx = px - d.x, ly = py - d.y; // sprite drawn at (-32, -64) .. (32, 0) around its feet
+  if (d.flip) lx = -lx;
+  const fx = Math.floor(lx + 32), fy = Math.floor(ly + 64);
+  if (fx < -1 || fx > 64 || fy < -1 || fy > 64) return false;
+  const al = alphaOf(d.sheet);
+  if (!al) return Math.abs(lx) <= 18 && ly >= -64 && ly <= 4;
+  for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+    const x = fx + ox, y = fy + oy;
+    if (x < 0 || x >= 64 || y < 0 || y >= 64) continue;
+    if (al.a[((d.sy + y) * al.w + d.sx + x) * 4 + 3]! > 40) return true;
+  }
+  return false;
+}
+
+/** What a tap or click at a point means. Units win over ground where their sprite is painted, because they
+    stand up over the tiles behind them; then the tile whose top face is under the point; then, for a finger landing on a cliff side or
     between tiles, the nearest tile top within `slack` tile-widths. */
 export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: number, rot: number, slack = 0): Pos | null {
   let best: { p: Pos; depth: number } | null = null;
   for (const u of units) {
     if (u.life === "dead" || u.life === "escaped" || u.life === "spared") continue;
-    const c = tileCenter(m, u.pos, rot);
-    if (Math.abs(px - c.x) > 18 || py < c.y - 58 || py > c.y + 10) continue;
+    const drawn = drawnSprites.get(u.id);
+    if (drawn && drawn.map === m) { if (!spriteHit(drawn, px, py)) continue; }
+    else {
+      const c = tileCenter(m, u.pos, rot);
+      if (Math.abs(px - c.x) > 18 || py < c.y - 58 || py > c.y + 10) continue;
+    }
     const r = rotate(m, u.pos, rot), depth = r.x + r.y;
     if (!best || depth > best.depth) best = { p: u.pos, depth };
   }
@@ -413,6 +456,7 @@ const IN_REACH = new Set<Mark>(["range", "target", "blocked", "area", "chosen"])
 
 export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: Images, view: View, opt: DrawOptions) {
   const m = s.map, d = dims(m, view.rot);
+  spriteMap = m;
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.setTransform(view.scale, 0, 0, view.scale, view.ox, view.oy);
@@ -805,6 +849,7 @@ function drawUnit(
   // Just hit: a white flash (browsers without canvas filters simply skip it), and a small knock back.
   if (flash) { ctx.filter = "brightness(2.6) saturate(0.3)"; ctx.translate(Math.round(Math.sin(time / 18) * 2), 0); }
   ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32, -64, 64, 64);
+  drawnSprites.set(u.id, { map: spriteMap!, sheet, sx: frame * 64, sy: row * 64, x: c.x, y: c.y + 6, flip: f.flip && !downed });
   ctx.filter = "none";
   ctx.restore();
   if (bare) return;
