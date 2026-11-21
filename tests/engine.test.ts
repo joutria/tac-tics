@@ -4,14 +4,14 @@ import { elementMultiplier } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
 import { planTurn } from "../src/engine/ai";
-import { castProblem, fallDamage, damageFactor, damagePreview, directionBonus, maxRange, previewEffects } from "../src/engine/combat";
+import { castProblem, GUARD_STRIKE, HEIGHT_CAP, fallDamage, damageFactor, damagePreview, directionBonus, maxRange, previewEffects } from "../src/engine/combat";
 import { parseMap } from "../src/engine/grid";
 import { canStep, reachable } from "../src/engine/movement";
 import { rngNext, seedFrom } from "../src/engine/rng";
 import { fromJSON, replay, toJSON } from "../src/engine/save";
 import { hasLineOfSight } from "../src/engine/sight";
 import { abilityReaches, dangerZone, nextTurnSpots } from "../src/engine/threat";
-import { activeUnit, applyCommand, BattleSetup, BattleState, Command, createBattle, delayFor, roundOf, UnitSpec, unitAt, unitById, upcomingTurns } from "../src/engine/state";
+import { activeUnit, AMBUSH_OPENER_AP, applyCommand, BattleSetup, BattleState, Command, createBattle, delayFor, roundOf, UnitSpec, unitAt, unitById, upcomingTurns } from "../src/engine/state";
 import { activeRivals, afterBattle, pickCounter, readStyle, rivalSpec, rivalTaunt, RESIST_STEP } from "../src/run/rivals";
 import { BLAST_DAMAGE, IMPACT, REGROW_TICKS } from "../src/engine/terrain";
 import { ESCAPE_FROM_ROUND, FLEE_TAKEN, RETREAT_TAKEN, turnMp, wavering } from "../src/engine/escape";
@@ -79,6 +79,30 @@ describe("line of sight", () => {
   it("is blocked by a unit in between", () => {
     expect(hasLineOfSight(m, { x: 1, y: 1 }, { x: 4, y: 1 }, (p) => p.x === 2 && p.y === 1)).toBe(false);
   });
+  // Jose (2026-11-21): diagonal shots were hit and miss. A perfect diagonal slips between the two corner tiles and
+  // is only blocked when both block; the same in all four directions and from either end.
+  const g = parseMap("diag", ["g0 g0 g0 g0 g0", "g0 g0 g0 g0 g0", "g0 g0 g0 g0 g0", "g0 g0 g0 g0 g0", "g0 g0 g0 g0 g0"]);
+  const c = { x: 2, y: 2 };
+  const corners = [{ x: 1, y: 1 }, { x: 3, y: 1 }, { x: 1, y: 3 }, { x: 3, y: 3 }];
+  it("treats all four diagonals alike, both ways, with one corner blocked", () => {
+    for (const d of corners) {
+      // A unit on one of the two tiles beside the corner: the line squeezes past.
+      const side = (p: { x: number; y: number }) => p.x === d.x && p.y === c.y;
+      expect(hasLineOfSight(g, c, d, side)).toBe(true);
+      expect(hasLineOfSight(g, d, c, side)).toBe(true);
+      // Both: blocked.
+      const both = (p: { x: number; y: number }) => (p.x === d.x && p.y === c.y) || (p.x === c.x && p.y === d.y);
+      expect(hasLineOfSight(g, c, d, both)).toBe(false);
+      expect(hasLineOfSight(g, d, c, both)).toBe(false);
+    }
+  });
+  it("is symmetric for every pair of tiles", () => {
+    const rocks = parseMap("sym", ["g0 r0 g0 g0 g0", "g0 g0 g0 t0 g0", "g1 g0 g0 g0 g0", "g0 g0 r0 g0 g2", "g0 g0 g0 g0 g0"]);
+    for (let a = 0; a < 25; a++) for (let b = 0; b < 25; b++) {
+      const p = { x: a % 5, y: Math.floor(a / 5) }, q = { x: b % 5, y: Math.floor(b / 5) };
+      expect(hasLineOfSight(rocks, p, q)).toBe(hasLineOfSight(rocks, q, p));
+    }
+  });
 });
 
 describe("timeline", () => {
@@ -117,8 +141,8 @@ describe("abilities", () => {
   it("previews damage with stats, height and direction", () => {
     const s = twoUnits(0);
     const h = unitById(s, "h"), f = unitById(s, "f");
-    expect(damagePreview(s, h, f, ABILITIES.ray!)).toEqual({ min: 9, max: 11 }); // 7-9 x 1.2 Magic x 1.1 (foe faces N, hit from the side)
-    expect(directionBonus({ ...f, facing: "E" }, h.pos)).toBe(1.25);
+    expect(damagePreview(s, h, f, ABILITIES.ray!)).toEqual({ min: 8, max: 11 }); // 7-9 x 1.2 Magic x 1.05 (foe faces N, hit from the side)
+    expect(directionBonus({ ...f, facing: "E" }, h.pos)).toBe(1.15);
     expect(directionBonus({ ...f, facing: "W" }, h.pos)).toBe(1);
   });
   it("hits, spends AP, respects per-turn limits and cooldowns", () => {
@@ -935,6 +959,44 @@ describe("surfaces", () => {
   });
 });
 
+describe("pacing (FFTA-style)", () => {
+  it("rolls every foe a temper from the seed, the same each time, and keeps bosses steady", () => {
+    const a = createBattle({ seed: 11, map: MEADOW, units: TEST_UNITS }), b = createBattle({ seed: 11, map: MEADOW, units: TEST_UNITS });
+    for (const u of a.units) {
+      expect(u.temper).toBe(unitById(b, u.id).temper);
+      expect(u.team === "foes" ? !!u.temper : !u.temper).toBe(true);
+    }
+    const tempers = new Set<string>();
+    for (let seed = 1; seed <= 40; seed++) for (const u of createBattle({ seed, map: MEADOW, units: TEST_UNITS }).units) if (u.temper) tempers.add(u.temper);
+    expect([...tempers].sort()).toEqual(["bold", "flanker", "steady", "wary"]);
+    const boss = createBattle({ seed: 1, map: MEADOW, units: TEST_UNITS.map((u) => (u.id === "foe2" ? { ...u, heavy: true } : u)) });
+    expect(unitById(boss, "foe2").temper).toBe("steady");
+  });
+  it("caps the height bonus so high ground is a nudge, not a kill switch", () => {
+    const at = (h: number) => {
+      const s = createBattle({ seed: 1, map: parseMap("hg", [`g${h} g0`]), units: [unit({ id: "h", team: "heroes", pos: { x: 0, y: 0 }, abilities: ["ray"] }), unit({ id: "f", team: "foes", pos: { x: 1, y: 0 } })] });
+      return damageFactor(s, unitById(s, "h"), { ...unitById(s, "f"), facing: "W" }, ABILITIES.ray!);
+    };
+    expect(at(1) / at(0)).toBeCloseTo(1.05);
+    expect(at(3) / at(0)).toBeCloseTo(1 + HEIGHT_CAP);
+  });
+  it("a bold foe walks up and attacks a hero it can reach, instead of waiting", () => {
+    let attacks = 0;
+    for (let seed = 1; seed <= 20; seed++) {
+      const s = createBattle({ seed, map: MEADOW, units: TEST_UNITS.map((u) => (u.team === "foes" ? { ...u, temper: "bold" as const } : u)) });
+      let x = s;
+      while (x.units.find((u) => u.id === x.active)!.team !== "foes") x = play(x, [{ t: "endTurn", unit: x.active }]);
+      // On its first turn, a bold foe either hits or ends closer to the party.
+      const me = x.active, start = unitById(x, me).pos;
+      const cmds = planTurn(x);
+      const near = (p: { x: number; y: number }) => Math.min(...x.units.filter((u) => u.team === "heroes").map((h) => Math.abs(h.pos.x - p.x) + Math.abs(h.pos.y - p.y)));
+      const y = play(x, cmds);
+      if (cmds.some((c) => c.t === "cast") || near(unitById(y, me).pos) < near(start)) attacks++;
+    }
+    expect(attacks).toBe(20);
+  });
+});
+
 describe("guard", () => {
   Object.assign(ABILITIES, {
     gHit: { id: "gHit", element: "neutral", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 8, max: 8, stat: "str" } } as Ability,
@@ -953,7 +1015,7 @@ describe("guard", () => {
     const m = applyCommand(s, { t: "move", unit: "f", to: { x: 1, y: 0 } });
     if (!m.ok) throw new Error(m.error);
     expect(m.events.some((e) => e.e === "guardHit" && e.unit === "h" && e.target === "f")).toBe(true);
-    expect(unitById(m.state, "f").hp).toBe(40 - 8);
+    expect(unitById(m.state, "f").hp).toBe(40 - Math.floor(8 * GUARD_STRIKE)); // a Guard's free hit is softer
     expect(unitById(m.state, "f").pos).toEqual({ x: 1, y: 0 });
     expect(unitById(m.state, "h").guard).toBeUndefined();
     // Spent: the next enemy to come close is not hit.

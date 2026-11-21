@@ -9,7 +9,7 @@ import { MEADOW } from "./data/maps/meadow";
 import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
-import { abilityAvailable, areaTiles, castProblem, guardAbility, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
+import { abilityAvailable, areaTiles, castProblem, guardAbility, CRIT_MULT, HEIGHT_CAP, HEIGHT_PER_LEVEL, SIDE_BONUS, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
@@ -778,6 +778,8 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
     }
   }
+  // A foe's temper: how it is likely to play (rush in, work round the back, hold a spot, or hang back).
+  if (target.temper && target.team === "foes") lines.push(`<b>${t(lang, `temper.${target.temper}` as TextKey)}</b> · ${t(lang, `temper.${target.temper}.d` as TextKey)}`);
   if (target.guard) lines.push(`<span style="color:#8fd0ff">🛡 ${t(lang, "guard")}</span> · ${t(lang, "guardingInfo")}`);
   for (const st of target.statuses) lines.push(`<span style="color:${STATUS[st.id].colour}">${STATUS[st.id].icon} ${t(lang, `st.${st.id}` as TextKey)}</span> · ${t(lang, `st.${st.id}.d` as TextKey, { n: st.power })} · ${t(lang, "turnsLeft", { n: st.turns })}`);
   if (wavering(target, roundOf(state))) lines.push(`<span class="esc">${t(lang, "waveringTag")}</span> · ${t(lang, "waverInfo")}`);
@@ -810,7 +812,7 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       else if (r.min >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "downsIt")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
       else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
       else if (Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<span class="down">${t(lang, "critDown")}</span>`);
-      if (dir > 1.2) lines.push(t(lang, "back")); else if (dir > 1) lines.push(t(lang, "side"));
+      if (dir > SIDE_BONUS) lines.push(t(lang, "back")); else if (dir > 1) lines.push(t(lang, "side"));
       heightLines(lines, u, target, ab);
       pushLines();
       lines.push(t(lang, "crit"));
@@ -863,7 +865,7 @@ function objectLines(at: Pos): string[] {
 /** The height chip: how standing higher or lower changes this attack's damage and reach. */
 function heightLines(lines: string[], u: Unit, target: Unit, ab: Ability) {
   const diff = (tileAt(state.map, u.pos)?.h ?? 0) - (tileAt(state.map, target.pos)?.h ?? 0);
-  if (diff > 0) lines.push(`<span class="hg">${t(lang, "highGround", { n: Math.round(Math.min(0.3, diff * 0.1) * 100) })}</span>`);
+  if (diff > 0) lines.push(`<span class="hg">${t(lang, "highGround", { n: Math.round(Math.min(HEIGHT_CAP, diff * HEIGHT_PER_LEVEL) * 100) })}</span>`);
   if (ab.range[1] > 1 && diff > 0) lines.push(`<span class="hg">${t(lang, "highReach", { n: diff })}</span>`);
   if (ab.range[1] > 1 && diff < 0) lines.push(`<span class="down">${t(lang, "lowReach", { n: Math.min(-diff, ab.range[1] - 1) })}</span>`);
 }

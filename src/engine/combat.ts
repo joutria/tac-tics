@@ -2,8 +2,9 @@
 
    Damage = a roll inside the ability's range
             x (1 + Strength or Magic / 100)
-            x height bonus   (+10% per level above the target, at most +30%)
-            x direction      (+25% from behind, +10% from the side)
+            x height bonus   (+5% per level above the target, at most +15%)
+            x direction      (+15% from behind, +5% from the side)
+            x 0.6 for a Guard's free hit
             x element wheel  (1.5 strong, 0.75 weak, 1.25 opposite)
             x critical       (5% chance, x1.5)
             x (1 - resistance % of the target to that element)
@@ -24,6 +25,14 @@ import { canStep } from "./movement";
 import { burning, chainBolt, explode, giveFire, takeFire, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
 import { isFoe, unitAt, type BattleState, type Unit } from "./state";
 
+/* Pacing (FFTA-style, 2026-11-21): positional bonuses are a nudge, not a kill switch. Standing high, hitting
+   from behind and Guard all used to stack into one-turn knockouts, which made camping the only safe play. */
+/** Damage bonus per level above the target, and the most it can add. */
+export const HEIGHT_PER_LEVEL = 0.05, HEIGHT_CAP = 0.15;
+/** Damage multipliers from behind and from the side. */
+export const BACK_BONUS = 1.15, SIDE_BONUS = 1.05;
+/** A Guard's free hit on a unit stepping next to it deals this share of the ability's damage. */
+export const GUARD_STRIKE = 0.6;
 export const CRIT_CHANCE = 0.05;
 export const CRIT_MULT = 1.5;
 export const DOWNED_TURNS = 2;
@@ -201,11 +210,11 @@ export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Abi
   if (!ab.damage) return 0;
   const stat = ab.damage.stat === "str" ? caster.str : caster.mag;
   const up = (tileAt(s.map, from)?.h ?? 0) - (tileAt(s.map, target.pos)?.h ?? 0);
-  const height = 1 + Math.min(0.3, Math.max(0, up) * 0.1);
+  const height = 1 + Math.min(HEIGHT_CAP, Math.max(0, up) * HEIGHT_PER_LEVEL);
   const res = (target.res[ab.element] ?? 0) / 100;
   const weak = statusOf(caster, "weaken") ? WEAKEN_FACTOR : 1;
   return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res) * takenFactor(target) * weak
-    * passiveFactor(s, caster, target);
+    * passiveFactor(s, caster, target) * (caster.guardStrike ? GUARD_STRIKE : 1);
 }
 
 /** Job passives: Executioner hits foes under half HP harder; Guard shields the allies standing next to it. */
@@ -224,8 +233,8 @@ export function directionBonus(target: Unit, from: Pos): number {
   const dot = f.x * d.x + f.y * d.y;
   const cross = Math.abs(f.x * d.y - f.y * d.x);
   if (dot > cross) return 1;          // in front
-  if (-dot > cross) return 1.25;      // behind
-  return dot === 0 && cross === 0 ? 1 : 1.1; // side
+  if (-dot > cross) return BACK_BONUS;      // behind
+  return dot === 0 && cross === 0 ? 1 : SIDE_BONUS; // side
 }
 
 /** Damage window shown before acting (no critical). */

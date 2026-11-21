@@ -2,10 +2,12 @@
    node (or a rest when the hero is under half HP). Run with `npm run simulate:run [-- <runs> <easy|normal|hard>]`.
    Add `--log <file>` to write the runs as a play log (src/run/playlog.ts), the same format players export, so
    `npm run analyze -- <file>` can compare AI runs with real ones. Add `--mercy` for a party that spares every
-   yielding foe it can (in the fight and after the win) instead of finishing them, to compare the two. */
+   yielding foe it can (in the fight and after the win) instead of finishing them, to compare the two.
+   Add `--party <temper>` to have the party play boldly (see ai.ts TEMPERS). */
+import { PaceStats } from "./battle-stats";
 import { writeFileSync } from "node:fs";
 import { planTurn } from "../src/engine/ai";
-import { activeUnit, applyCommand, createBattle, unsettled } from "../src/engine/state";
+import { activeUnit, applyCommand, createBattle, unsettled, type Temper } from "../src/engine/state";
 import type { Difficulty } from "../src/data/region";
 import { MAP_LAYERS } from "../src/run/map";
 import { endingOf } from "../src/run/party";
@@ -18,6 +20,10 @@ const logAt = args.indexOf("--log");
 const logFile = logAt >= 0 ? args.splice(logAt, 2)[1] : undefined;
 const mercyAt = args.indexOf("--mercy");
 const mercy = mercyAt >= 0 && !!args.splice(mercyAt, 1).length;
+// `--party bold|flanker|steady|wary`: the party plays with that temper instead of the careful default, to check
+// that walking up and fighting pays off rather than only camping.
+const partyAt = args.indexOf("--party");
+const partyTemper = partyAt >= 0 ? (args.splice(partyAt, 2)[1] as Temper) : undefined;
 const runs = Number(args[0] ?? 100);
 const difficulty = (args[1] ?? "normal") as Difficulty;
 const ctx = simContext();
@@ -28,6 +34,7 @@ const deaths = new Map<number, number>();
 const endings = new Map<string, number>();
 const alignments = new Map<string, number>();
 const started = Date.now();
+const pace = new PaceStats();
 for (let i = 1; i <= runs; i++) {
   let run = newRun(`sim-${i}`, difficulty);
   keep(logRunStart(ctx, run));
@@ -40,14 +47,19 @@ for (let i = 1; i <= runs; i++) {
     keep(logNode(ctx, run, pick.id, open.map((n) => n.id)));
     run = enterNode(run, pick.id, "en");
     if (!run.battle) continue;
-    let s = createBattle(run.battle.setup);
+    const setup = partyTemper ? { ...run.battle.setup, units: run.battle.setup.units.map((u) => (u.team === "heroes" ? { ...u, temper: partyTemper } : u)) } : run.battle.setup;
+    let s = createBattle(setup);
+    pace.start();
     while (!s.winner && s.turns < 300) {
-      for (const c of planTurn(s, { mercy: mercy && activeUnit(s).team === "heroes" })) {
+      const before = s, cmds = planTurn(s, { mercy: mercy && activeUnit(s).team === "heroes" });
+      for (const c of cmds) {
         const r = applyCommand(s, c);
         if (!r.ok) throw new Error(`run ${i}: illegal AI command ${JSON.stringify(c)}: ${r.error}`);
         s = r.state; run.battle.commands.push(c);
       }
+      pace.turn(before, cmds, s);
     }
+    pace.end(s);
     if (!s.winner) { run.over = "lost"; break; }
     for (const u of mercy ? unsettled(s) : []) {
       const c = { t: "settle" as const, unit: u.id, choice: "spare" as const };
@@ -78,6 +90,7 @@ console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort
 console.log(`average hero level at the end ${(levels / runs).toFixed(1)}`);
 console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
 console.log(`foes spared ${sparedAll}, came back to help ${helped}`);
+console.log(pace.report());
 console.log(`hero alignment at the end: ${[...alignments.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);
 console.log(`endings: ${[...endings.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);
 if (logFile) { writeFileSync(logFile, JSON.stringify({ game: "tac-tics", log: 1, events: log })); console.log(`play log: ${log.length} events -> ${logFile}`); }

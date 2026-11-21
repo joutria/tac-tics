@@ -22,6 +22,17 @@ import { cowering, escapeStateFor, FLEE_LOCK, isBorder, turnMp, yielding, type E
 export type Team = "heroes" | "foes";
 export type Facing = "N" | "E" | "S" | "W";
 export type AiKind = "caster" | "bruiser" | "skirmisher";
+/** How boldly a computer-controlled foe plays, on top of its AiKind (see ai.ts TEMPERS). Rolled per battle from
+    the seed when the spec has none, so every fight mixes rushers, flankers and the odd one that holds its ground. */
+export type Temper = "bold" | "flanker" | "steady" | "wary";
+/** The odds of each temper by AiKind, in TEMPERS order. Bosses (heavy) are always steady. */
+export const TEMPER_ODDS: Record<AiKind, [Temper, number][]> = {
+  bruiser: [["bold", 0.5], ["flanker", 0.25], ["steady", 0.2], ["wary", 0.05]],
+  skirmisher: [["flanker", 0.5], ["bold", 0.2], ["steady", 0.2], ["wary", 0.1]],
+  caster: [["steady", 0.5], ["flanker", 0.2], ["bold", 0.15], ["wary", 0.15]],
+};
+/** Ambushers strike first, but their opening turn has this share of their AP (one attack, not two). */
+export const AMBUSH_OPENER_AP = 0.5;
 /** "spared": knelt and left the fight when the party spared it (see escape.ts, yielding). */
 export type Life = "up" | "downed" | "dead" | "escaped" | "spared";
 /** Still on the battlefield (standing or downed). */
@@ -49,6 +60,7 @@ export interface UnitSpec {
   abilities: string[];
   /** How a computer-controlled unit plays. */
   ai?: AiKind;
+  temper?: Temper;
   /** Savia-marked: may retreat or flee, and becomes a rival if it gets away. */
   marked?: boolean;
   /** A rival from an earlier battle (see src/run/rivals.ts). Only the screen reads it. */
@@ -103,6 +115,10 @@ export interface Unit extends UnitSpec {
   statuses: Status[];
   /** Just lost a turn to a stun: cannot be stunned again until its next turn ends. */
   stunGuard?: boolean;
+  /** Set only while a Guard's free hit resolves (it deals GUARD_STRIKE of the damage). */
+  guardStrike?: boolean;
+  /** An ambusher's first turn: it gets AMBUSH_OPENER_AP of its AP. */
+  opener?: boolean;
   /** Set only while a held-back cast resolves: a hit that would down it leaves it at 1 HP instead. */
   held?: boolean;
 }
@@ -223,6 +239,8 @@ export function createBattle(setup: BattleSetup): BattleState {
     ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
     life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, downs: 0, escape: "none", cooldowns: {}, usedThisTurn: {}, rooted: false, statuses: [],
     ct: setup.ambush && u.team === "foes" ? i : Math.round(delayFor(u.speed) / 2) + (setup.ambush ? order.length : 0), seq: i, waited: false, spentAp: false, moved: false,
+    ...(u.team === "foes" && !u.temper ? { temper: rollTemper(setup.seed, u) } : {}),
+    ...(setup.ambush && u.team === "foes" ? { opener: true } : {}),
   }));
   const s: BattleState = {
     version: 2, rng, map: structuredClone(setup.map), units, clock: 0, seqCounter: units.length,
@@ -230,6 +248,14 @@ export function createBattle(setup: BattleSetup): BattleState {
   };
   advance(s, []);
   return s;
+}
+
+function rollTemper(seed: string | number, u: UnitSpec): Temper {
+  if (u.heavy) return "steady";
+  const [v] = rngNext(seedFrom(`${seed}:temper:${u.id}`));
+  let acc = 0;
+  for (const [t, p] of TEMPER_ODDS[u.ai ?? "skirmisher"]) { acc += p; if (v < acc) return t; }
+  return "steady";
 }
 
 /** The order of the next `count` turns, for the turn bar. */
@@ -277,7 +303,8 @@ function advance(s: BattleState, events: BattleEvent[]) {
       const sap = sapUnder(s, u);
       if (sap) events.push({ e: "sapped", unit: u.id, status: sap });
       if (startOfTurnTicks(s, u, events)) { s.winner = winnerOf(s); u.ct += delayFor(u.speed); u.seq = ++s.seqCounter; continue; }
-      u.ap = u.maxAp;
+      u.ap = u.opener ? Math.ceil(u.maxAp * AMBUSH_OPENER_AP) : u.maxAp;
+      delete u.opener;
       u.mp = Math.max(0, turnMp(u) - (statusOf(u, "slow")?.power ?? 0));
       u.rooted = false;
       u.usedThisTurn = {};
@@ -442,7 +469,9 @@ function guardHits(s: BattleState, mover: Unit, was: Pos, events: BattleEvent[])
     delete g.guard;
     g.facing = facingOf(g.pos, mover.pos);
     const fx: TerrainFx[] = [];
-    const hits = resolveCast(s, g, ab, { ...mover.pos }, fx);
+    g.guardStrike = true;
+    let hits: Hit[];
+    try { hits = resolveCast(s, g, ab, { ...mover.pos }, fx); } finally { delete g.guardStrike; }
     events.push({ e: "guardHit", unit: g.id, target: mover.id }, { e: "cast", unit: g.id, ability: ab.id, target: { ...mover.pos }, hits, fx });
     for (const h of hits) if (h.died) events.push({ e: "died", unit: h.unit });
   }
