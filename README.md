@@ -19,6 +19,37 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 - **Enemy AI** scores every tile and ability with one turn of lookahead: it counts the damage you could deal next turn (ignoring your abilities on cooldown), hides out of your line of sight, takes high ground, focuses wounded or downed units, and adapts if you keep fighting from range or up close.
 - **View:** rotate in 90 degree steps, zoom, drag to pan, and undo moves until you use an ability.
 
+### Between battles: travel scenes and the route map
+
+- **Travel scenes.** Between two stops the party walks a strip of terrain made for the region they are in, drawn in
+  the same isometric pixel art as the battles. They set out from where they were (the arena they just fought on, a
+  camp fire, a shop stall, a clearing, or the region's gate) and stop at a fork with one signpost per path they can take.
+  Picking a fight keeps them walking until they reach the arena, where the foes are waiting. A walk can be skipped
+  with a tap, Space, Enter or A.
+- **Terrain.** Strips are stitched from a pool of small handmade pieces per region (`PIECES` in `src/run/travel.ts`),
+  mirrored and flipped, with the region's scenery on the sides. They come from the run seed, so a reload shows the same walk.
+- **Ambushes.** About 3 in 10 plain fights and elites (from the second layer on) are ambushes: the foes hide until the
+  party arrives, start 2 or 3 tiles from it on its flanks and behind it, and all act before anyone in the party.
+  Rivals and bosses never ambush. `AMBUSH_CHANCE` in `src/run/run.ts`.
+- **Route map.** M, the 🗺 button, or Select/Back on a controller opens the region's run map as a small isometric
+  world, also during battles (view only). Stops that can be picked glow; drag to see the rest on a phone.
+
+### Controls
+
+| | Keyboard | Controller (standard layout) |
+| --- | --- | --- |
+| Route map | M | Select / Back |
+| Move between signs, nodes, panel buttons | Arrow keys | D-pad or left stick |
+| Pick, confirm | Enter or Space | A |
+| Back, cancel | Escape | B |
+| Battle: move the tile cursor | Arrow keys (along the screen's diagonals) | D-pad |
+| Battle: act on the cursor tile (first press previews, second acts) | Enter | A |
+| Battle: choose an ability | 1 to 9, or Tab to cycle | X to cycle |
+| Battle: end turn | T | Start |
+| Battle: rotate the view | Q / E | LB / RB |
+| Battle: danger zone | | Y |
+| Pick a sign at the fork | 1 to 3 | |
+
 ## Run it
 
 ```sh
@@ -39,6 +70,8 @@ npm run build      # production build in dist/
 | `src/engine/` | The rules, with no DOM: grid and heights (`grid.ts`), walking and Lock (`movement.ts`), line of sight (`sight.ts`), battle state, timeline and commands (`state.ts`), damage and abilities (`combat.ts`), enemy AI (`ai.ts`), seeded random (`rng.ts`), saves (`save.ts`) |
 | `src/data/` | Game data: the element wheel from Evolvlings (`elements.ts`), abilities, maps (`maps/`), units |
 | `src/render/iso.ts` | Isometric drawing and turning clicks into tiles |
+| `src/run/travel.ts` | Travel scenes: the walk pieces per region, building the strip, the party's paths |
+| `src/ui/worldmap.ts` | The route map as an isometric map of tiles |
 | `src/i18n/text.ts` | Every text in Spanish and English |
 | `src/main.ts` | The test screen |
 | `src/run/playlog.ts`, `src/ui/stats.ts` | Play log: run, battle and choice events kept on the device, the Stats panel, export |

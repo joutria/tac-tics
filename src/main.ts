@@ -8,23 +8,27 @@ import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, CRIT_MULT, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
-import { manhattan, Pos, sightBlock, TERRAIN, tileAt } from "./engine/grid";
+import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { dangerZone } from "./engine/threat";
 import { isBorder, turnMp, wavering } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { rivalTaunt, rivalTitle } from "./run/rivals";
-import { buy, choose, enterNode, finishBattle, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
+import { buy, choose, enterNode, fielded, finishBattle, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, type RunState } from "./run/run";
+import { choices } from "./run/map";
+import { memberSpec } from "./run/party";
+import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
+import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, type Difficulty } from "./data/region";
-import { renderRunMap } from "./ui/runmap";
+import { NODE_ICON, nodeLabel, renderRunMap } from "./ui/runmap";
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
 import {
-  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns,
+  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, upcomingTurns, type UnitSpec,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
-import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, setFlat, tileCenter, TW, View } from "./render/iso";
+import { drawBattle, Floater, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
 
 /** The run save: the run, with the battle being fought inside it. */
 const RUN_KEY = "tac-tics.run.v1";
@@ -133,11 +137,12 @@ function showMap() {
   journey.battle = undefined;
   if (!choosingDifficulty) persist();
   resetView();
-  $("runmap").style.display = "flex";
+  $("travel").style.display = "block";
   $("overlay").style.display = "none";
+  for (const id of ["top", "bottom", "act"]) $(id).style.visibility = "hidden";
   const update = (next: RunState) => { journey = next; showMap(); };
   const safely = (f: () => RunState) => { try { update(f()); } catch (e) { toast(t(lang, "tooPoor")); console.warn(e); } };
-  renderRunMap($("runmap"), journey, lang, {
+  renderRunMap(document.body, journey, lang, {
     pick: pickNode,
     choose: (i) => { const before = journey; update(choose(journey, i)); record(logChoice(PLAYER, before, i)); },
     buy: (id) => { const before = journey; safely(() => buy(journey, id)); if (journey !== before) record(logBuy(PLAYER, before, id)); },
@@ -152,7 +157,16 @@ function showMap() {
   $<HTMLButtonElement>("newRun").textContent = t(lang, "newRun");
   $("gearBtn").textContent = `🎒 ${t(lang, "gear")}`;
   $("mapLang").textContent = lang === "es" ? "English" : "Español";
+  $("mapBtn").textContent = `🗺 ${t(lang, "routeMap")}`; $("mapBtn").title = t(lang, "mapKeys");
   document.documentElement.lang = lang;
+  ensureDepart();
+  // A finished run shows the route it took, under the epilogue.
+  if (journey.over && !mapOpen) openMap(true);
+  if (mapOpen) openMap(true);
+  const walking = !!play && !play.finished && play.started !== null;
+  $("skipBtn").textContent = `» ${t(lang, "skipWalk")}`;
+  $("skipBtn").style.display = walking ? "" : "none";
+  if (!journey.over && !journey.remarks.length && !$("runHint").textContent) $("runHint").textContent = walking ? t(lang, "walking") : t(lang, "travelHint");
 }
 
 let newRunArmed = 0;
@@ -165,26 +179,39 @@ function confirmNewRun(): boolean {
 }
 
 function pickNode(id: number) {
-  if (choosingDifficulty) return;
+  if (choosingDifficulty || !onMap || (play?.kind === "approach" && !play.finished)) return;
+  if (!nextNodes(journey).some((n) => n.id === id)) return;
   const kind = journey.map.nodes[id]!.kind;
   const before = journey.heroHp;
   record(logNode(PLAYER, journey, id, nextNodes(journey).map((n) => n.id)));
   journey = enterNode(journey, id, lang);
-  if (!journey.battle) { if (kind === "rest") toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
-  startBattle(kind === "rival" || kind === "boss");
+  openMap(false);
+  $("signs").style.display = "none";
+  $("runHint").textContent = t(lang, "walking");
+  $("skipBtn").style.display = "";
+  // Walk there first; a fight starts when the party reaches the foes, a stop opens when they reach it.
+  approach(id, () => {
+    if (!journey.battle) { if (kind === "rest") toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
+    startBattle(kind === "rival" || kind === "boss");
+  });
 }
 
 /** Shows the battle in `journey.battle` (new or loaded). */
 function startBattle(announce: boolean) {
   onMap = false;
-  $("runmap").style.display = "none";
+  openMap(false);
+  $("travel").style.display = "none";
+  for (const id of ["top", "bottom", "act"]) $(id).style.visibility = "";
   save = journey.battle!;
+  // Each battle opens centred on its arena (the travel screen never pans the battle view).
+  panX = 0; panY = 0;
   battleStartedAt = save.commands.length ? 0 : Date.now();
   rebuild(save.commands);
   resetView();
   persist(); refresh(); followHero();
   const rivals = journey.rivals.filter((r) => !r.settled && save.setup.units.some((u) => u.id === r.id));
   if (announce && rivals.length && !save.commands.length) toast(rivals.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
+  else if (save.setup.ambush && !save.commands.length) toast(t(lang, "ambush"), 2600);
   maybeFoeTurn();
 }
 
@@ -194,6 +221,10 @@ function afterBattleButton() {
   if (!journey.battle || !state.winner) return;
   const region = journey.region;
   const before = journey, fought = { ...save, node: journey.battle.node };
+  // The next walk sets out from this arena, from where the party stands now.
+  const standing = state.units.filter((u) => u.team === "heroes" && (u.life === "up" || u.life === "downed"))
+    .sort((a, b) => (a.id === heroOf(journey).id ? -1 : b.id === heroOf(journey).id ? 1 : 0));
+  lastArena = { key: `${journey.region ?? 0}:${journey.battle.node}`, map: structuredClone(state.map), at: standing.map((u) => ({ ...u.pos })) };
   journey = finishBattle(journey, state);
   try {
     record(...logBattle(PLAYER, before, fought, state, journey, battleStartedAt ? Date.now() - battleStartedAt : undefined));
@@ -212,7 +243,7 @@ function loadOrNew() {
       const saved = upgradeRun(JSON.parse(text) as RunState);
       if (saved.version !== RUN_VERSION) throw new Error(`unknown run version ${saved.version}`);
       journey = saved;
-      if (journey.battle) { startBattle(false); toast(t(lang, "resume")); } else showMap();
+      if (journey.battle) { startBattle(false); toast(t(lang, "resume")); } else { skipNextWalk = true; showMap(); }
       return;
     } catch (e) { console.warn("run save ignored:", e); }
   }
@@ -607,6 +638,416 @@ function toast(msg: string, ms = 1600) {
   clearTimeout(toastTimer); toastTimer = window.setTimeout(() => el.classList.remove("show"), ms);
 }
 
+/* ---------- travel scenes and the route map ---------- */
+
+/** One travel scene being shown: a strip of terrain with the party walking it (src/run/travel.ts). */
+interface Play {
+  key: string;
+  kind: "depart" | "approach";
+  scene: Scene;
+  /** A battle state that only holds the strip and the walkers, for the renderer. */
+  stage: BattleState;
+  motions: Map<string, Motion>;
+  /** When the walk started; null while it waits (an answer is due first). */
+  started: number | null;
+  /** When the last walker arrives. */
+  done: number;
+  finished: boolean;
+  /** Ambush foes jump out once the party arrives; then this is when they landed. */
+  sprung?: number;
+  onDone?: () => void;
+}
+let play: Play | null = null;
+let mapOpen = false;
+/** The sign (open node) the keyboard or controller is on, at the fork and on the route map. */
+let signSel = 0;
+/** The arena the party just fought on and where they stood, so the next walk sets out from there. */
+let lastArena: { key: string; map: GridMap; at: Pos[] } | null = null;
+/** The first walk after loading a save is skipped: the party is already at the fork. */
+let skipNextWalk = false;
+let sceneView: View = { ox: 0, oy: 0, scale: 1, rot: 0 };
+let sceneCam: { x: number; y: number } | null = null;
+const TRAVEL_STEP_MS = 210, FOLLOW_GAP_MS = 340;
+const sceneFloaters: Floater[] = [];
+
+const sceneKey = () => `${journey.seed}:${journey.region ?? 0}:${journey.at}:${journey.path.length}:${fielded(journey).map((m) => m.id).join(",")}`;
+/** The walk can start: nothing to answer and no panel open. */
+const canWalk = () => !choosingDifficulty && !journey.over && !journey.offers.length && !gearOpen && !statsOpen;
+
+function partySpecs(): UnitSpec[] {
+  return [heroOf(journey), ...fielded(journey).map((m) => memberSpec(m, journey.hero.level, { x: 0, y: 0 }, journey.shards))];
+}
+
+/** Puts a scene on screen: everyone stands where their path ends (the renderer draws the trip from the motions). */
+function stagePlay(key: string, kind: Play["kind"], scene: Scene, party: UnitSpec[], foes: UnitSpec[] = [], onDone?: () => void): Play {
+  const units = [
+    ...party.slice(0, scene.paths.length).map((u, i) => ({ ...u, pos: { ...scene.paths[i]!.at(-1)! } })),
+    ...foes.map((u, i) => ({ ...u, pos: { ...scene.foes[i]! } })),
+  ];
+  const stage = createBattle({ seed: 0, map: scene.map, units });
+  for (const u of stage.units) {
+    u.facing = u.team === "heroes" ? "N" : "S";
+    if (u.team === "foes" && scene.ambush) u.life = "escaped"; // hidden until they spring
+  }
+  const motions = new Map<string, Motion>();
+  scene.paths.forEach((path, i) => motions.set(units[i]!.id, { points: path, born: Infinity, stepMs: TRAVEL_STEP_MS, kind: "walk" }));
+  sceneCam = null;
+  return { key, kind, scene, stage, motions, started: null, done: Infinity, finished: false, onDone };
+}
+
+function startWalk(p: Play) {
+  const now = performance.now();
+  p.started = now;
+  let i = 0, done = now;
+  for (const mo of p.motions.values()) { mo.born = now + i++ * FOLLOW_GAP_MS; done = Math.max(done, mo.born + motionMs(mo)); }
+  p.done = done;
+}
+
+/** Jumps to the end of the walk (a tap, Space, A). */
+function skipWalk() {
+  if (!play || play.finished) return;
+  if (play.started === null) startWalk(play);
+  for (const mo of play.motions.values()) mo.born = -1e9;
+  play.done = performance.now();
+}
+
+/** The walk out of the place the party is at, to the fork. Built once per stop; waits while an answer is due. */
+function ensureDepart() {
+  if (journey.over) return;
+  const key = sceneKey();
+  if (play?.key === key && play.kind === "depart") { if (play.started === null && canWalk()) startWalk(play); return; }
+  const at = journey.at === null ? null : journey.map.nodes[journey.at]!;
+  const place = at ? placeOf(at.kind) : null;
+  const origin: Origin = lastArena && lastArena.key === `${journey.region ?? 0}:${journey.at}` ? { t: "arena", map: lastArena.map, at: lastArena.at }
+    : place ? { t: "place", place } : { t: "gate" };
+  const open = choices(journey.map, journey.at);
+  const scene = departScene(`${journey.seed}:${journey.region ?? 0}:${journey.at}`, regionOf(journey).id, origin, open, 1 + fielded(journey).length);
+  play = stagePlay(key, "depart", scene, partySpecs());
+  signSel = Math.max(0, open.findIndex((n) => n.col === 1));
+  if (skipNextWalk) { skipNextWalk = false; skipWalk(); play.finished = true; return; }
+  if (canWalk()) startWalk(play);
+}
+
+/** After a pick: the walk down that path to what waits at its end, then the battle (or the stop's panel). */
+function approach(nodeId: number, then: () => void) {
+  const node = journey.map.nodes[nodeId]!;
+  const b = journey.battle;
+  const seed = `${journey.seed}:${journey.region ?? 0}:to:${nodeId}`;
+  let scene: Scene, party: UnitSpec[], foes: UnitSpec[] = [];
+  if (b) {
+    const heroes = b.setup.units.filter((u) => u.team === "heroes");
+    foes = b.setup.units.filter((u) => u.team === "foes");
+    scene = approachScene(seed, regionOf(journey).id, node.col, { t: "fight", arena: b.setup.map, party: heroes.map((u) => u.pos), foes: foes.map((u) => u.pos), ambush: !!b.setup.ambush }, heroes.length);
+    party = heroes;
+  } else {
+    party = partySpecs();
+    scene = approachScene(seed, regionOf(journey).id, node.col, { t: "place", place: placeOf(node.kind) ?? "clearing" }, party.length);
+  }
+  play = stagePlay(`to:${nodeId}`, "approach", scene, party, foes, then);
+  startWalk(play);
+}
+
+/** Every frame on the travel screen: ends the walk, springs an ambush, then hands over. */
+function tickPlay(now: number) {
+  if (!play || play.finished || play.started === null || now < play.done) return;
+  if (play.scene.ambush && play.sprung === undefined) {
+    // The foes jump out of cover: a hop in from the side, and a shout over each of them.
+    play.sprung = now;
+    for (const u of play.stage.units) {
+      if (u.team !== "foes") continue;
+      u.life = "up";
+      const side = u.pos.x < play.stage.map.w / 2 ? -1 : 1;
+      const from = { x: Math.max(0, Math.min(play.stage.map.w - 1, u.pos.x + side)), y: u.pos.y };
+      play.motions.set(u.id, { points: [from, { ...u.pos }], born: now, stepMs: 260, kind: "walk" });
+      sceneFloaters.push({ pos: { ...u.pos }, text: "!", color: "#ff8a7a", born: now });
+    }
+    toast(t(lang, "ambushTag"), 1200);
+    play.done = now + 1100;
+    return;
+  }
+  play.finished = true;
+  if (play.kind === "depart" && $("runHint").textContent === t(lang, "walking")) $("runHint").textContent = t(lang, "travelHint");
+  const next = play.onDone;
+  play.onDone = undefined;
+  next?.();
+}
+
+/** Where the hero is drawn right now on the strip, for the camera. */
+function walkerPoint(p: Play, time: number) {
+  const mo = p.motions.get(p.stage.units.find((u) => u.team === "heroes" && u.id === heroOf(journey).id)?.id ?? "") ?? [...p.motions.values()][0];
+  const m = p.stage.map;
+  if (!mo) return tileCenter(m, p.scene.paths[0]!.at(-1)!, 0);
+  const e = Math.max(0, Math.min(mo.points.length - 1, (time - mo.born) / mo.stepMs));
+  const i = Math.min(mo.points.length - 2, Math.floor(e)), f = e - i;
+  if (mo.points.length < 2) return tileCenter(m, mo.points[0]!, 0);
+  const a = tileCenter(m, mo.points[i]!, 0), b = tileCenter(m, mo.points[i + 1]!, 0);
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+}
+
+/** Tile width on screen for scenes: big enough to read the pixel art, smaller on a phone. */
+function sceneScale(dpr: number) {
+  const want = Math.max(56, Math.min(104, innerWidth / 7));
+  return Math.max(1, Math.round((want / TW) * 2) / 2) * dpr;
+}
+
+function drawScene(time: number) {
+  if (!play) return;
+  tickPlay(time);
+  const dpr = window.devicePixelRatio || 1;
+  const top = $("travelTop").getBoundingClientRect().height, bottom = $("travelBottom").getBoundingClientRect().height;
+  const scale = sceneScale(dpr);
+  // The camera follows the hero, a little ahead of them on the way, eased so it never jerks.
+  const at = walkerPoint(play, time);
+  const target = { x: at.x + 40, y: at.y - 50 };
+  sceneCam = sceneCam ? { x: sceneCam.x + (target.x - sceneCam.x) * 0.08, y: sceneCam.y + (target.y - sceneCam.y) * 0.08 } : target;
+  const midY = top + (innerHeight - top - bottom) / 2;
+  sceneView = { rot: 0, scale, ox: canvas.width / 2 - sceneCam.x * scale, oy: midY * dpr - sceneCam.y * scale };
+  const wasFlat = isFlat(); setFlat(false);
+  drawBattle(ctx, play.stage, images, sceneView, { marks: new Map(), hover: null, active: null, time, floaters: sceneFloaters, motions: play.motions, bare: true });
+  setFlat(wasFlat);
+  placeSigns();
+}
+
+/** Signposts at the fork: buttons over the sign tiles, shown once the party has arrived and nothing is due. */
+function placeSigns() {
+  const box = $("signs");
+  const show = onMap && !mapOpen && !!play && play.kind === "depart" && play.finished && !journey.offers.length && !journey.over && !choosingDifficulty && !gearOpen && !statsOpen;
+  box.style.display = show ? "" : "none";
+  if (!show || !play) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (box.childElementCount !== play.scene.signs.length || box.dataset.key !== `${play.key}:${lang}`) {
+    box.dataset.key = `${play.key}:${lang}`;
+    box.replaceChildren(...play.scene.signs.map((s, i) => {
+      const n = journey.map.nodes[s.node]!;
+      const b = document.createElement("button");
+      b.className = `sign ${n.kind}`;
+      b.innerHTML = `<b>${NODE_ICON[n.kind]}</b><span></span>`;
+      b.querySelector("span")!.textContent = nodeLabel(journey, n, lang, true);
+      b.title = nodeLabel(journey, n, lang);
+      b.onclick = () => { signSel = i; pickNode(s.node); };
+      return b;
+    }));
+  }
+  [...box.children].forEach((el, i) => {
+    const s = play!.scene.signs[i]!, c = tileCenter(play!.stage.map, s.pos, 0);
+    const e = el as HTMLElement;
+    e.style.left = `${(c.x * sceneView.scale + sceneView.ox) / dpr}px`;
+    e.style.top = `${(c.y * sceneView.scale + sceneView.oy) / dpr - 18}px`;
+    e.classList.toggle("sel", i === signSel && padUsed);
+  });
+}
+
+/* The route map overlay: the run map as a small isometric world, drawn on the canvas. */
+let routeCache: { key: string; grid: RouteGrid; stage: BattleState } | null = null;
+let routeView: View = { ox: 0, oy: 0, scale: 1, rot: 0 };
+let routePan = { x: 0, y: 0 };
+/** Icons on the route map grow when the map is drawn small, so they stay easy to read and tap. */
+let routeIcon = 1;
+
+function routeStage() {
+  const key = `${journey.seed}:${journey.region ?? 0}:${journey.at}:${journey.path.length}`;
+  if (routeCache?.key === key) return routeCache;
+  const grid = routeGrid(journey, regionOf(journey).id);
+  const pos = journey.at === null ? grid.start : grid.tileOf[journey.at]!;
+  const stage = createBattle({ seed: 0, map: grid.map, units: [{ ...heroOf(journey), pos: { ...pos } }] });
+  stage.units[0]!.facing = "N";
+  routeCache = { key, grid, stage };
+  return routeCache;
+}
+
+function openMap(open: boolean) {
+  mapOpen = open;
+  document.body.classList.toggle("mapopen", open);
+  $("runmap").style.display = open ? "block" : "none";
+  if (open) {
+    routePan = { x: 0, y: 0 };
+    const nodes = onMap ? nextNodes(journey) : [];
+    signSel = Math.max(0, Math.min(signSel, nodes.length - 1));
+    $("routeTitle").textContent = `🗺 ${t(lang, "routeMap")} · ${regionOf(journey).name[lang]}`;
+    $("routeKeys").textContent = t(lang, "mapKeys");
+    $("closeMap").textContent = `✕ ${t(lang, "closeMap")}`;
+  }
+  tooltip(null);
+}
+
+function drawRoute(time: number) {
+  const { grid, stage } = routeStage();
+  const dpr = window.devicePixelRatio || 1;
+  const top = $("routeTop").getBoundingClientRect().height, bottom = $("routeBottom").getBoundingClientRect().height;
+  const size = mapPixelSize(grid.map);
+  const availW = innerWidth - 16, availH = innerHeight - top - bottom - 16;
+  const fit = Math.min(availW / size.w, availH / size.h);
+  // On a phone the whole map would be too small to read: keep it legible, centre on where the party can go
+  // next, and let the player drag to see the rest.
+  const s = Math.max(innerWidth < 700 ? 0.85 : 0.5, Math.min(2, fit >= 1 ? Math.floor(fit * 2) / 2 : fit));
+  const scale = s * dpr;
+  const open = onMap ? nextNodes(journey) : [];
+  if (s <= fit + 0.01) routeView = { rot: 0, scale, ox: (canvas.width - size.w * scale) / 2 + routePan.x * dpr, oy: (top + 8) * dpr + (availH * dpr - size.h * scale) / 2 + routePan.y * dpr };
+  else {
+    const spots = (open.length ? open.map((n) => grid.tileOf[n.id]!) : [journey.at === null ? grid.start : grid.tileOf[journey.at]!]).map((p) => tileCenter(grid.map, p, 0));
+    const fx = spots.reduce((a, c) => a + c.x, 0) / spots.length, fy = spots.reduce((a, c) => a + c.y, 0) / spots.length - 20;
+    routeView = { rot: 0, scale, ox: canvas.width / 2 - fx * scale + routePan.x * dpr, oy: (top + 8 + availH / 2) * dpr - fy * scale + routePan.y * dpr };
+  }
+  routeIcon = Math.max(1, 0.9 / s);
+  const done = new Set(journey.path);
+  const marks = new Map<string, Mark>();
+  for (const n of journey.map.nodes) {
+    const p = grid.tileOf[n.id]!;
+    if (done.has(n.id)) marks.set(`${p.x},${p.y}`, "chosen");
+    else if (open.some((o) => o.id === n.id)) marks.set(`${p.x},${p.y}`, "move");
+  }
+  const sel = open[signSel];
+  const wasFlat = isFlat(); setFlat(false);
+  drawBattle(ctx, stage, images, routeView, { marks, hover: sel ? grid.tileOf[sel.id]! : null, active: null, time, floaters: [], bare: true });
+  setFlat(wasFlat);
+  // Icons over the nodes, with names over the ones that can be picked.
+  ctx.save();
+  ctx.setTransform(scale, 0, 0, scale, routeView.ox, routeView.oy);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const n of journey.map.nodes) {
+    const c = iconAt(grid, n.id);
+    const isOpen = open.some((o) => o.id === n.id), r = (n.kind === "boss" ? 15 : 12) * routeIcon;
+    ctx.globalAlpha = isOpen || done.has(n.id) || n.kind === "boss" ? 1 : 0.75;
+    const bob = isOpen ? Math.sin(time / 260 + n.id) * 2 : 0;
+    ctx.beginPath(); ctx.arc(c.x, c.y + bob, r, 0, Math.PI * 2);
+    ctx.fillStyle = done.has(n.id) ? "#4a4220" : n.kind === "boss" ? "#3d1f2a" : "#2a2c3d"; ctx.fill();
+    ctx.lineWidth = isOpen ? 2.5 : 1.5;
+    ctx.strokeStyle = n.rival ? "#d9a0ff" : isOpen || done.has(n.id) ? "#ffd86b" : "#5a5e80"; ctx.stroke();
+    ctx.font = `${(n.kind === "boss" ? 17 : 13) * routeIcon}px system-ui, sans-serif`; ctx.fillStyle = "#f2efe6";
+    ctx.fillText(NODE_ICON[n.kind], c.x, c.y + bob + 1);
+    if (isOpen) {
+      ctx.font = `bold ${10 * routeIcon}px system-ui, sans-serif`; ctx.lineWidth = 3; ctx.strokeStyle = "#1d1f2b"; ctx.fillStyle = "#ffd86b";
+      const label = nodeLabel(journey, n, lang, true);
+      ctx.strokeText(label, c.x, c.y + r + 9 + bob); ctx.fillText(label, c.x, c.y + r + 9 + bob);
+    }
+  }
+  ctx.restore();
+}
+
+/** Where a node's icon floats, above its tile. */
+function iconAt(grid: RouteGrid, id: number) {
+  const c = tileCenter(grid.map, grid.tileOf[id]!, 0);
+  return { x: c.x, y: c.y - 30 };
+}
+
+/** A tap on the route map: the open node whose icon (or tile) is nearest, within reach of a finger. */
+function routeTap(ev: { clientX: number; clientY: number }) {
+  if (!onMap) return;
+  const { grid } = routeStage();
+  const c = toCanvas(ev);
+  const px = (c.x - routeView.ox) / routeView.scale, py = (c.y - routeView.oy) / routeView.scale;
+  let best: { id: number; d: number } | null = null;
+  for (const n of nextNodes(journey)) {
+    const a = iconAt(grid, n.id), b = tileCenter(grid.map, grid.tileOf[n.id]!, 0);
+    const d = Math.min(Math.hypot(a.x - px, a.y - py), Math.hypot(b.x - px, b.y - py));
+    if (d < 30 * routeIcon && (!best || d < best.d)) best = { id: n.id, d };
+  }
+  if (best) pickNode(best.id);
+}
+
+/* ---------- keyboard and controller ---------- */
+
+/** True once a controller or the arrow keys have been used, so the selection outline shows. */
+let padUsed = false;
+let cursor: Pos | null = null;
+type Input = "up" | "down" | "left" | "right" | "confirm" | "back" | "map" | "next" | "end" | "rotL" | "rotR" | "danger";
+
+/** Buttons the player can move between in the panel that is in front. */
+function panelButtons(): HTMLButtonElement[] {
+  const panel = $("runPanel");
+  if (panel.style.display === "none" || !panel.childElementCount) return [];
+  return [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => !b.disabled && b.offsetParent !== null);
+}
+
+function moveFocus(list: HTMLElement[], dir: number) {
+  if (!list.length) return;
+  const i = list.indexOf(document.activeElement as HTMLElement);
+  const next = list[i < 0 ? (dir > 0 ? 0 : list.length - 1) : (i + dir + list.length) % list.length]!;
+  next.focus();
+  next.scrollIntoView({ block: "nearest" });
+}
+
+function input(k: Input) {
+  padUsed = true;
+  if (k === "map") { if (!choosingDifficulty) openMap(!mapOpen); return; }
+  const buttons = panelButtons();
+  if (buttons.length) {
+    // A panel is in front (a reward, a shop, a talk): move between its buttons, A presses the one in focus.
+    if (k === "up" || k === "left") moveFocus(buttons, -1);
+    else if (k === "down" || k === "right") moveFocus(buttons, 1);
+    else if (k === "confirm") { const f = document.activeElement; if (f instanceof HTMLButtonElement && buttons.includes(f)) f.click(); else buttons[0]!.focus(); }
+    else if (k === "back" && (gearOpen || statsOpen)) { gearOpen = false; statsOpen = false; showMap(); }
+    return;
+  }
+  if (mapOpen) {
+    const open = onMap ? nextNodes(journey) : [];
+    if (k === "left" || k === "up") signSel = (signSel + open.length - 1) % Math.max(1, open.length);
+    else if (k === "right" || k === "down") signSel = (signSel + 1) % Math.max(1, open.length);
+    else if (k === "confirm" && open[signSel]) pickNode(open[signSel]!.id);
+    else if (k === "back") openMap(false);
+    return;
+  }
+  if (onMap) {
+    if (!play) return;
+    if (!play.finished) { if (k === "confirm") skipWalk(); return; }
+    const signs = play.kind === "depart" ? play.scene.signs : [];
+    if (!signs.length) return;
+    if (k === "left" || k === "up") signSel = (signSel + signs.length - 1) % signs.length;
+    else if (k === "right" || k === "down") signSel = (signSel + 1) % signs.length;
+    else if (k === "confirm") pickNode(signs[Math.min(signSel, signs.length - 1)]!.node);
+    return;
+  }
+  // In battle.
+  if ($("overlay").style.display === "flex") { if (k === "confirm") afterBattleButton(); return; }
+  if (k === "rotL" || k === "rotR") { view.rot = (view.rot + (k === "rotL" ? -1 : 1) + 4) % 4; hover = cursor; tooltip(cursor); return; }
+  if (k === "danger") { dangerAll = !dangerAll; refresh(); return; }
+  if (!heroTurn() || busy || animating()) return;
+  if (k === "end") { $("end").click(); return; }
+  if (k === "back") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); return; }
+  if (k === "next") {
+    // Cycles the abilities that can be used now, then back to moving.
+    const u = activeUnit(state), list = unitAbilities(u).filter((id) => !abilityAvailable(u, id));
+    const i = selected ? list.indexOf(selected) : -1;
+    selected = i + 1 < list.length ? list[i + 1]! : null; pending = null; refresh(); tooltip(cursor);
+    return;
+  }
+  const u = activeUnit(state);
+  if (!cursor || !tileAt(state.map, cursor)) cursor = { ...u.pos };
+  if (k === "confirm") { onTap(cursor, true); return; }
+  // The d-pad moves the cursor along the diagonals as they look on screen, whatever the turn of the view.
+  const step = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[k as "up"];
+  if (!step) return;
+  const r = rotateGrid(state.map, cursor, view.rot);
+  const n = unrotateGrid(state.map, { x: r.x + step[0]!, y: r.y + step[1]! }, view.rot);
+  if (!tileAt(state.map, n)) return;
+  cursor = n; hover = n; pending = null; refresh(); tooltip(n);
+  const s = screenOf(n);
+  if (s.clientX < 60 || s.clientX > innerWidth - 60 || s.clientY < 120 || s.clientY > innerHeight - 140) centreOn(n);
+}
+
+/** Standard-mapping gamepad: buttons and the left stick become the same inputs as the keyboard. */
+const PAD_BUTTONS: Partial<Record<number, Input>> = { 0: "confirm", 1: "back", 2: "next", 3: "danger", 4: "rotL", 5: "rotR", 8: "map", 9: "end", 12: "up", 13: "down", 14: "left", 15: "right" };
+const padHeld = new Map<string, number>();
+function pollPads(now: number) {
+  const pads = navigator.getGamepads?.() ?? [];
+  const down = new Set<string>();
+  for (const gp of pads) {
+    if (!gp) continue;
+    gp.buttons.forEach((b, i) => { if (b.pressed && PAD_BUTTONS[i]) down.add(PAD_BUTTONS[i]!); });
+    const [ax = 0, ay = 0] = gp.axes;
+    if (ax < -0.6) down.add("left"); if (ax > 0.6) down.add("right");
+    if (ay < -0.6) down.add("up"); if (ay > 0.6) down.add("down");
+  }
+  for (const k of down) {
+    const since = padHeld.get(k);
+    // Fires on press, then repeats while a direction is held.
+    const dir = k === "up" || k === "down" || k === "left" || k === "right";
+    if (since === undefined) { padHeld.set(k, now); input(k as Input); }
+    else if (dir && now - since > 380) { padHeld.set(k, now - 380 + 140); input(k as Input); }
+  }
+  for (const k of [...padHeld.keys()]) if (!down.has(k)) padHeld.delete(k);
+}
+
 /* ---------- view: fit, zoom, pan, rotate ---------- */
 
 function layout() {
@@ -657,7 +1098,7 @@ function centreOn(p: Pos) {
 
 /** When the map is bigger than the screen, bring the hero into view as their turn starts. */
 function followHero() {
-  if (!heroTurn()) return;
+  if (!heroTurn() || onMap) return;
   const pos = activeUnit(state).pos, p = screenOf(pos);
   const top = $("top").getBoundingClientRect().height, bottom = $("bottom").getBoundingClientRect().height;
   if (p.clientX < 60 || p.clientX > innerWidth - 60 || p.clientY < top + 80 || p.clientY > innerHeight - bottom - 40) centreOn(pos);
@@ -754,10 +1195,25 @@ function escapePaths(): Pos[][] {
   return paths;
 }
 
+/** Keeps the drawing buffer the size of the box the canvas fills (the battle's layout() does this too). */
+function sizeCanvas() {
+  const dpr = window.devicePixelRatio || 1, box = canvas.getBoundingClientRect();
+  const w = Math.round(box.width * dpr), h = Math.round(box.height * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+}
+
 function frame(time: number) {
+  if (onMap || mapOpen) sizeCanvas();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#1d1f2b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (onMap) { requestAnimationFrame(frame); return; }
+  pollPads(time);
+  if (mapOpen) { drawRoute(time); requestAnimationFrame(frame); return; }
+  if (onMap) {
+    drawScene(time);
+    const walking = !!play && !play.finished && play.started !== null;
+    $("skipBtn").style.display = walking ? "" : "none";
+    requestAnimationFrame(frame); return;
+  }
   const moving = time < animUntil;
   if (focus && time > focus.until) focus = null;
   drawBattle(ctx, state, images, view, {
@@ -789,6 +1245,7 @@ async function start() {
   let pinch: { dist: number; zoom: number } | null = null;
   const spread = () => { const [a, b] = [...touches.values()]; return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0; };
   canvas.addEventListener("pointerdown", (ev) => {
+    padUsed = false;
     touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (touches.size === 2) { pinch = { dist: spread(), zoom }; down = null; return; }
     down = { x: ev.clientX, y: ev.clientY, panX, panY, dragged: false };
@@ -802,8 +1259,14 @@ async function start() {
     const touch = ev.pointerType !== "mouse";
     if (down && (ev.buttons || touch)) {
       const dx = ev.clientX - down.x, dy = ev.clientY - down.y;
-      if (Math.abs(dx) + Math.abs(dy) > (touch ? 14 : 6)) { down.dragged = true; panX = down.panX + dx; panY = down.panY + dy; layout(); }
+      if (Math.abs(dx) + Math.abs(dy) > (touch ? 14 : 6)) {
+        down.dragged = true;
+        if (mapOpen) { routePan = { x: routePan.x + ev.movementX, y: routePan.y + ev.movementY }; return; }
+        if (onMap) return;
+        panX = down.panX + dx; panY = down.panY + dy; layout();
+      }
     }
+    if (mapOpen || onMap) return;
     if (touch) return; // a finger has no hover: its tap shows the preview instead
     const h = toMap(ev);
     if (h?.x !== hover?.x || h?.y !== hover?.y) hover = h;
@@ -815,6 +1278,8 @@ async function start() {
     const tap = down && !down.dragged;
     down = null;
     if (!tap || ev.type === "pointercancel") return;
+    if (mapOpen) { routeTap(ev); return; }
+    if (onMap) { skipWalk(); return; }
     const touch = ev.pointerType !== "mouse";
     const p = toMap(ev, touch ? 0.6 : 0);
     if (p) onTap(p, touch);
@@ -822,7 +1287,7 @@ async function start() {
   canvas.addEventListener("pointerup", lift);
   canvas.addEventListener("pointercancel", lift);
   canvas.addEventListener("pointerleave", (ev) => { if (ev.pointerType === "mouse") { hover = null; tooltip(null); } });
-  canvas.addEventListener("wheel", (ev) => { ev.preventDefault(); zoom = Math.min(3, Math.max(0.5, zoom * (ev.deltaY < 0 ? 1.15 : 1 / 1.15))); layout(); }, { passive: false });
+  canvas.addEventListener("wheel", (ev) => { ev.preventDefault(); if (onMap || mapOpen) return; zoom = Math.min(3, Math.max(0.5, zoom * (ev.deltaY < 0 ? 1.15 : 1 / 1.15))); layout(); }, { passive: false });
   $("zoomIn").addEventListener("click", () => { zoom = Math.min(3, zoom * 1.25); layout(); });
   $("zoomOut").addEventListener("click", () => { zoom = Math.max(0.5, zoom / 1.25); layout(); });
   // +1 turns the map clockwise on screen, -1 counter-clockwise. Hover/tooltips are cleared because tiles move.
@@ -847,11 +1312,33 @@ async function start() {
   $("newRun").addEventListener("click", () => { if (journey.over || confirmNewRun()) startRun(); });
   $("mapLang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); showMap(); });
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });
+  $("mapBtn").addEventListener("click", () => openMap(true));
+  $("closeMap").addEventListener("click", () => openMap(false));
+  $("skipBtn").addEventListener("click", skipWalk);
   addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); return; }
-    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const k = ev.key.toLowerCase();
-    if (k === "q") turn(-1); else if (k === "e") turn(1);
+    if (k === "escape") { if (mapOpen) openMap(false); else input("back"); return; }
+    if (k === "m") { if (!ev.repeat) input("map"); return; }
+    const arrows: Record<string, Input> = { arrowup: "up", arrowdown: "down", arrowleft: "left", arrowright: "right" };
+    if (arrows[k]) { ev.preventDefault(); input(arrows[k]!); return; }
+    if (k === "enter" || k === " ") {
+      // A focused button presses itself; otherwise Enter and Space confirm (the sign, the node, the tile).
+      if (document.activeElement instanceof HTMLButtonElement && !mapOpen) return;
+      ev.preventDefault(); if (!ev.repeat) input("confirm"); return;
+    }
+    if (ev.repeat) return;
+    if (k === "q") { if (onMap) return; turn(-1); }
+    else if (k === "e") { if (onMap) return; turn(1); }
+    else if (k === "tab" && !onMap && !mapOpen && heroTurn()) { ev.preventDefault(); input("next"); }
+    else if (k === "t" && !onMap) input("end");
+    else if (/^[1-9]$/.test(k) && !onMap && heroTurn()) {
+      const id = unitAbilities(activeUnit(state))[Number(k) - 1];
+      if (id && !abilityAvailable(activeUnit(state), id)) { selected = selected === id ? null : id; pending = null; refresh(); }
+    } else if (/^[1-3]$/.test(k) && onMap && play?.finished && play.kind === "depart") {
+      const s = play.scene.signs[Number(k) - 1];
+      if (s) pickNode(s.node);
+    }
   });
   requestAnimationFrame(frame);
   maybeFoeTurn();

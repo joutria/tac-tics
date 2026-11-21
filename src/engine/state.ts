@@ -95,6 +95,8 @@ export interface BattleSetup {
   seed: string | number;
   map: GridMap;
   units: UnitSpec[];
+  /** The foes sprang an ambush: every foe takes its first turn before anyone in the party. */
+  ambush?: boolean;
 }
 
 export interface BattleState {
@@ -187,7 +189,7 @@ export function createBattle(setup: BattleSetup): BattleState {
   const units: Unit[] = order.map((u, i) => ({
     ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
     life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, downs: 0, escape: "none", cooldowns: {}, usedThisTurn: {}, rooted: false, statuses: [],
-    ct: Math.round(delayFor(u.speed) / 2), seq: i, waited: false, spentAp: false, moved: false,
+    ct: setup.ambush && u.team === "foes" ? i : Math.round(delayFor(u.speed) / 2) + (setup.ambush ? order.length : 0), seq: i, waited: false, spentAp: false, moved: false,
   }));
   const s: BattleState = {
     version: 2, rng, map: structuredClone(setup.map), units, clock: 0, seqCounter: units.length,
