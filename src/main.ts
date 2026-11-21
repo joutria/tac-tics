@@ -876,7 +876,8 @@ function tileInfo(at: Pos): string[] {
   if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
   if (tile.prop === "boulder") out.push(`<b>${t(lang, "boulder")}</b> · ${t(lang, "boulderInfo")}`);
-  if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, "fireInfo")}`);
+  if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, tile.prop || tile.terrain === "tree" ? "burningObjInfo" : "fireInfo")}`);
+  if (tile.scorchedAt !== undefined) out.push(t(lang, "scorchedInfo"));
   if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);
   if (tile.surface === "oil") out.push(`<b>🛢</b> ${t(lang, "oilInfo")}`);
   if (tile.surface === "sap") out.push(`<b>◆</b> ${t(lang, "sapInfo")}`);

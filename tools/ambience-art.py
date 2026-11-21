@@ -71,9 +71,7 @@ def to_diamond(square):
 def main(src):
     os.makedirs(OUT, exist_ok=True)
     camp = Image.open(os.path.join(src, "campfires_PNG.png")).convert("RGBA")
-    # Campfires are 48 px apart; the smoky ones are 64 px tall from y 240 (orange first). Loose flames and
-    # smoke columns are 16 x 32 cells in the right-hand 64 px (orange flames at y 96, grey smoke at 272).
-    strip([camp.crop((i * 48, 240, i * 48 + 48, 304)) for i in range(4)]).save(os.path.join(OUT, "campfire.png"))
+    # Loose flames and smoke columns are 16 x 32 cells in the right-hand 64 px (orange flames at y 96, grey smoke at 272).
     flames = [camp.crop((192 + i * 16, 96, 208 + i * 16, 128)) for i in range(4)]
     strip(flames).save(os.path.join(OUT, "flame.png"))
     grey = [camp.crop((192 + i * 16, 272, 208 + i * 16, 304)) for i in range(4)]

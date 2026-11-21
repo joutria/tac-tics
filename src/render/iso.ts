@@ -7,7 +7,7 @@ import { MAX_REVIVES } from "../engine/combat";
 import { wavering, yielding } from "../engine/escape";
 import { roundOf, type BattleState, type Facing, type Unit } from "../engine/state";
 import { iconCanvas, splitIcons, type IconId } from "../ui/icons";
-import { drawBurst, drawCampfireFx, drawFallingLeaf, drawFireTile, drawSteamTile, drawWater, type Burst } from "./fx";
+import { drawBurst, drawFallingLeaf, drawFireTile, drawFx, drawSteamTile, drawWater, loopFrame, type Burst } from "./fx";
 
 /** Fire that never goes out (camp fires on travel scenes) is drawn as a camp fire: stones, logs and a live flame. */
 const CAMPFIRE_AT = 1e11;
@@ -44,7 +44,7 @@ function drawFlame(ctx: CanvasRenderingContext2D, x: number, y: number, size: nu
 
 /** A camp fire: warm light on the ground, a ring of stones, crossed logs, a tall flame and sparks rising. */
 function drawCampfire(ctx: CanvasRenderingContext2D, img: Images, c: { x: number; y: number }, time: number, seed: number) {
-  if (drawCampfireFx(ctx, img, c.x, c.y, time, seed)) return;
+  if (!flat) { isoCampfire(ctx, img, c, time, seed); return; }
   ctx.save();
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2, sx = Math.round(c.x + Math.cos(a) * 16), sy = Math.round(c.y + 2 + Math.sin(a) * 8);
@@ -107,6 +107,137 @@ function drawBedroll(ctx: CanvasRenderingContext2D, c: { x: number; y: number },
   ctx.beginPath(); fold.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath(); ctx.fillStyle = edge; ctx.fill(); ctx.stroke();
   const pil = q(0.74, 0.52);
   ctx.fillStyle = "#f7f3e8"; ctx.beginPath(); ctx.ellipse(pil.x, pil.y, 7, 3.5, 0.45, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+/** Fire on the ground: a flickering orange wash, animated flames and a thin smoke column (hand-drawn flames if the
+    sheet is missing, and in the flat tactical view). */
+function groundFire(ctx: CanvasRenderingContext2D, img: Images, c: { x: number; y: number }, time: number, p: Pos) {
+  ctx.globalAlpha = 0.35 + 0.15 * Math.sin(time / 90 + p.x * 3 + p.y);
+  diamond(ctx, c.x, c.y, "#ff7a2a", "rgba(255,200,80,0.8)");
+  ctx.globalAlpha = 1;
+  if (flat || !drawFireTile(ctx, img, c.x, c.y, time, p.x * 3 + p.y)) {
+    drawFlame(ctx, c.x - 7, c.y + 4, 14, time, p.x + p.y * 3);
+    drawFlame(ctx, c.x + 7, c.y + 2, 12, time + 170, p.x * 3 + p.y);
+  }
+}
+
+/** Flames licking over an object that stands on the tile (a crate, a tree's crown), `lift` px above the ground. */
+function burningObject(ctx: CanvasRenderingContext2D, img: Images, c: { x: number; y: number }, time: number, seed: number, lift: number) {
+  if (flat) { drawFlame(ctx, c.x, c.y + lift + 6, 16, time, seed); return; }
+  if (!drawFireTile(ctx, img, c.x, c.y + lift, time, seed + 5)) drawFlame(ctx, c.x, c.y + lift + 6, 18, time, seed);
+}
+
+/** Burnt ground: darker, with grey ash flecks and a few dying embers. Seeded, so it does not shimmer. */
+function drawScorch(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, seed: number) {
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(c.x, c.y - TH / 2); ctx.lineTo(c.x + TW / 2, c.y); ctx.lineTo(c.x, c.y + TH / 2); ctx.lineTo(c.x - TW / 2, c.y); ctx.closePath();
+  ctx.fillStyle = "rgba(28, 18, 14, 0.42)"; ctx.fill();
+  ctx.clip();
+  let r = seed * 9301 + 49297;
+  const rnd = () => { r = (r * 9301 + 49297) % 233280; return r / 233280; };
+  for (let i = 0; i < 14; i++) {
+    const u = rnd(), v = rnd(), x = Math.round(c.x + (u - v) * 30), y = Math.round(c.y - 15 + (u + v) * 15);
+    ctx.fillStyle = i % 5 === 0 ? "#1a1210" : i % 3 === 0 ? "#9a948c" : "#5d5650";
+    ctx.fillRect(x, y, i % 4 === 0 ? 3 : 2, 1);
+  }
+  ctx.restore();
+}
+
+/** What a burnt tree leaves: a short charred stump with a glowing crack. */
+function drawStump(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, seed: number) {
+  ctx.save();
+  const x = c.x + (seed % 3) - 1, y = c.y - 2;
+  ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(x, y + 3, 11, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#1b1626"; ctx.fillRect(x - 8, y - 11, 16, 13);
+  ctx.fillStyle = "#3a2a22"; ctx.fillRect(x - 7, y - 10, 14, 12);
+  ctx.fillStyle = "#24181a"; ctx.fillRect(x + 2, y - 10, 5, 12);
+  ctx.fillStyle = "#1b1626"; ctx.beginPath(); ctx.ellipse(x, y - 11, 8, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#5b4636"; ctx.beginPath(); ctx.ellipse(x, y - 11, 6.5, 3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#2a1c18"; ctx.beginPath(); ctx.ellipse(x, y - 11, 3.5, 1.6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#ff8a3a"; ctx.fillRect(x - 4, y - 5, 1, 3); ctx.fillRect(x - 3, y - 3, 2, 1);
+  ctx.restore();
+}
+
+/** Oil drawn as one puddle across tiles: in each tile a rounded blob, joined to the edge towards every neighbour
+    with oil on the same level, and the corner filled where all three tiles round it have oil (autotiling, like
+    marching squares). The pieces are drawn in the tile's own grid square and clipped to it, so neighbours meet
+    seamlessly whatever the view's rotation. `oil(du, dv)` tells whether the tile one step along the rotated grid has oil. */
+function drawOil(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, time: number, seed: number, oil: (du: number, dv: number) => boolean) {
+  const E = oil(1, 0), W = oil(-1, 0), S = oil(0, 1), N = oil(0, -1);
+  const lo = 0.17, hi = 0.83, mid = 0.5;
+  const shape = (grow: number) => {
+    const path = new Path2D();
+    const a = lo - grow, b = hi + grow;
+    // The middle blob: an almost round rounded square (a circle on the ground, an oval on screen).
+    const r = 0.3 + grow;
+    path.moveTo(a + r, a); path.arcTo(b, a, b, b, r); path.arcTo(b, b, a, b, r); path.arcTo(a, b, a, a, r); path.arcTo(a, a, b, a, r); path.closePath();
+    // Bridges to oily neighbours, reaching past the edge (the clip trims them) so the join has no seam.
+    if (E) path.rect(mid, a, 1.2 - mid, b - a);
+    if (W) path.rect(-0.2, a, mid + 0.2, b - a);
+    if (S) path.rect(a, mid, b - a, 1.2 - mid);
+    if (N) path.rect(a, -0.2, b - a, mid + 0.2);
+    // Corners where the puddle wraps round: fill the quarter when both sides and the diagonal have oil.
+    if (E && S && oil(1, 1)) path.rect(mid, mid, 0.7, 0.7);
+    if (E && N && oil(1, -1)) path.rect(mid, -0.2, 0.7, 0.7);
+    if (W && S && oil(-1, 1)) path.rect(-0.2, mid, 0.7, 0.7);
+    if (W && N && oil(-1, -1)) path.rect(-0.2, -0.2, 0.7, 0.7);
+    return path;
+  };
+  ctx.save();
+  // Grid square (u, v in 0..1) -> screen: +u runs down-right, +v down-left, the square's top corner at the tile's top.
+  ctx.translate(c.x, c.y - TH / 2); ctx.transform(TW / 2, TH / 2, -TW / 2, TH / 2, 0, 0);
+  // Clip a hair past the square so joins with the next tile's oil don't show a seam where the ground tiles meet.
+  ctx.beginPath(); ctx.rect(-0.02, -0.02, 1.04, 1.04); ctx.clip();
+  ctx.fillStyle = "rgba(170, 140, 230, 0.55)"; ctx.fill(shape(0.035), "nonzero"); // a faint violet rim
+  const body = shape(0);
+  ctx.fillStyle = "#16121d"; ctx.fill(body, "nonzero");
+  // Gloss: rainbow streaks that drift slowly, and a white glint, kept inside the puddle.
+  ctx.clip(body, "nonzero");
+  // The streaks lie along the screen's horizontal (the grid's u - v direction), each tile's a little offset.
+  const drift = Math.sin(time / 900 + seed) * 0.08, o = ((seed % 5) - 2) * 0.05;
+  for (const [col, off] of [["rgba(110, 190, 255, 0.22)", -0.07], ["rgba(220, 130, 255, 0.2)", 0], ["rgba(255, 215, 110, 0.16)", 0.07]] as const) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.ellipse(0.5 + o + drift + off, 0.5 + o - drift + off, 0.26, 0.05, -Math.PI / 4, 0, Math.PI * 2); ctx.fill();
+  }
+  if (seed % 3 === 0) { ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.fillRect(0.3, 0.36, 0.08, 0.035); }
+  ctx.restore();
+}
+
+/** A camp fire seen from the battle's angle: an oval ring of stones (the back half behind the fire, the front half
+    in front), embers, two logs laid along the grid, then the pack's animated flame and smoke. */
+function isoCampfire(ctx: CanvasRenderingContext2D, img: Images, c: { x: number; y: number }, time: number, seed: number) {
+  ctx.save();
+  const cx = c.x, cy = c.y + 2, rx = 17, ry = 8.5;
+  ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.beginPath(); ctx.ellipse(cx, cy + 2, rx + 3, ry + 2, 0, 0, Math.PI * 2); ctx.fill();
+  const stone = (a: number) => {
+    const sx = Math.round(cx + Math.cos(a) * rx), sy = Math.round(cy + Math.sin(a) * ry);
+    ctx.fillStyle = "#1b1626"; ctx.fillRect(sx - 4, sy - 4, 8, 6);
+    ctx.fillStyle = "#8d8aa0"; ctx.fillRect(sx - 3, sy - 3, 6, 4);
+    ctx.fillStyle = "#c9c6d6"; ctx.fillRect(sx - 3, sy - 3, 4, 2);
+  };
+  const N = 11, angles = Array.from({ length: N }, (_, i) => (i / N) * Math.PI * 2 + 0.2);
+  for (const a of angles) if (Math.sin(a) < 0) stone(a);
+  // Ash and embers inside the ring.
+  ctx.fillStyle = "#2a1f1c"; ctx.beginPath(); ctx.ellipse(cx, cy, rx - 4, ry - 2, 0, 0, Math.PI * 2); ctx.fill();
+  for (let i = 0; i < 6; i++) {
+    const a = i * 1.7 + seed, glow = 0.5 + 0.5 * Math.sin(time / 160 + i * 2);
+    ctx.fillStyle = `rgba(255, ${120 + Math.round(80 * glow)}, 60, ${0.5 + 0.5 * glow})`;
+    ctx.fillRect(Math.round(cx + Math.cos(a) * 8), Math.round(cy + Math.sin(a) * 3.5), 2, 1);
+  }
+  // Two logs crossed along the grid's two directions (slopes of +-1/2 on screen).
+  const log = (dir: 1 | -1) => {
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#1b1626"; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(cx - 11, cy - dir * 5.5); ctx.lineTo(cx + 11, cy + dir * 5.5); ctx.stroke();
+    ctx.strokeStyle = "#6b4426"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(cx - 11, cy - dir * 5.5); ctx.lineTo(cx + 11, cy + dir * 5.5); ctx.stroke();
+    ctx.strokeStyle = "#8f6236"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(cx - 10, cy - dir * 5.5 - 1); ctx.lineTo(cx + 10, cy + dir * 5.5 - 1); ctx.stroke();
+  };
+  log(1); log(-1);
+  ctx.globalAlpha = 0.7;
+  drawFx(ctx, img, "smoke", loopFrame("smoke", time, seed), cx + 1, cy - 30, 2);
+  ctx.globalAlpha = 1;
+  if (!drawFx(ctx, img, "flame", loopFrame("flame", time, seed), cx, cy + 4, 2)) drawFlame(ctx, cx, cy + 1, 28, time, seed);
+  for (const a of angles) if (Math.sin(a) >= 0) stone(a);
   ctx.restore();
 }
 
@@ -370,6 +501,14 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         if (tile.h > 0) diamond(ctx, c.x, c.y, `rgba(255, 238, 190, ${Math.min(0.32, 0.1 * tile.h)})`, "rgba(0,0,0,0)");
         footShadows(ctx, m, x, k - x, view.rot, tile.h, c);
       }
+      if (tile.scorchedAt !== undefined && !flat) drawScorch(ctx, c, p.x * 13 + p.y * 7);
+      if (tile.surface === "oil") {
+        const rx = x, ry = k - x;
+        drawOil(ctx, c, opt.time, p.x * 5 + p.y * 3, (du, dv) => {
+          const q = unrotate(m, { x: rx + du, y: ry + dv }, view.rot), n = tileAt(m, q);
+          return rx + du >= 0 && ry + dv >= 0 && rx + du < d.w && ry + dv < d.h && n?.surface === "oil" && n.h === tile.h;
+        });
+      }
       drawSurface(ctx, tile, c, s.clock, opt.time, p);
       const mark = opt.marks.get(k2);
       if (mark) diamond(ctx, c.x, c.y, ...MARK_STYLE[mark], mark === "chosen" ? 2.5 : 1);
@@ -385,18 +524,12 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.fillStyle = "#fff"; ctx.fillText(String(tile.h), c.x, c.y + 8);
         ctx.textBaseline = "alphabetic";
       }
+      const onFire = (tile.fireUntil ?? 0) > s.clock && (tile.fireUntil ?? 0) < CAMPFIRE_AT;
       if ((tile.fireUntil ?? 0) >= CAMPFIRE_AT) drawCampfire(ctx, img, c, opt.time, p.x * 7 + p.y);
-      else if ((tile.fireUntil ?? 0) > s.clock) {
-        // Fire: a flickering orange wash, animated flames and a thin smoke column (hand-drawn flames if the sheet is missing).
-        ctx.globalAlpha = 0.35 + 0.15 * Math.sin(opt.time / 90 + p.x * 3 + p.y);
-        diamond(ctx, c.x, c.y, "#ff7a2a", "rgba(255,200,80,0.8)");
-        ctx.globalAlpha = 1;
-        if (flat || !drawFireTile(ctx, img, c.x, c.y, opt.time, p.x * 3 + p.y)) {
-          drawFlame(ctx, c.x - 7, c.y + 4, 14, opt.time, p.x + p.y * 3);
-          drawFlame(ctx, c.x + 7, c.y + 2, 12, opt.time + 170, p.x * 3 + p.y);
-        }
-      }
+      else if (onFire && !tile.prop && tile.terrain !== "tree") groundFire(ctx, img, c, opt.time, p);
       if (tile.prop) drawProp(ctx, tile.prop, c, tile.propHp ?? 0);
+      // A burning crate: the flames and smoke go over the crate.
+      if (onFire && tile.prop) { burningObject(ctx, img, c, opt.time, p.x * 3 + p.y, -14); }
       if (tile.steamUntil !== undefined) {
         // Steam: pale puffs drifting up, thick enough to read as "can't see through".
         ctx.globalAlpha = 0.5;
@@ -413,6 +546,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       }
       if (!flat && tile.terrain === "rock") ctx.drawImage(img["obj-rock"]!, c.x - 18, c.y - 30, 36, 36);
       if (!flat && tile.deco === "bedroll") drawBedroll(ctx, c, p.x + p.y);
+      if (!flat && tile.deco === "stump") drawStump(ctx, c, p.x * 5 + p.y);
       if (!flat && tile.deco === "tent") drawTent(ctx, c, p.x * 3 + p.y);
       else if (!flat && tile.terrain === "tree") {
         // See-through when someone stands right behind it, so trees never hide a unit.
@@ -423,7 +557,9 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.globalAlpha = behind ? 0.45 : 1;
         ctx.drawImage(img["obj-tree"]!, c.x - 32, c.y - 56, 64, 64);
         ctx.globalAlpha = 1;
-        drawFallingLeaf(ctx, img, c.x, c.y, opt.time, p.x * 11 + p.y * 5);
+        // A burning tree: flames all through the crown and smoke above it.
+        if (onFire) { groundFire(ctx, img, c, opt.time, p); burningObject(ctx, img, c, opt.time, p.x * 3 + p.y, -30); }
+        if (!onFire) drawFallingLeaf(ctx, img, c.x, c.y, opt.time, p.x * 11 + p.y * 5);
       }
       const here = places.some((pl) => !pl.moving && pl.slot.x === p.x && pl.slot.y === p.y);
       if (tile.terrain === "tallgrass") tallGrass(ctx, c, p.x * 7 + p.y * 3, opt.time, false, flat);
@@ -589,19 +725,8 @@ function tallGrass(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, s
   ctx.globalAlpha = 1;
 }
 
-/** Oil, Sap and charged water on top of the ground (src/engine/terrain.ts). */
+/** Sap and charged water on top of the ground (src/engine/terrain.ts); oil is drawOil. */
 function drawSurface(ctx: CanvasRenderingContext2D, tile: Tile, c: { x: number; y: number }, clock: number, time: number, p: Pos) {
-  if (tile.surface === "oil") {
-    // A black, glossy slick with a rainbow sheen and a drop, so it never reads as a shadow or mud.
-    diamond(ctx, c.x, c.y, "rgba(14, 12, 18, 0.78)", "rgba(200, 170, 255, 0.55)");
-    const sheen = Math.sin(time / 400 + p.x + p.y * 2);
-    for (const [col, dy] of [["rgba(120, 200, 255, 0.35)", -3], ["rgba(220, 140, 255, 0.32)", 0], ["rgba(255, 220, 120, 0.25)", 3]] as const) {
-      ctx.fillStyle = col;
-      ctx.beginPath(); ctx.ellipse(c.x - 4 + 4 * sheen, c.y + dy, 12, 2.2, -0.45, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.globalAlpha = 0.85; ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(iconCanvas("barrel"), c.x + 6, c.y, 10, 10); ctx.globalAlpha = 1;
-  }
   if (tile.surface === "sap") {
     // Sap: a sickly green ooze that pulses; a source has a glowing shard in the middle.
     const pulse = 0.5 + 0.5 * Math.sin(time / 300 + p.x * 2 + p.y);
