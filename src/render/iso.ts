@@ -493,9 +493,48 @@ function drawProp(ctx: CanvasRenderingContext2D, prop: Prop, c: { x: number; y: 
     ctx.beginPath(); ctx.ellipse(c.x, c.y - 22, 9, 4, 0, 0, Math.PI * 2); ctx.fillStyle = "#b5432c"; ctx.fill(); ctx.stroke();
     ctx.fillStyle = "#ffd23f"; ctx.font = "bold 10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText("!", c.x, c.y - 9);
   } else {
-    ctx.fillStyle = hp < PROP_HP.crate ? "#8a6236" : "#a8773f"; ctx.strokeStyle = "#3d2810"; ctx.lineWidth = 1.5;
-    ctx.fillRect(c.x - 11, c.y - 24, 22, 20); ctx.strokeRect(c.x - 11, c.y - 24, 22, 20);
-    ctx.beginPath(); ctx.moveTo(c.x - 11, c.y - 24); ctx.lineTo(c.x + 11, c.y - 4); ctx.moveTo(c.x + 11, c.y - 24); ctx.lineTo(c.x - 11, c.y - 4); ctx.stroke();
+    drawCrate(ctx, c, hp < PROP_HP.crate);
   }
   ctx.restore();
+}
+
+/** A wooden crate as a small isometric cube sitting on the tile: a lit top, a mid left side and a shaded right
+    side, each with a plank frame and a cross brace. The cube lines up with the tile diamond, so it looks the
+    same at every camera angle. A damaged crate is darker and cracked. */
+function drawCrate(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, hurt: boolean) {
+  const w = 19, d = w / 2, H = 21; // half width, half depth (2:1 like the tiles), height
+  const x = c.x, y = c.y + 1; // base diamond centre
+  const top = (u: number, v: number) => ({ x: x + (u - v) * w, y: y - H + (u + v - 1) * d }); // u,v in 0..1 across the top
+  const left = (u: number, t: number) => ({ x: x - w + u * w, y: y + u * d - t * H }); // front-left side, t = up
+  const right = (u: number, t: number) => ({ x: x + u * w, y: y + d - u * d - t * H }); // front-right side
+  const tone = hurt ? [0.78, 0.78, 0.78] : [1, 1, 1];
+  const shade = (r: number, g: number, b: number) => `rgb(${Math.round(r * tone[0]!)},${Math.round(g * tone[1]!)},${Math.round(b * tone[2]!)})`;
+  const face = (f: (a: number, b: number) => { x: number; y: number }, fill: string, plank: string) => {
+    const poly = (pts: [number, number][]) => { ctx.beginPath(); pts.forEach(([a, b], i) => { const q = f(a, b); if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.closePath(); };
+    poly([[0, 0], [1, 0], [1, 1], [0, 1]]);
+    ctx.fillStyle = fill; ctx.fill();
+    // Plank frame: a lighter inset border, then a diagonal brace.
+    const k = 0.16;
+    ctx.strokeStyle = plank; ctx.lineWidth = 1.6;
+    poly([[k, k], [1 - k, k], [1 - k, 1 - k], [k, 1 - k]]); ctx.stroke();
+    const a = f(k, k), b = f(1 - k, 1 - k);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.strokeStyle = "#3d2810"; ctx.lineWidth = 1.2;
+    poly([[0, 0], [1, 0], [1, 1], [0, 1]]); ctx.stroke();
+  };
+  // Soft contact shadow so the crate sits on the ground.
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath(); ctx.moveTo(x - w - 2, y); ctx.lineTo(x, y + d + 1); ctx.lineTo(x + w + 2, y); ctx.lineTo(x, y - d - 1); ctx.closePath(); ctx.fill();
+  face(left, shade(150, 104, 54), shade(184, 136, 78));
+  face(right, shade(112, 76, 38), shade(146, 104, 58));
+  face((u, v) => top(u, v), shade(196, 146, 84), shade(226, 182, 118));
+  if (hurt) {
+    // Cracks on the two sides you can see.
+    ctx.strokeStyle = "#24160a"; ctx.lineWidth = 1.3;
+    const crack = (f: (a: number, b: number) => { x: number; y: number }, pts: [number, number][]) => {
+      ctx.beginPath(); pts.forEach(([a, b], i) => { const q = f(a, b); if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.stroke();
+    };
+    crack(left, [[0.62, 1], [0.5, 0.72], [0.66, 0.5], [0.55, 0.3]]);
+    crack(right, [[0.2, 0], [0.34, 0.3], [0.24, 0.52]]);
+  }
 }
