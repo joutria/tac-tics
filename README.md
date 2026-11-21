@@ -16,7 +16,7 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 - **Reach and height.** Ranged abilities gain 1 range per level above the target and lose 1 per level below (never under 1). Rocks, trees and units block line of sight; high ground sees over them.
 - **Cooldowns and limits** per ability; the map shows the range in red and valid targets in bright red, and hovering a target previews the damage.
 - **Downed, not dead.** At 0 HP a unit is downed for 2 of its turns; an ally can **Help up** (25% HP). Hitting a downed unit kills it. A side with nobody standing loses.
-- **Enemy AI** scores every tile and ability with one turn of lookahead: it counts the damage you could deal next turn (ignoring your abilities on cooldown), hides out of your line of sight, takes high ground, focuses wounded or downed units, and adapts if you keep fighting from range or up close.
+- **Enemy AI** scores every tile and ability with one turn of lookahead: it counts the damage you could deal next turn (ignoring your abilities on cooldown), hides out of your line of sight, takes high ground, shoves crates, barrels and boulders into the party when they line up, focuses wounded or downed units, and adapts if you keep fighting from range or up close.
 - **View:** rotate in 90 degree steps, zoom, drag to pan, and undo moves until you use an ability.
 - **Objects.** Crates, barrels and boulders sit on some maps (`C`, `B` and `O` after a tile in the map rows). Shove
   or Hurl can push them: a crate slides, a boulder rolls up to 5 tiles and flattens crates in its way, and either one

@@ -193,6 +193,15 @@ describe("enemy AI", () => {
     s = play(s, cmds);
     expect(unitById(s, "h").life).toBe("dead");
   });
+  it("rolls a boulder into the party when it lines up", () => {
+    const s = createBattle({ seed: 3, map: parseMap("roll", ["g0 g0 g0 g0 g0 g0", "g0 g0O g0 g0 g0 g0", "g0 g0 g0 g0 g0 g0"]), units: [
+      unit({ id: "f", team: "foes", pos: { x: 0, y: 1 }, speed: 60, abilities: [], quick: "shove" }),
+      unit({ id: "h", team: "heroes", pos: { x: 4, y: 1 }, speed: 30 }),
+    ] });
+    const cmds = planTurn(s);
+    expect(cmds).toContainEqual({ t: "cast", unit: "f", ability: "shove", target: { x: 1, y: 1 } });
+    expect(unitById(play(s, cmds), "h").hp).toBeLessThan(40);
+  });
   it("prefers a spot out of the hero's line of sight", () => {
     // The foe can hide behind the rock column or stay in the open; the hero's ray is ready.
     const map = parseMap("cover", [
