@@ -236,12 +236,19 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
             for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(c.x - TW / 4 + i * 7, c.y - TH / 4 + i * 3.5); ctx.lineTo(c.x + TW / 4 + i * 7, c.y + TH / 4 + i * 3.5 - TH / 2); ctx.stroke(); }
           }
         }
+        // Height cues, part 1: raised tops are lit a little warmer per level, and ground at the foot of a
+        // higher neighbour behind it gets a soft shadow, so plateaus read at every rotation.
+        if (tile.h > 0) diamond(ctx, c.x, c.y, `rgba(255, 238, 190, ${Math.min(0.32, 0.1 * tile.h)})`, "rgba(0,0,0,0)");
+        footShadows(ctx, m, x, k - x, view.rot, tile.h, c);
       }
       const mark = opt.marks.get(k2);
       if (mark) diamond(ctx, c.x, c.y, ...MARK_STYLE[mark], mark === "chosen" ? 2.5 : 1);
       // Danger zone: a dull purple wash (bright colours over many tiles tire the eye), on top of other marks.
       if (opt.danger?.has(k2)) diamond(ctx, c.x, c.y, "rgba(120, 70, 170, 0.38)", "rgba(200, 160, 255, 0.55)");
       if (opt.hover && opt.hover.x === p.x && opt.hover.y === p.y) diamond(ctx, c.x, c.y, "rgba(255, 255, 255, 0.2)", "#fff");
+      // Height cues, part 2: a dark-and-light rim on every edge that drops to lower ground (drawn over marks, so
+      // the shape of the ground stays readable while aiming).
+      if (!flat) ledges(ctx, m, x, k - x, view.rot, tile.h, c);
       if (flat && tile.h) {
         ctx.font = "bold 10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillText(String(tile.h), c.x + 1, c.y + 9);
@@ -333,6 +340,61 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     ctx.globalAlpha = 1;
   }
   ctx.restore();
+}
+
+/* Edges of a tile's top diamond, in screen order, with the rotated-grid step to the neighbour across each one.
+   back = the edge faces away from the viewer (its drop is hidden behind the tile). */
+const EDGES = [
+  { dx: 0, dy: -1, a: [0, -1], b: [1, 0], back: true }, // top -> right
+  { dx: 1, dy: 0, a: [1, 0], b: [0, 1], back: false }, // right -> bottom
+  { dx: 0, dy: 1, a: [0, 1], b: [-1, 0], back: false }, // bottom -> left
+  { dx: -1, dy: 0, a: [-1, 0], b: [0, -1], back: true }, // left -> top
+] as const;
+
+/** Height of the neighbour across an edge, in rotated grid steps; off the map counts as no neighbour. */
+function neighbourH(m: GridMap, rx: number, ry: number, rot: number): number | null {
+  const d = dims(m, rot);
+  if (rx < 0 || ry < 0 || rx >= d.w || ry >= d.h) return null;
+  return tileAt(m, unrotate(m, { x: rx, y: ry }, rot))?.h ?? null;
+}
+
+/** Rims along every edge that drops to lower ground: a dark outer line and a bright inner one, thicker for
+    bigger drops. Lighting is fixed to the screen, so it reads the same after a turn of the view. */
+function ledges(ctx: CanvasRenderingContext2D, m: GridMap, rx: number, ry: number, rot: number, h: number, c: { x: number; y: number }) {
+  if (h <= 0) return;
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const e of EDGES) {
+    const nh = neighbourH(m, rx + e.dx, ry + e.dy, rot);
+    const drop = nh === null ? 0 : h - nh;
+    if (drop <= 0) continue;
+    const ax = c.x + e.a[0] * TW / 2, ay = c.y + e.a[1] * TH / 2, bx = c.x + e.b[0] * TW / 2, by = c.y + e.b[1] * TH / 2;
+    const w = Math.min(3.5, 1.5 + drop);
+    ctx.strokeStyle = "rgba(20, 14, 8, 0.75)"; ctx.lineWidth = w + 1.5;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    // The bright line sits just inside the top, so it belongs to the high tile, not the ground below.
+    const ix = (c.x - (ax + bx) / 2) * 0.12, iy = (c.y - (ay + by) / 2) * 0.12;
+    ctx.strokeStyle = e.back ? "rgba(255, 246, 210, 0.9)" : "rgba(255, 236, 170, 0.95)"; ctx.lineWidth = Math.max(1, w - 1.5);
+    ctx.beginPath(); ctx.moveTo(ax + ix, ay + iy); ctx.lineTo(bx + ix, by + iy); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** A soft shadow on the strip of a tile's top next to a higher neighbour behind it (where that cliff stands). */
+function footShadows(ctx: CanvasRenderingContext2D, m: GridMap, rx: number, ry: number, rot: number, h: number, c: { x: number; y: number }) {
+  for (const e of EDGES) {
+    if (!e.back) continue;
+    const nh = neighbourH(m, rx + e.dx, ry + e.dy, rot);
+    const rise = nh === null ? 0 : nh - h;
+    if (rise <= 0) continue;
+    const ax = c.x + e.a[0] * TW / 2, ay = c.y + e.a[1] * TH / 2, bx = c.x + e.b[0] * TW / 2, by = c.y + e.b[1] * TH / 2;
+    const mx = (ax + bx) / 2, my = (ay + by) / 2, f = 0.55; // shadow reaches a bit past the middle of the tile
+    const ox = (c.x - mx) * 2 * f, oy = (c.y - my) * 2 * f;
+    const g = ctx.createLinearGradient(mx, my, mx + ox, my + oy);
+    g.addColorStop(0, `rgba(10, 8, 20, ${Math.min(0.5, 0.28 + 0.08 * rise)})`); g.addColorStop(1, "rgba(10, 8, 20, 0)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(bx + ox, by + oy); ctx.lineTo(ax + ox, ay + oy); ctx.closePath(); ctx.fill();
+  }
 }
 
 function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, fill: string, stroke: string, width = 1) {
