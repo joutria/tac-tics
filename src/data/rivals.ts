@@ -16,7 +16,8 @@ export const EPITHETS: Line[] = [
 ];
 
 /** Why it is a rival, shown under its name. */
-export const TITLES: Record<"escaped" | "felled" | "betrayed", Line> = {
+export const TITLES: Record<"escaped" | "felled" | "betrayed" | "nemesis", Line> = {
+  nemesis: { es: "Acabó con el último viaje de {hero}", en: "Ended {hero}'s last journey" },
   escaped: { es: "Huyó de {hero} y no lo olvida", en: "Fled from {hero} and never forgot" },
   felled: { es: "Derribó a {hero}", en: "Felled {hero}" },
   betrayed: { es: "Viajó con {hero} y no le perdonó", en: "Travelled with {hero} and never forgave them" },
@@ -30,3 +31,10 @@ export const TAUNTS: Record<"resist" | "closer" | "slippery" | "hunter" | "first
   slippery: { es: "{name}: «Esta vez no me vas a acorralar».", en: "{name}: \"You won't pin me down this time.\"" },
   hunter: { es: "{name}: «Primero, el que te cura».", en: "{name}: \"Your healer goes first.\"" },
 };
+
+/** A nemesis: the rival who ended the last run, carried into the next (run/legacy.ts). */
+export const NEMESIS_LINES = {
+  arrives: { es: "{name} te ha seguido desde tu último viaje. Más débil, pero lo recuerda todo.", en: "{name} followed you from your last journey. Weaker, but it remembers everything." },
+  settled: { es: "{name} no volverá a seguirte. Su marca de Savia se deshace en fragmentos.", en: "{name} won't follow you again. Its Sap mark crumbles into shards." },
+  carries: { es: "{name} te esperará en el próximo viaje: más débil, pero recordando cómo luchas.", en: "{name} will be waiting on your next journey: weaker, but remembering how you fight." },
+} satisfies Record<string, Line>;
