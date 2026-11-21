@@ -547,7 +547,11 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
     const pushLines = () => {
       if (mvAll && (mvAll.to.x !== mvAll.from.x || mvAll.to.y !== mvAll.from.y) && !mvAll.bump && !mvAll.fall) lines.push(t(lang, "pushTo", { n: 0 }));
       if (mvAll?.fall) lines.push(`<b class="down">${t(lang, "pushFall", { n: mvAll.fall, l: mvAll.fell })}</b>`);
-      if (mvAll?.bump) lines.push(t(lang, "pushBump", { n: mvAll.bump }));
+      if (mvAll?.bump) lines.push(mvAll.slammed ? t(lang, "slamInto", { n: mvAll.bump, what: t(lang, `slam.${mvAll.slammed}` as TextKey) }) : t(lang, "pushBump", { n: mvAll.bump }));
+      for (const sp of previewMoves()?.splashes ?? []) {
+        const who = unitById(state, sp.unit).name;
+        lines.push(`<b class="down">${t(lang, mvAll?.fall && !mvAll.bump ? "crushOn" : "splashOn", { who, n: sp.damage })}</b>`);
+      }
     };
     if (ab.damage && target.team !== u.team) {
       const base = damagePreview(state, u, target, ab), bump = pushDmg;
@@ -745,7 +749,7 @@ function previewMoves(): MovePreview | undefined {
   let out: MovePreview | undefined;
   if ((ab.push || tile?.prop === "barrel" || areaTiles(ab, at).some((p) => tileAt(state.map, p)?.prop === "barrel")) && !castProblem(state, u, selected, at)) {
     out = previewEffects(state, u, ab, at);
-    if (!out.moves.length && !out.blasts.length) out = undefined;
+    if (!out.moves.length && !out.blasts.length && !out.splashes.length) out = undefined;
   }
   effectsCache = { key, out };
   return out;

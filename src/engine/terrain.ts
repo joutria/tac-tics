@@ -54,7 +54,7 @@ export function touchTile(s: BattleState, ab: Ability, from: Pos, p: Pos, fx: Te
   if (ab.element === "ice" && t.terrain === "water") { t.terrain = "ice"; t.thawAt = s.clock + ICE_TICKS; fx.push({ fx: "freeze", at: p }); }
 }
 
-function explode(s: BattleState, at: Pos, fx: TerrainFx[], hits: TerrainHit[], hurt: (u: Unit, dmg: number, h: TerrainHit) => void) {
+export function explode(s: BattleState, at: Pos, fx: TerrainFx[], hits: TerrainHit[], hurt: (u: Unit, dmg: number, h: TerrainHit) => void) {
   const t = tileAt(s.map, at)!;
   delete t.prop; delete t.propHp;
   fx.push({ fx: "explode", at });

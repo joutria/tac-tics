@@ -14,13 +14,13 @@
    once a turn, for everyone, and cannot move heavy units such as bosses. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
-import { inside, manhattan, NEIGHBOURS, Pos, samePos, standable, tileAt, type Terrain } from "./grid";
+import { inside, manhattan, NEIGHBOURS, Pos, samePos, standable, TERRAIN, tileAt, type Terrain } from "./grid";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
 import { EXECUTIONER_FACTOR, GUARD_FACTOR } from "../data/jobs";
 import { hasLineOfSight } from "./sight";
-import { chainBolt, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
+import { chainBolt, explode, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
 import { isFoe, unitAt, type BattleState, type Unit } from "./state";
 
 export const CRIT_CHANCE = 0.05;
@@ -56,6 +56,10 @@ export interface Hit {
   fall?: number;
   /** Levels fallen during a push. */
   fell?: number;
+  /** What a push slammed the unit into. */
+  slammed?: Blocker;
+  /** Had a pushed unit fall on it from above. */
+  crushed?: boolean;
   /** Max HP the unit lost for good by being helped up. */
   maxHpLost?: number;
   /** Damage a Shield soaked. */
@@ -203,9 +207,11 @@ export function resolveCast(s: BattleState, caster: Unit, ab: Ability, target: P
       if (bad.length) hit.cleansed = [...(hit.cleansed ?? []), ...bad];
     }
     if (ab.status && u.life === "up" && addStatus(u, ab.status)) hit.statuses = [ab.status.id];
-    if (ab.push && u.life === "up") push(s, caster, u, from, ab.shove ? shoveDistance(caster, u) : ab.push, hit);
+    const extra: Hit[] = [];
+    if (ab.push && u.life === "up") push(s, caster, u, from, ab.shove ? shoveDistance(caster, u) : ab.push, hit, extra, fx, ground, hurtByTerrain);
     credit(u, hit);
     hits.push(hit);
+    for (const e of extra) { credit(s.units.find((x) => x.id === e.unit)!, e); hits.push(e); }
   }
   if (ab.element === "bolt" && ab.damage) chainBolt(s, caster, hits, fx, ground, hurtByTerrain);
   for (const g of ground) {
@@ -242,30 +248,82 @@ export function fallDamage(s: BattleState, pusher: Unit, target: Unit, levels: n
     * passiveFactor(s, pusher, target)));
 }
 
+/** What a pushed unit slams into, and how hard each kind hits (times PUSH_HIT per tile it could not travel). */
+export type Blocker = "edge" | "rock" | "tree" | "water" | "step" | "crate" | "barrel" | "unit";
+export const SLAM: Record<Exclude<Blocker, "step">, number> = { edge: 1, rock: 1.5, tree: 1.5, water: 0.5, crate: 1, barrel: 1, unit: 1 };
+/** A step up hits harder the taller it is: +25% per level of the wall. */
+export const STEP_SLAM_PER_LEVEL = 0.25;
+/** A unit something is slammed into takes this share of the slam. */
+export const SLAM_SHARE = 0.5;
+
+export interface PushOutcome {
+  to: Pos; bump: number; fall: number; fell: number;
+  /** What stopped the push early, where it is, and the unit there if any. */
+  blocker?: Blocker; at?: Pos; other?: string;
+  /** Damage the unit slammed into takes (before its Shield). */
+  splash: number;
+  /** Fell onto a unit below: it takes the full fall (`splash`), the faller half, and it is knocked to `otherTo` if it can be. */
+  landedOn?: boolean;
+  otherTo?: Pos;
+}
+
 /** Where a push would leave `u` and what it would cost, without changing anything. Straight away from `from`:
-    hitting a wall, a unit or a step up costs PUSH_HIT per tile left; going down drops costs fall damage on landing. */
-export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number): { to: Pos; bump: number; fall: number; fell: number } {
+    going down drops costs fall damage on landing; being stopped early costs PUSH_HIT per tile left, harder against
+    rock, trees and tall walls, softer against water. A crate takes the slam too, a barrel goes off, and a unit
+    in the way takes half. */
+export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number): PushOutcome {
   const dx = u.pos.x - from.x, dy = u.pos.y - from.y;
   const step = Math.abs(dx) >= Math.abs(dy) ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dy) };
-  let at = { ...u.pos }, fell = 0, bump = 0;
-  if (!step.x && !step.y) return { to: at, bump, fall: 0, fell };
+  let at = { ...u.pos }, fell = 0;
+  const out: PushOutcome = { to: at, bump: 0, fall: 0, fell: 0, splash: 0 };
+  if (!step.x && !step.y) return out;
   for (let i = 0; i < tiles; i++) {
     const n = { x: at.x + step.x, y: at.y + step.y };
     const here = tileAt(s.map, at)!, next = tileAt(s.map, n);
     // Pushed units can be shoved down any drop, but never up a step.
     const other = unitAt(s, n);
     const free = standable(next) && (!other || other.id === u.id) && next.h <= here.h;
-    if (!free) { bump = PUSH_HIT * (tiles - i); break; }
+    if (!free && other && standable(next) && next.h < here.h) {
+      // Falling onto someone below: they break the fall and take the full blow, the faller takes half. If the
+      // tile beyond them is free and not higher, they are knocked onto it and the faller lands in their place;
+      // otherwise the faller bounces back onto the ledge.
+      const crush = fallDamage(s, pusher, u, fell + here.h - next.h, next.terrain);
+      const b = { x: n.x + step.x, y: n.y + step.y }, beyond = tileAt(s.map, b);
+      out.landedOn = true; out.blocker = "unit"; out.other = other.id; out.at = n; out.splash = crush;
+      if (standable(beyond) && !unitAt(s, b) && beyond.h <= next.h) { out.otherTo = b; at = n; }
+      out.to = at; out.fell = fell + here.h - next.h; out.fall = Math.floor(crush / 2);
+      return out;
+    }
+    if (!free) {
+      const left = PUSH_HIT * (tiles - i);
+      let kind: Blocker, mult: number;
+      if (!next) { kind = "edge"; mult = SLAM.edge; }
+      else if (next.prop) { kind = next.prop; mult = SLAM[next.prop]; }
+      else if (other) { kind = "unit"; mult = SLAM.unit; out.other = other.id; }
+      else if (!TERRAIN[next.terrain].walkable) { kind = next.terrain as Blocker; mult = SLAM[kind as keyof typeof SLAM] ?? 1; }
+      else { kind = "step"; mult = 1 + STEP_SLAM_PER_LEVEL * (next.h - here.h); }
+      out.blocker = kind; out.at = n;
+      out.bump = Math.floor(left * mult);
+      if (kind === "unit") out.splash = Math.floor(out.bump * SLAM_SHARE);
+      if (kind === "crate") out.splash = out.bump;
+      break;
+    }
     fell += here.h - next.h;
     at = n;
   }
-  return { to: at, bump, fall: fallDamage(s, pusher, u, fell, tileAt(s.map, at)!.terrain), fell };
+  out.to = at; out.fell = fell;
+  out.fall = fallDamage(s, pusher, u, fell, tileAt(s.map, at)!.terrain);
+  return out;
 }
 
-function push(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number, hit: Hit) {
+/** Applies a push. Extra hits (the unit slammed into, a barrel's blast) go to `extra` and the terrain lists. */
+function push(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number, hit: Hit, extra: Hit[],
+  fx: TerrainFx[], ground: TerrainHit[], hurtByTerrain: (v: Unit, dmg: number, h: TerrainHit) => void) {
   const o = pushOutcome(s, pusher, u, from, tiles);
+  if (o.otherTo) { const v = s.units.find((x) => x.id === o.other); if (v) v.pos = { ...o.otherTo }; }
   if (!samePos(o.to, u.pos)) { u.pos = { ...o.to }; hit.pushedTo = { ...o.to }; }
   if (o.fell) hit.fell = o.fell;
+  if (o.blocker) hit.slammed = o.blocker;
   for (const [kind, dmg] of [["fall", o.fall], ["bump", o.bump]] as const) {
     if (!dmg || u.life !== "up") continue;
     const taken = absorb(u, dmg);
@@ -274,24 +332,54 @@ function push(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number, h
     hit.damage += Math.min(taken, u.hp);
     hurt(u, taken, hit);
   }
+  if (!o.at) return;
+  const t = tileAt(s.map, o.at);
+  if (o.blocker === "crate" && t?.prop === "crate") {
+    t.propHp = (t.propHp ?? 0) - o.splash;
+    if (t.propHp <= 0) { delete t.prop; delete t.propHp; fx.push({ fx: "break", at: o.at }); }
+  } else if (o.blocker === "barrel" && t?.prop === "barrel") {
+    explode(s, o.at, fx, ground, hurtByTerrain);
+  } else if (o.blocker === "unit" && o.splash) {
+    const v = s.units.find((x) => x.id === o.other);
+    if (!v || v.life !== "up") return;
+    const h: Hit = { unit: v.id, damage: 0, heal: 0, crit: false, downed: false, died: false, revived: false, rooted: false };
+    if (o.otherTo) { v.pos = { ...o.otherTo }; h.pushedTo = { ...o.otherTo }; }
+    const taken = absorb(v, o.splash);
+    if (o.splash > taken) h.shielded = o.splash - taken;
+    if (o.landedOn) { h.fall = taken; h.crushed = true; } else h.bump = taken;
+    h.damage = Math.min(taken, v.hp);
+    hurt(v, taken, h);
+    extra.push(h);
+  }
 }
 
 /** Where things end up if `caster` uses `ab` on `target` now: units pushed and crates slid, with the damage a
     push into something adds, and barrels that would go off. Runs the cast on a copy; push results never depend
     on the roll, so this is exact for movement. */
-export interface MovePreview { moves: { from: Pos; to: Pos; unit?: string; bump: number; fall: number; fell: number }[]; blasts: Pos[] }
+export interface MovePreview {
+  moves: { from: Pos; to: Pos; unit?: string; bump: number; fall: number; fell: number; slammed?: Blocker }[];
+  blasts: Pos[];
+  /** Units hurt by having someone slammed into them. */
+  splashes: { unit: string; damage: number }[];
+}
 export function previewEffects(s: BattleState, caster: Unit, ab: Ability, target: Pos): MovePreview {
   const copy = structuredClone(s);
   const me = copy.units.find((u) => u.id === caster.id)!;
   const before = new Map(copy.units.map((u) => [u.id, { ...u.pos }]));
   const fx: TerrainFx[] = [];
   const hits = resolveCast(copy, me, ab, target, fx);
-  const out: MovePreview = { moves: [], blasts: fx.filter((f) => f.fx === "explode").map((f) => f.at) };
+  const out: MovePreview = { moves: [], blasts: fx.filter((f) => f.fx === "explode").map((f) => f.at), splashes: [] };
   if (ab.push) for (const h of hits) {
     const from = before.get(h.unit)!, to = h.pushedTo ?? from;
-    if (h.unit === caster.id) continue;
+    if (h.unit === caster.id || h.source) continue;
+    // A unit slammed into or fallen on (not the one pushed) shows as a splash, plus a move if it was knocked aside.
+    if (!areaTiles(ab, target).some((p) => samePos(p, from))) {
+      out.splashes.push({ unit: h.unit, damage: (h.bump ?? 0) + (h.fall ?? 0) });
+      if (h.pushedTo) out.moves.push({ from, to, unit: h.unit, bump: 0, fall: 0, fell: 0 });
+      continue;
+    }
     // A push stopped early by a wall, a unit or a step hurts PUSH_HIT per tile it could not travel; drops add a fall.
-    out.moves.push({ from, to, unit: h.unit, bump: h.bump ?? 0, fall: h.fall ?? 0, fell: h.fell ?? 0 });
+    out.moves.push({ from, to, unit: h.unit, bump: h.bump ?? 0, fall: h.fall ?? 0, fell: h.fell ?? 0, ...(h.slammed ? { slammed: h.slammed } : {}) });
   }
   for (const f of fx) if (f.fx === "slide") out.moves.push({ from: f.at, to: f.to, bump: 0, fall: 0, fell: 0 });
   return out;
