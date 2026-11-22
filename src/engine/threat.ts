@@ -3,6 +3,7 @@
    as the game itself, so the overlay never lies. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { maxRange } from "./combat";
+import { actionCost, manaCost, RULES } from "./rules";
 import { inside, manhattan, nearestCell, Pos } from "./grid";
 import { turnMp } from "./escape";
 import { reachable } from "./movement";
@@ -13,7 +14,8 @@ const key = (p: Pos) => `${p.x},${p.y}`;
 
 /** Damaging abilities the unit will have off cooldown when its next turn starts. */
 export function readyAttacks(u: Unit): Ability[] {
-  return u.abilities.map((id) => ABILITIES[id]!).filter((ab) => !!ab.damage && !u.cooldowns[ab.id] && ab.ap <= u.maxAp);
+  return u.abilities.map((id) => ABILITIES[id]!).filter((ab) => !!ab.damage && !u.cooldowns[ab.id] && actionCost(ab) <= u.maxAp
+    && manaCost(ab) <= Math.min(u.maxMana, u.mana + RULES.mana.regen));
 }
 
 /** Tiles the unit can stand on next turn, its own tile included: the MP its next turn starts with (none if it is

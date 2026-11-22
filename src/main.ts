@@ -16,6 +16,7 @@ import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./eng
 import { reachable } from "./engine/movement";
 import { heightShapesReach, reachAt, reachBound, type Reach } from "./engine/reach";
 import { dangerZone } from "./engine/threat";
+import { actionCost, manaCost, setRules, usesMana } from "./engine/rules";
 import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { charged } from "./engine/terrain";
@@ -57,6 +58,14 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const canvas = $<HTMLCanvasElement>("game");
 const ctx = canvas.getContext("2d")!;
 
+// Prototype turn rules (src/engine/rules.ts): ?rules=act for FFTA-style Move + Act with mana, ?rules=pips for two pips.
+{ const r = new URLSearchParams(location.search).get("rules"); if (r === "act" || r === "pips") setRules({ mode: r }); }
+/** What a card costs under the turn rules in play: AP (or Acts/pips) and mana. */
+const costText = (ab: Ability) => {
+  const m = manaCost(ab), a = actionCost(ab);
+  if (!usesMana()) return a ? `${a}${icon("ap")}` : "";
+  return m ? `${m}${icon("mana")}` : "";
+};
 let lang: Lang = (safeGet(LANG_KEY) as Lang) || (navigator.language.startsWith("es") ? "es" : "en");
 let save: BattleSave;
 let state: BattleState;
@@ -648,7 +657,7 @@ function explain(why: string): string {
   const map: [string, TextKey][] = [
     ["outside the map", "err.outside"], ["out of range", "err.range"], ["no line of sight", "noSight"],
     ["needs an enemy", "err.foe"], ["needs a standing ally", "err.ally"], ["needs a downed", "err.downedAlly"], ["hidden in tall grass", "err.hidden"],
-    ["needs an empty tile", "err.empty"], ["needs a yielding foe", "err.yielding"], ["not enough AP", "err.ap"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
+    ["needs an empty tile", "err.empty"], ["needs a yielding foe", "err.yielding"], ["not enough AP", "err.ap"], ["not enough mana", "err.mana"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
     ["the combo partner is not standing", "err.comboDown"], ["the combo partner is too far", "err.comboFar"], ["needs the combo partner", "err.comboTarget"],
   ];
   const hit = map.find(([k]) => why.startsWith(k));
@@ -759,7 +768,8 @@ function abilityHelp(id: string, u: Unit | null): string {
   const ab = ABILITIES[id]!;
   const chips: string[] = [];
   const chip = (ic: IconId | null, text: string) => chips.push(`<span>${ic ? icon(ic) : ""}${text}</span>`);
-  chip("ap", ab.ap ? `${ab.ap} ${t(lang, "ap")}` : t(lang, "free"));
+  if (!usesMana()) chip("ap", ab.ap ? `${ab.ap} ${t(lang, "ap")}` : t(lang, "free"));
+  else chip("mana", manaCost(ab) ? `${manaCost(ab)} ${t(lang, "mana")}` : t(lang, "free"));
   chip("range", ab.range[1] === 0 ? t(lang, "h.self") : t(lang, "h.range", { r: ab.range[0] === ab.range[1] ? `${ab.range[1]}` : `${ab.range[0]}–${ab.range[1]}` }));
   if (ab.area === "cross1") chip("area", t(lang, "h.area"));
   if (ab.area === "square1") chip("area", t(lang, "h.square"));
@@ -806,7 +816,7 @@ function renderUnitCard(u: Unit) {
   $("unitCard").innerHTML = `${face ? `<img class="face" src="${face}" alt="">` : `<span class="face"></span>`}`
     + `<div class="name ${u.team}">${icon(el)}<span>${u.name}</span>${statuses}<span class="round">${t(lang, "round", { n: roundOf(state) })}</span></div>`
     + `<div class="gauge">${icon("hp")}<span class="track"><span class="fill${ratio < 0.25 ? " crit" : ratio < 0.5 ? " low" : ""}" style="width:${ratio * 100}%"></span></span><b>${u.hp}/${u.maxHp}</b></div>`
-    + `<div class="gauge">${icon("ap")}<span class="pips ap">${pips(u.ap, u.maxAp)}</span>${icon("mp")}<span class="pips mp">${pips(u.mp, u.maxMp)}</span></div>`;
+    + `<div class="gauge">${icon("ap")}<span class="pips ap">${pips(u.ap, u.maxAp)}</span>${icon("mp")}<span class="pips mp">${pips(u.mp, u.maxMp)}</span>${u.maxMana ? `${icon("mana")}<b>${u.mana}/${u.maxMana}</b>` : ""}</div>`;
   $("unitCard").setAttribute("aria-label", `${t(lang, "turnOf", { name: u.name })} · ${t(lang, "hp")} ${u.hp}/${u.maxHp} · ${t(lang, "ap")} ${u.ap}/${u.maxAp} · ${t(lang, "mp")} ${u.mp}/${u.maxMp}`);
 }
 
@@ -879,7 +889,7 @@ function refresh() {
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
     b.innerHTML = `${icon(abilityIcon(id, ab.element))}<span class="nm">${abilityName(lang, id)}</span>`
-      + `<span class="cost${cd ? " cd" : ""}">${cd ? `${icon("cooldown")}${cd}` : ab.ap ? `${ab.ap}${icon("ap")}` : ""}</span>`;
+      + `<span class="cost${cd ? " cd" : ""}">${cd ? `${icon("cooldown")}${cd}` : costText(ab)}</span>`;
     b.setAttribute("aria-label", `${abilityName(lang, id)}, ${ab.ap} ${t(lang, "ap")}`);
     explains(b, () => abilityHelp(id, activeUnit(state)));
     b.onclick = () => { selected = selected === id ? null : id; pending = null; inspect = null; tooltip(null); refresh(); };

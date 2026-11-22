@@ -4,10 +4,13 @@ import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
 import { planTurn } from "../src/engine/ai";
 import { applyCommand, createBattle, roundOf, type BattleSetup, type BattleState, type Command } from "../src/engine/state";
-import { PaceStats } from "./battle-stats";
+import { PaceStats, rulesFromArgs } from "./battle-stats";
 import { activeRivals, afterBattle, rivalSpec } from "../src/run/rivals";
 
-const fights = Number(process.argv[2] ?? 200);
+const argv = process.argv.slice(2);
+const rulesLine = rulesFromArgs(argv);
+if (rulesLine) console.log(rulesLine);
+const fights = Number(argv[0] ?? 200);
 let heroWins = 0, rounds = 0, turns = 0, stuck = 0, heroHpLeft = 0, escapes = 0, fleeStates = 0;
 const started = Date.now();
 const pace = new PaceStats();

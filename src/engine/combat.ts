@@ -21,6 +21,7 @@ import { takenFactor, yielding } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
 import { EXECUTIONER_FACTOR, GUARD_FACTOR } from "../data/jobs";
 import { hasLineOfSight } from "./sight";
+import { actionCost, manaCost, RULES } from "./rules";
 import { canStep } from "./movement";
 import { burning, chainBolt, explode, giveFire, takeFire, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
 import { bodiesInWay, isFoe, nearestOf, sizeOf, unitAt, unitGap, type BattleState, type Unit } from "./state";
@@ -114,8 +115,9 @@ export function maxRange(s: BattleState, ab: Ability, from: Pos, to: Pos, caster
 export function abilityAvailable(u: Unit, id: string): string | null {
   const ab = ABILITIES[id];
   if (!ab || !unitAbilities(u).includes(id)) return "unknown ability";
-  if (u.ap < ab.ap) return "not enough AP";
-  if (u.cooldowns[id]) return `on cooldown for ${u.cooldowns[id]} more turn(s)`;
+  if (u.ap < actionCost(ab)) return "not enough AP";
+  if ((u.mana ?? 0) < manaCost(ab)) return "not enough mana";
+  if (RULES.cooldowns && u.cooldowns[id]) return `on cooldown for ${u.cooldowns[id]} more turn(s)`;
   if ((u.usedThisTurn[id] ?? 0) >= ab.perTurn) return "already used this turn";
   if (ab.quick && u.usedThisTurn.quick) return "quick action already used this turn";
   return null;
@@ -135,7 +137,7 @@ export function guardAbility(u: Unit): string | null {
   let best: string | null = null, bestAvg = 0;
   for (const id of unitAbilities(u)) {
     const ab = ABILITIES[id];
-    if (!ab?.damage || ab.quick || ab.area !== "single" || (ab.target !== "foe" && ab.target !== "any") || ab.range[0] > 1 || ab.range[1] < 1 || ab.ap > u.ap) continue;
+    if (!ab?.damage || ab.quick || ab.area !== "single" || (ab.target !== "foe" && ab.target !== "any") || ab.range[0] > 1 || ab.range[1] < 1 || actionCost(ab) > u.ap || manaCost(ab) > (u.mana ?? 0)) continue;
     const avg = (ab.damage.min + ab.damage.max) / 2;
     if (avg > bestAvg) { best = id; bestAvg = avg; }
   }
@@ -239,7 +241,8 @@ export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Abi
   const res = (target.res[ab.element] ?? 0) / 100;
   const weak = statusOf(caster, "weaken") ? WEAKEN_FACTOR : 1;
   return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res) * takenFactor(target) * weak
-    * passiveFactor(s, caster, target) * (caster.guardStrike ? GUARD_STRIKE : 1);
+    * passiveFactor(s, caster, target) * (caster.guardStrike ? GUARD_STRIKE : 1)
+    * (caster.team === "heroes" ? RULES.damage : RULES.foeDamage);
 }
 
 /** Job passives: Executioner hits foes under half HP harder; Guard shields the allies standing next to it. */
@@ -317,7 +320,8 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
       u.life = "up"; u.hp = Math.max(1, Math.ceil(u.maxHp * REVIVE_HP)); u.downedTurns = 0; hit.revived = true;
     }
     if (ab.heal && u.life === "up") {
-      const [roll, rng] = rngInt(s.rng, ab.heal.min, ab.heal.max); s.rng = rng;
+      const [rolled, rng] = rngInt(s.rng, ab.heal.min, ab.heal.max); s.rng = rng;
+      const roll = Math.round(rolled * RULES.heal);
       const amount = statusOf(u, "poison") ? Math.floor(roll * POISON_HEAL_FACTOR) : roll;
       hit.heal = Math.min(amount, u.maxHp - u.hp); u.hp += hit.heal;
     }
