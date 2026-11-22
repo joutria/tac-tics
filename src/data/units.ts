@@ -1,8 +1,8 @@
 /* Units for the M1 test fight. Foes' looks are Evolvlings creature sheets (Ninja Adventure, CC0); the party's are
-   humanoid job sprites (see HERO_LOOKS). */
+   humanoid characters by Svetlana Kushnariova (see HERO_LOOKS). */
 import type { UnitSpec } from "../engine/state";
 
-/** The party's looks, drawn as humanoid job sprites in public/art/heroes/ (built by tools/hero-art.py); every other
+/** The party's looks, drawn as humanoid characters (with face portraits) in public/art/heroes/ (built by tools/hero-art.py); every other
     look is a creature sheet in public/art/creatures/. */
 export const HERO_LOOKS = new Set(["lumo", "remolin", "guijo", "centella", "moheda"]);
 

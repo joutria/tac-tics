@@ -447,6 +447,16 @@ const portraits = new Map<string, string>();
 export function portrait(img: Images, look: string): string {
   const hit = portraits.get(look);
   if (hit) return hit;
+  // A look with a drawn face portrait (the party's, public/art/heroes/<look>-face.png) shows it, cut square.
+  const face = img[`face-${look}`];
+  if (face) {
+    const c = document.createElement("canvas"); c.width = c.height = face.width;
+    const g = c.getContext("2d")!; g.imageSmoothingEnabled = false;
+    g.drawImage(face, 0, 0);
+    const url = c.toDataURL();
+    portraits.set(look, url);
+    return url;
+  }
   const sheet = img[`unit-${look}`];
   if (!sheet) return "";
   const c = document.createElement("canvas"); c.width = c.height = 32;
