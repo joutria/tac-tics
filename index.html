@@ -312,6 +312,59 @@
   /* Icons from the CC0 "496 pixel art icons" pack are 32 px: smooth them when a screen shrinks them, keep them sharp
      when it enlarges them. */
   @media (max-resolution: 1.5dppx) { img.ico.pk { image-rendering: auto; } }
+  /* The title screen (src/ui/title.ts): the name in a blackletter pixel face over the dimmed board, embers rising,
+     and a short centred menu of plain words, the hand on the one in focus (like a console game's title, not a web
+     page of buttons). */
+  #title { position: fixed; inset: 0; z-index: 40; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 4vh;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    background: radial-gradient(ellipse at 50% 42%, rgba(20, 14, 28, 0.55), rgba(8, 6, 12, 0.9) 70%); overflow: hidden; }
+  body.titleopen #title { display: flex; }
+  body.titleopen #top, body.titleopen #bottom, body.titleopen #act, body.titleopen #travel, body.titleopen #runmap, body.titleopen #runPanel,
+  body.titleopen #hint, body.titleopen #tip, body.titleopen #help, body.titleopen #callout, body.titleopen #overlay, body.titleopen #deployBar,
+  body.titleopen #soundPanel, body.titleopen #toast { display: none !important; }
+  #title .logo { text-align: center; animation: titleIn 0.9s steps(6, end) both; }
+  #title h1 { margin: 0; font: 400 clamp(76px, 22vw, 140px)/0.9 "Jacquard 12", var(--px); color: #ffd96b; letter-spacing: 2px;
+    text-shadow: 0 4px 0 #8a4a14, 0 -2px 0 #fff3b8, 4px 4px 0 #140c1c, -4px 4px 0 #140c1c, 0 8px 0 #140c1c, 0 0 28px rgba(255, 170, 60, 0.35); }
+  #title .tagline { margin: 10px 0 0; font-size: 15px; letter-spacing: 3px; text-transform: uppercase; color: var(--quiet); text-shadow: 2px 2px 0 #140c1c; }
+  #title .tagline::before, #title .tagline::after { content: "◆"; color: var(--frame); margin: 0 10px; font-size: 10px; vertical-align: 2px; }
+  .titleMenu { display: flex; flex-direction: column; align-items: stretch; gap: 2px; min-width: min(300px, 86vw); padding: 10px 0; animation: titleIn 0.5s 0.5s steps(4, end) both;
+    background: radial-gradient(ellipse at center, rgba(8, 6, 12, 0.7), rgba(8, 6, 12, 0.45) 55%, transparent 72%); }
+  button.titleItem .nm { position: relative; }
+  button.titleItem { background: none; border: 0; border-image: none; box-shadow: none; display: flex; flex-direction: column; align-items: center; gap: 0;
+    min-height: 46px; padding: 6px 34px; font-size: 21px; color: var(--ink); text-shadow: 2px 2px 0 #140c1c; position: relative; }
+  button.titleItem small { font-size: 12px; color: var(--quiet); letter-spacing: 0.5px; }
+  button.titleItem:hover:not(:disabled), button.titleItem:focus-visible, button.titleItem:focus { color: var(--accent); filter: none; outline: none;
+    background: linear-gradient(90deg, transparent, rgba(210, 125, 44, 0.28) 30%, rgba(210, 125, 44, 0.28) 70%, transparent); }
+  button.titleItem:focus .nm::before, button.titleItem:hover .nm::before { content: ""; position: absolute; left: -30px; top: 50%; margin-top: -10px; width: 20px; height: 20px;
+    background: var(--pointer) center / contain no-repeat; image-rendering: pixelated; animation: nudge 0.6s steps(2) infinite; }
+  button.titleItem:active:not(:disabled) { transform: translateY(1px); }
+  .titlePanel { width: min(440px, calc(100vw - 32px)); max-height: 62vh; overflow-y: auto; padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 10px;
+    transform-origin: top; animation: unroll 0.12s steps(1, end); }
+  .titlePanel h3 { margin: 0; font-size: 18px; color: var(--accent); text-align: center; }
+  .titlePanel > button { align-self: center; min-width: 140px; justify-content: center; }
+  .titlePanel .opts { display: flex; flex-direction: column; gap: 12px; }
+  .titlePanel .opts label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .titlePanel .opts label.check { flex-direction: row; align-items: center; gap: 8px; }
+  .titlePanel .opts input[type=range] { width: 100%; accent-color: var(--accent); }
+  .titlePanel .seg { display: flex; gap: 6px; } .titlePanel .seg button { flex: 1; justify-content: center; }
+  .titlePanel .made { margin: 0; text-align: center; color: var(--ink); }
+  .titlePanel .credits h4 { margin: 4px 0; font-size: 13px; color: var(--frame); text-transform: uppercase; letter-spacing: 1px; }
+  .titlePanel .credits .row { display: grid; grid-template-columns: 1fr auto; gap: 0 10px; padding: 3px 0; border-top: 1px solid rgba(255,255,255,0.08); font-size: 13px; }
+  .titlePanel .credits .row span { grid-column: 1; color: var(--quiet); font-size: 12px; } .titlePanel .credits .row em { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-style: normal; color: var(--accent); font-size: 11px; }
+  .titlePanel .thanks { margin: 0; font-size: 12px; color: var(--quiet); text-align: center; }
+  .titlePanel.sure p { margin: 0; text-align: center; color: var(--quiet); }
+  .titlePanel.sure .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .titleFoot { position: absolute; left: 0; right: 0; bottom: max(8px, env(safe-area-inset-bottom)); display: flex; justify-content: space-between; gap: 12px; padding: 0 14px;
+    font-size: 11px; color: rgba(207, 198, 214, 0.6); pointer-events: none; }
+  .embers { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  #title .logo, .titleBody { position: relative; z-index: 1; }
+  .embers i { position: absolute; bottom: -10px; width: 4px; height: 4px; background: #ffb347; box-shadow: 0 0 6px #ff8a2a; opacity: 0; animation: ember linear infinite; }
+  .embers i:nth-child(3n) { width: 2px; height: 2px; background: #ffe08a; }
+  @keyframes ember { 0% { transform: translate(0, 0); opacity: 0; } 10% { opacity: 0.9; } 50% { transform: translate(18px, -50vh); } 90% { opacity: 0.6; } 100% { transform: translate(-6px, -105vh); opacity: 0; } }
+  @keyframes titleIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+  @media (max-height: 460px) { #title { gap: 2vh; flex-direction: row; justify-content: space-evenly; } #title h1 { font-size: clamp(56px, 14vh + 30px, 110px); }
+    .titlePanel { max-height: 80vh; } button.titleItem { min-height: 42px; font-size: 19px; } }
+  @media (prefers-reduced-motion: reduce) { .embers { display: none; } #title .logo, .titleMenu { animation: none; } }
   /* Windows unroll in three steps when they open, like a handheld menu (not a smooth web fade). */
   @keyframes unroll { 0% { transform: scaleY(0.15); } 50% { transform: scaleY(0.6); } 100% { transform: scaleY(1); } }
   .fold.open .fold-list { transform-origin: top; animation: unroll 0.12s steps(1, end); }
@@ -330,7 +383,7 @@
         <div class="fold-list win" role="menu">
           <button id="zoomIn" class="cmd"></button><button id="zoomOut" class="cmd"></button>
           <button id="flat" class="cmd"></button><button id="danger" class="cmd"></button>
-          <button id="lang" class="cmd"></button><button id="sound" class="cmd"></button>
+          <button id="lang" class="cmd"></button><button id="sound" class="cmd"></button><button id="toTitle" class="cmd"></button>
         </div>
       </div>
     </div>
@@ -359,7 +412,7 @@
       <span class="spacer"></span>
       <div id="travelTools" class="win"><button id="mapBtn" class="flat"></button><button id="gearBtn" class="flat"></button>
         <div class="fold"><button id="travelMore" class="icon fold-btn" aria-haspopup="true" aria-expanded="false"></button>
-          <div class="fold-list win" role="menu"><button id="statsBtn" class="cmd"></button><button id="mapLang" class="cmd"></button><button id="mapSound" class="cmd"></button><button id="newRun" class="cmd"></button></div>
+          <div class="fold-list win" role="menu"><button id="statsBtn" class="cmd"></button><button id="mapLang" class="cmd"></button><button id="mapSound" class="cmd"></button><button id="newRun" class="cmd"></button><button id="mapTitle" class="cmd"></button></div>
         </div>
       </div>
     </div>
@@ -372,6 +425,7 @@
   </div>
   <div id="runPanel"></div>
   <div id="toast" class="win"></div>
+  <div id="title" role="dialog" aria-label="Tac-tics"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
