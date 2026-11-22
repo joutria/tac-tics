@@ -1,9 +1,10 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
-import { startUpdates } from "./app/update";
+import { BUILD, startUpdates } from "./app/update";
 import { AUDIO_KEY, audioSettings, battleSounds, initAudio, playMusic, readAudioSettings, setAudio, sfx } from "./audio/sound";
 import "@fontsource/pixelify-sans/400.css";
 import "@fontsource/pixelify-sans/600.css";
+import "@fontsource/jacquard-12/400.css";
 import { ABILITIES, type Ability } from "./data/abilities";
 import { elementMultiplier, ELEMENTS } from "./data/elements";
 import { COMPANIONS } from "./data/companions";
@@ -31,6 +32,7 @@ import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, nodeLabel, renderRunMap } from "./ui/runmap";
 import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, type IconId } from "./ui/icons";
+import { hideTitle, showTitle, titleBack, titleButtons, titleOpen, type TitleOptions } from "./ui/title";
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
@@ -283,6 +285,7 @@ function showMap() {
   label("newRun", null, t(lang, "newRun"), t(lang, "newRunHint"));
   label("gearBtn", "gear", t(lang, "gear"), t(lang, "gearHint"));
   label("mapSound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), t(lang, "soundHint"));
+  label("mapTitle", "menu", t(lang, "menuTitle"), t(lang, "menuTitleHint"));
   label("mapLang", "lang", lang === "es" ? "English" : "Español", t(lang, "langHint"));
   label("mapBtn", "map", t(lang, "routeMap"), t(lang, "mapKeys"));
   label("travelMore", "menu", t(lang, "more"), t(lang, "moreRunHint"));
@@ -915,6 +918,7 @@ function refresh() {
   dress("zoomIn", "zoomIn", t(lang, "zoomIn"), () => plainHelp(t(lang, "zoomIn"), t(lang, "zoomIn"), "zoomIn"));
   dress("zoomOut", "zoomOut", t(lang, "zoomOut"), () => plainHelp(t(lang, "zoomOut"), t(lang, "zoomOut"), "zoomOut"));
   dress("sound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), () => plainHelp(t(lang, "sound"), t(lang, "soundHint"), "sound"));
+  dress("toTitle", "menu", t(lang, "menuTitle"), () => plainHelp(t(lang, "menuTitle"), t(lang, "menuTitleHint"), "menu"));
   dress("lang", "lang", lang === "es" ? "English" : "Español", () => plainHelp(lang === "es" ? "English" : "Español", t(lang, "langHint"), "lang"));
   dress("toolsBtn", "menu", t(lang, "more"), () => plainHelp(t(lang, "more"), t(lang, "moreHint"), "menu"), true);
   const confirm = $<HTMLButtonElement>("confirm");
@@ -1218,6 +1222,75 @@ function toggleSoundPanel(open = $("soundPanel").style.display !== "flex") {
   const close = document.createElement("button"); close.textContent = t(lang, "close"); close.onclick = () => toggleSoundPanel(false);
   panel.replaceChildren(title, slider("music", t(lang, "soundMusic")), slider("sfx", t(lang, "soundSfx")), mute, close);
   panel.querySelector<HTMLInputElement>("input")?.focus();
+}
+
+/** The options screen of the title: sound, language and the battle view, saved on the device as they change. */
+function fillOptions(box: HTMLElement, rerender: () => void) {
+  const s = audioSettings();
+  const save = (next: Partial<typeof s>) => { setAudio(next); safeSet(AUDIO_KEY, JSON.stringify(audioSettings())); };
+  const slider = (key: "music" | "sfx", text: string) => {
+    const l = document.createElement("label"); l.textContent = text;
+    const r = document.createElement("input"); r.type = "range"; r.min = "0"; r.max = "100"; r.value = String(Math.round(s[key] * 100));
+    r.setAttribute("aria-label", text);
+    r.oninput = () => save({ [key]: Number(r.value) / 100 });
+    if (key === "sfx") r.onchange = () => sfx("hurt");
+    l.append(r); return l;
+  };
+  const mute = document.createElement("label"); mute.className = "check";
+  const box2 = document.createElement("input"); box2.type = "checkbox"; box2.checked = s.muted;
+  box2.onchange = () => save({ muted: box2.checked });
+  mute.append(box2, t(lang, "soundMute"));
+  /** A row of choices, the chosen one lit. */
+  const seg = (title: string, items: { text: string; on: boolean; pick: () => void }[]) => {
+    const l = document.createElement("label"); l.textContent = title;
+    const row = document.createElement("div"); row.className = "seg";
+    for (const it of items) {
+      const b = document.createElement("button"); b.textContent = it.text; b.className = it.on ? "primary" : "";
+      b.setAttribute("aria-pressed", String(it.on));
+      b.onclick = () => { sfx("select"); it.pick(); rerender(); };
+      row.append(b);
+    }
+    l.append(row); return l;
+  };
+  const setLang = (l: typeof lang) => { lang = l; safeSet(LANG_KEY, lang); document.documentElement.lang = lang; };
+  const setView = (flat: boolean) => { setFlat(flat); safeSet(VIEW_KEY, flat ? "flat" : "iso"); };
+  box.replaceChildren(
+    slider("music", t(lang, "soundMusic")), slider("sfx", t(lang, "soundSfx")), mute,
+    seg(t(lang, "optLang"), [{ text: "Español", on: lang === "es", pick: () => setLang("es") }, { text: "English", on: lang === "en", pick: () => setLang("en") }]),
+    seg(t(lang, "optView"), [{ text: t(lang, "optIso"), on: !isFlat(), pick: () => setView(false) }, { text: t(lang, "optFlat"), on: isFlat(), pick: () => setView(true) }]),
+  );
+}
+
+/** What the title says about the saved run, or null when there is nothing to go back to. */
+function savedLine(): string | null {
+  if (!journey || choosingDifficulty || journey.over) return null;
+  const region = regionOf(journey).name[lang];
+  return journey.battle ? t(lang, "menuContinueBattle", { region })
+    : t(lang, "menuContinueRoad", { region, n: journey.path.length, diff: t(lang, `diff.${journey.difficulty ?? "normal"}`) });
+}
+
+function titleOptions(): TitleOptions {
+  return {
+    lang, saved: savedLine(), build: BUILD,
+    onContinue: () => { sfx("select"); leaveTitle(); },
+    onNew: () => { sfx("select"); hideTitle(); startRun(); },
+    fillOptions,
+  };
+}
+
+/** Opens the title over whatever is on screen (the saved run waits behind it, already loaded). */
+function openTitle() {
+  for (const fold of document.querySelectorAll<HTMLElement>(".fold.open")) fold.classList.remove("open");
+  if (journey && !choosingDifficulty) persist();
+  playMusic("camp");
+  showTitle(titleOptions);
+}
+
+/** Back to the run as it was: the screen behind is redrawn in the language and view the options may have changed. */
+function leaveTitle() {
+  hideTitle();
+  if (onMap) showMap();
+  else { playMusic(journey.map.nodes[journey.battle?.node ?? -1]?.kind === "boss" ? "boss" : "battle"); refresh(); }
 }
 
 function toast(msg: string, ms = 1600) {
@@ -1636,6 +1709,14 @@ function moveFocus(list: HTMLElement[], dir: number) {
 
 function input(k: Input) {
   padUsed = true;
+  if (titleOpen()) {
+    const list = titleButtons();
+    if (k === "up" || k === "left") moveFocus(list, -1);
+    else if (k === "down" || k === "right") moveFocus(list, 1);
+    else if (k === "confirm") { const f = document.activeElement; if (f instanceof HTMLButtonElement && list.includes(f)) f.click(); else list[0]?.focus(); }
+    else if (k === "back") titleBack();
+    return;
+  }
   if (k === "map") { if (!choosingDifficulty) openMap(!mapOpen); return; }
   const buttons = panelButtons();
   if (buttons.length) {
@@ -2019,6 +2100,8 @@ async function start() {
   loadOrNew();
   refresh();
   followHero();
+  // The title comes first, over the saved run (or the new one's first screen) waiting behind it.
+  openTitle();
   addEventListener("resize", layout);
 
   // One finger (or the mouse) taps or drags to pan; two fingers pinch to zoom.
@@ -2100,11 +2183,19 @@ async function start() {
   $("mapSound").addEventListener("click", () => toggleSoundPanel());
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });
   $("mapBtn").addEventListener("click", () => openMap(true));
+  $("toTitle").addEventListener("click", openTitle);
+  $("mapTitle").addEventListener("click", openTitle);
   $("closeMap").addEventListener("click", () => openMap(false));
   $("skipBtn").addEventListener("click", skipWalk);
   addEventListener("keydown", (ev) => {
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const k = ev.key.toLowerCase();
+    if (titleOpen()) {
+      // The title: arrows move between its buttons, Escape goes back to its menu. Sliders keep their arrows.
+      if (k === "escape") { titleBack(); return; }
+      if ((k === "arrowup" || k === "arrowdown") && !(document.activeElement instanceof HTMLInputElement)) { ev.preventDefault(); moveFocus(titleButtons(), k === "arrowup" ? -1 : 1); }
+      return;
+    }
     // The sound panel keeps its keys: arrows move its sliders, Escape closes it.
     if ($("soundPanel").style.display === "flex") { if (k === "escape") toggleSoundPanel(false); return; }
     if (k === "escape") { if (mapOpen) openMap(false); else input("back"); return; }
