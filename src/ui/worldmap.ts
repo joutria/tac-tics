@@ -74,7 +74,7 @@ export function routeGrid(run: { map: RunMap; seed: string }, region: string): R
       const q = { x: p.x + dx, y: p.y + dy };
       if (q.x < 0 || q.y < 0 || q.x >= n || q.y >= n) continue;
       const t = at(q);
-      if (!t.offMap && (t.terrain === "tree" || t.terrain === "rock" || t.h > 1)) set(q, { terrain: "grass", h: 0 });
+      if (!t.offMap && (t.terrain === "tree" || t.prop || t.h > 1)) set(q, { terrain: "grass", h: 0 });
     }
   }
   for (const nd of nodes) set(tileOf[nd.id]!, { terrain: "dirt", h: nd.kind === "boss" ? 2 : 1 });

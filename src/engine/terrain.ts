@@ -12,9 +12,9 @@
    - Barrels blow up when hit: 10 damage and a Burn to everyone in the 3x3 around them, grass set alight, and any
      barrel in the blast goes off too.
    - Crates block movement and sight. Enough damage breaks them, and pushing abilities slide them.
-   - Pushed objects hurt (slideOutcome): a crate or a boulder that runs into a unit hits it (IMPACT, more for every
-     tile rolled and level dropped), a barrel that runs into a unit or rolls off a ledge goes off. Boulders cannot
-     be broken and roll up to BOULDER_ROLL tiles from any push, flattening crates on the way.
+   - Pushed objects hurt (slideOutcome): a crate or a rock that runs into a unit hits it (IMPACT, more for every
+     tile rolled and level dropped), a barrel that runs into a unit or rolls off a ledge goes off. Rocks cannot
+     be broken and roll up to ROCK_ROLL tiles from any push, flattening crates on the way.
 
    Surfaces (Baldur's Gate research, "Surface reactions"):
    - Oil costs 1 extra MP to walk out of. Fire on it makes the whole puddle flare up: OIL_BLAST damage and a Burn
@@ -25,7 +25,7 @@
      Water or Light calms it, ice freezes it, fire turns it to steam.
    - Fire on water makes steam, which blocks sight for a round. */
 import type { Ability } from "../data/abilities";
-import { NEIGHBOURS, TERRAIN, cellsOf, coversPos, grassy, manhattan, standable, tileAt, type Pos, type Tile } from "./grid";
+import { NEIGHBOURS, TERRAIN, cellsOf, coversPos, grassy, manhattan, placeLook, standable, tileAt, type Pos, type Tile } from "./grid";
 import { rngNext } from "./rng";
 import { absorb, addStatus } from "./status";
 import type { BattleState, Unit } from "./state";
@@ -142,9 +142,9 @@ export function touchTile(s: BattleState, ab: Ability, from: Pos, p: Pos, fx: Te
   const t = tileAt(s.map, p);
   if (!t) return;
   if (t.prop === "barrel" && (ab.damage || ab.element === "fire")) { explode(s, p, fx, hits, hurt); return; }
-  // Any push moves an object: crates and barrels as far as the push, boulders roll on.
+  // Any push moves an object: crates and barrels as far as the push, rocks roll on.
   if (t.prop && ab.push && !ab.damage) { slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
-  if (t.prop === "boulder") { if (ab.push) slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
+  if (t.prop === "rock") { if (ab.push) slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
   if (t.prop === "crate") {
     if (ab.push) { slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
     if (ab.damage) {
@@ -199,13 +199,13 @@ export function explode(s: BattleState, at: Pos, fx: TerrainFx[], hits: TerrainH
     dropped on the way, times (1 + the pusher's Strength / 100). Barrels go off instead (BLAST_DAMAGE). */
 export const IMPACT = {
   crate: { base: 6, perTile: 1, perLevel: 2 },
-  boulder: { base: 9, perTile: 2, perLevel: 3 },
+  rock: { base: 9, perTile: 2, perLevel: 3 },
 } as const;
-/** A pushed boulder keeps rolling this far at most, whatever pushed it. */
-export const BOULDER_ROLL = 5;
+/** A pushed rock keeps rolling this far at most, whatever pushed it. */
+export const ROCK_ROLL = 5;
 
 /** Where a pushed object would go and what it would hit, without changing anything. Straight away from `from`, down
-    any drop but never up a step. A crate or a barrel moves as far as the push; a boulder keeps rolling (BOULDER_ROLL).
+    any drop but never up a step. A crate or a barrel moves as far as the push; a rock keeps rolling (ROCK_ROLL).
     It stops at the first unit in its way and hits it; water swallows it; a barrel it runs into goes off. */
 export function slideOutcome(s: BattleState, from: Pos, at: Pos, tiles: number, str = 0) {
   const t0 = tileAt(s.map, at)!, kind = t0.prop!;
@@ -214,7 +214,7 @@ export function slideOutcome(s: BattleState, from: Pos, at: Pos, tiles: number, 
   const out: { kind: typeof kind; to: Pos; rolled: number; dropped: number; unit?: string; damage: number; sinks: boolean; barrel?: Pos; crushes?: Pos } =
     { kind, to: at, rolled: 0, dropped: 0, damage: 0, sinks: false };
   if (!step.x && !step.y) return out;
-  const reach = kind === "boulder" ? BOULDER_ROLL : tiles;
+  const reach = kind === "rock" ? ROCK_ROLL : tiles;
   let cur = at;
   for (let i = 0; i < reach; i++) {
     const n = { x: cur.x + step.x, y: cur.y + step.y };
@@ -230,8 +230,8 @@ export function slideOutcome(s: BattleState, from: Pos, at: Pos, tiles: number, 
       break;
     }
     if (next.prop === "barrel" && kind !== "barrel") { out.barrel = n; break; }
-    // A boulder flattens a crate in its way and rolls on.
-    if (next.prop === "crate" && kind === "boulder") { out.crushes = n; break; }
+    // A rock flattens a crate in its way and rolls on.
+    if (next.prop === "crate" && kind === "rock") { out.crushes = n; break; }
     if (next.prop || !TERRAIN[next.terrain].walkable && next.terrain !== "water") break;
     out.dropped += here.h - next.h; out.rolled += 1; cur = n;
     if (next.terrain === "water") { out.sinks = true; break; }
@@ -254,12 +254,12 @@ export function giveFire(t: Tile, until: number | undefined) {
     and may break; a barrel goes off where it stops if it hit a unit or fell a level or more. */
 function slideProp(s: BattleState, from: Pos, at: Pos, tiles: number, fx: TerrainFx[], hits: TerrainHit[], hurt: Hurt, str: number) {
   const o = slideOutcome(s, from, at, tiles, str);
-  const src = tileAt(s.map, at)!, hp = src.propHp, fire = takeFire(s, src);
-  delete src.prop; delete src.propHp;
+  const src = tileAt(s.map, at)!, hp = src.propHp, fire = takeFire(s, src), look = src.look ?? placeLook(at);
+  delete src.prop; delete src.propHp; delete src.look;
   if (o.rolled) fx.push({ fx: "slide", at, to: o.to });
   const end = tileAt(s.map, o.to)!;
   if (o.sinks) { fx.push({ fx: "sink", at: o.to }); return; }
-  end.prop = o.kind; end.propHp = hp; giveFire(end, fire);
+  end.prop = o.kind; end.propHp = hp; end.look = look; giveFire(end, fire);
   if (o.barrel) explode(s, o.barrel, fx, hits, hurt);
   if (o.crushes) { const c = tileAt(s.map, o.crushes)!; delete c.prop; delete c.propHp; fx.push({ fx: "break", at: o.crushes }); }
   if (o.kind === "barrel") {

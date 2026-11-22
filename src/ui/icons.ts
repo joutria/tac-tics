@@ -838,7 +838,7 @@ const LOGS = CAMPFIRE.map((r, y) => (y < 10 ? "................" : r));
 
 export const ICONS = {
   hp: HEART, ap: STAR, mp: BOOT, cooldown: HOURGLASS, range: RETICLE, area: CROSS_AREA, sight: EYE, sword: SWORD, heal: HEAL,
-  shield: SHIELD, push: PUSH, quick: CHEVRONS, jump: recolor(flipV(DOWN), { r: "g", R: "G" }), throw: CRATE, crate: CRATE, barrel: BARREL, boulder: ROCK,
+  shield: SHIELD, push: PUSH, quick: CHEVRONS, jump: recolor(flipV(DOWN), { r: "g", R: "G" }), throw: CRATE, crate: CRATE, barrel: BARREL, rock: ROCK,
   // Elements.
   light: SUN, fire: FLAME, water: DROP, plant: LEAF, stone: ROCK, bolt: BOLT, ice: FLAKE, mush: MUSHROOM, neutral: DIAMOND,
   // Statuses.

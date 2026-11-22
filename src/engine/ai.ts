@@ -240,7 +240,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
   return v;
 }
 
-/** Pushing a crate, barrel or boulder: worth the damage it does to whoever it runs into, and any blast it sets off. */
+/** Pushing a crate, barrel or rock: worth the damage it does to whoever it runs into, and any blast it sets off. */
 function objectPushValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos): number {
   const me = s.units.find((x) => x.id === u.id)!;
   const moved = samePos(me.pos, from) ? s : { ...s, units: s.units.map((x) => (x.id === u.id ? { ...x, pos: { ...from } } : x)) };

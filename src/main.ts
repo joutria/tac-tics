@@ -37,6 +37,7 @@ import {
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { fxSources, type Burst } from "./render/fx";
+import { SCENERY_IMAGES } from "./render/scenery";
 import { drawBattle, Floater, type ReachBadge, type SightLine, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
 
 /** The run save: the run, with the battle being fought inside it. */
@@ -80,7 +81,7 @@ let holdBack = false;
 const floaters: Floater[] = [];
 /** One-off smoke and steam puffs on the board (src/render/fx.ts). */
 const bursts: Burst[] = [];
-/** Units hit lately (they flash), and until when the view shakes (blasts, boulders, critical hits). */
+/** Units hit lately (they flash), and until when the view shakes (blasts, rolling rocks, critical hits). */
 const flashes = new Map<string, number>();
 let shakeUntil = 0;
 const motions = new Map<string, Motion>();
@@ -1045,7 +1046,6 @@ function blockerName(p: Pos): string {
   if (tile.steamUntil !== undefined) return t(lang, "r.steam");
   if (tile.prop) return t(lang, `r.${tile.prop}` as TextKey);
   if (tile.terrain === "tree") return t(lang, "r.tree");
-  if (tile.terrain === "rock") return t(lang, "r.rock");
   return t(lang, "r.ground");
 }
 
@@ -1071,7 +1071,7 @@ function tileInfo(at: Pos): string[] {
   const out: string[] = [];
   if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
-  if (tile.prop === "boulder") out.push(`<b>${t(lang, "boulder")}</b> · ${t(lang, "boulderInfo")}`);
+  if (tile.prop === "rock") out.push(`<b>${t(lang, "rockName")}</b> · ${t(lang, "rockInfo")}`);
   if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, tile.prop || tile.terrain === "tree" ? "burningObjInfo" : "fireInfo")}`);
   if (tile.scorchedAt !== undefined) out.push(t(lang, "scorchedInfo"));
   if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);
@@ -1813,7 +1813,7 @@ function frame(time: number) {
 
 async function start() {
   const base = import.meta.env.BASE_URL;
-  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-rock", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-rock", "obj-tree", "obj-crate", "obj-crate-hurt", "obj-barrel"];
+  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", ...SCENERY_IMAGES];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;

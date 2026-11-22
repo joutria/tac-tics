@@ -76,7 +76,7 @@ describe("giant movement", () => {
     expect(r.events.some((e) => e.e === "trampled" && e.crushed.length === 1)).toBe(true);
   });
 
-  it("still cannot walk through barrels or boulders", () => {
+  it("still cannot walk through barrels or rocks", () => {
     const m = parseMap("barrel", ["g0 g0 g0", "g0 g0 g0", "g0B g0 g0", "g0 g0 g0"]);
     const s = createBattle({ seed: 1, map: m, units: [unit({ id: "g", team: "foes", pos: { x: 0, y: 0 }, size: 2 }), unit({ id: "h", team: "heroes", pos: { x: 2, y: 3 } })] });
     expect(reachable(s.map, { x: 0, y: 0 }, moveRules(s, unitById(s, "g"))).has("0,1")).toBe(false);
