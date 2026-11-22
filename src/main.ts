@@ -33,6 +33,7 @@ import { approachScene, departScene, placeOf, type Origin, type Scene } from "./
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, iconTile, nodeLabel, renderRunMap } from "./ui/runmap";
+import { LEVEL_CAP, xpToNext } from "./data/gear";
 import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, pk, RUN_PACK, type IconId } from "./ui/icons";
 import { BUILD } from "./app/update";
 import { hideTitle, showTitle, titleBack, titleButtons, titleOpen, type TitleOptions } from "./ui/title";
@@ -406,11 +407,10 @@ function afterBattleButton() {
     if (journey.over) record(logRunEnd(PLAYER, journey, journey.over));
   } catch (e) { console.warn("play log:", e); }
   closeLegacy();
-  if (journey.region !== region) { toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
+  if (journey.region !== region) { banner(t(lang, "regionCleared"), regionOf(journey).name[lang]); toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
   const sp = journey.spoils;
   if (sp?.levels) sfx("levelUp"); else if (sp?.coins) sfx("coin");
-  if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : "")
-    + (alignShiftText(sp.align, lang) ? ` · ${alignShiftText(sp.align, lang)}` : ""), 2600);
+  // The victory screen showed the tally already (renderSpoils).
   showMap();
 }
 
@@ -958,6 +958,7 @@ function refresh() {
   over.style.display = state.winner && !onMap ? "flex" : "none";
   $("result").textContent = state.winner === "heroes" && !lost ? t(lang, "victory") : t(lang, "defeat");
   over.classList.toggle("lost", !!state.winner && lost);
+  renderSpoils(state.winner === "heroes" && !lost && !onMap);
   const escaped = state.units.filter((x) => x.team === "foes" && x.life === "escaped").length;
   const spared = state.units.filter((x) => x.team === "foes" && x.life === "spared").length;
   $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", spared ? t(lang, "sparedNote", { n: spared }) : "", lost ? t(lang, "runLost") : ""].filter(Boolean).join(" ");
@@ -965,6 +966,35 @@ function refresh() {
   document.documentElement.lang = lang;
   layout();
   showHelp();
+}
+
+/** The victory screen's tally: what this win brings (coins, XP and the level it reaches, shards, the meters), worked
+    out ahead with the same finishBattle the button runs, so the numbers are the ones the run will get. */
+let spoilsFor: { s: BattleState; html: string } | null = null;
+function renderSpoils(show: boolean) {
+  const box = $("spoils");
+  if (!show || !journey.battle) { box.style.display = "none"; return; }
+  if (spoilsFor?.s !== state) {
+    let html = "";
+    try {
+      const after = finishBattle(journey, state), sp = after.spoils;
+      if (sp) {
+        const row = (i: number, ic: string, body: string) => `<div class="sp" style="animation-delay:${0.15 + i * 0.15}s">${ic}${body}</div>`;
+        const lv = after.hero.level, need = xpToNext(lv), pct = lv >= LEVEL_CAP ? 100 : Math.round((after.hero.xp / Math.max(1, need)) * 100);
+        const rows = [
+          row(0, iconTile(pk(RUN_PACK.coins)), `<b>${t(lang, "coins", { n: `+${sp.coins}` })}</b>`),
+          row(1, `<span class="ic">XP</span>`, `<b>+${sp.xp}</b><span class="xpbar"><i style="--to:${pct}%"></i></span>${sp.levels ? `<span class="lv">${t(lang, "level", { n: lv })}!</span>` : ""}`),
+        ];
+        if (sp.shards) rows.push(row(2, iconTile(pk(RUN_PACK.shards)), `<b>${t(lang, "shards", { n: `+${sp.shards}` })}</b>`));
+        const align = alignShiftText(sp.align, lang);
+        if (align) rows.push(row(rows.length, "", `<small>${align}</small>`));
+        html = rows.join("");
+      }
+    } catch { html = ""; }
+    spoilsFor = { s: state, html };
+  }
+  box.innerHTML = spoilsFor.html;
+  box.style.display = spoilsFor.html ? "flex" : "none";
 }
 
 /** After a win, foes still on the map (downed or under the white flag) wait for the party's choice. The button to
@@ -1437,6 +1467,14 @@ function approach(nodeId: number, then: () => void) {
 }
 
 /** Every frame on the travel screen: ends the walk, springs an ambush, then hands over. */
+/** A title card across the screen as a fight begins, like a stage name in a console game: the region small, the
+    fight's name large, sliding in and fading out on its own (CSS) while the ground falls away. */
+function banner(small: string, big: string) {
+  const b = $("banner");
+  b.innerHTML = `<small>${small}</small><h2>${big}</h2>`;
+  b.classList.remove("on"); void b.offsetWidth; b.classList.add("on");
+}
+
 function tickPlay(now: number) {
   if (!play || play.finished || play.started === null || now < play.done) return;
   if (play.scene.ambush && play.sprung === undefined) {
@@ -1461,6 +1499,8 @@ function tickPlay(now: number) {
     play.done = now + rows * INTRO.rowMs + INTRO.jitterMs + INTRO.fallMs + INTRO.holdMs;
     $("runHint").textContent = "";
     sfx("door");
+    const node = journey.map.nodes[Number(play.key.slice(3))];
+    if (node) banner(regionOf(journey).name[lang], nodeLabel(journey, node, lang));
     return;
   }
   if (play.intro !== undefined) introFrom = sceneView.scale;
