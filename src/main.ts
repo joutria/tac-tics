@@ -13,7 +13,7 @@ import { MEADOW } from "./data/maps/meadow";
 import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
-import { abilityAvailable, areaTiles, castProblem, comboProblem, guardAbility, CRIT_MULT, HEIGHT_CAP, HEIGHT_PER_LEVEL, SIDE_BONUS, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
+import { abilityAvailable, areaTiles, castProblem, comboProblem, guardAbility, CRIT_MULT, MAX_REVIVES, damagePreview, damageParts, type DamagePart, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, rockSizeOf, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { heightShapesReach, reachAt, reachBound, type Reach } from "./engine/reach";
@@ -32,8 +32,8 @@ import { deployUnit, deployZone } from "./run/deploy";
 import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
-import { alignShiftText, nodeLabel, renderRunMap } from "./ui/runmap";
-import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, type IconId } from "./ui/icons";
+import { alignShiftText, iconTile, nodeLabel, renderRunMap } from "./ui/runmap";
+import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, pk, RUN_PACK, type IconId } from "./ui/icons";
 import { BUILD } from "./app/update";
 import { hideTitle, showTitle, titleBack, titleButtons, titleOpen, type TitleOptions } from "./ui/title";
 import { record, renderStats } from "./ui/stats";
@@ -239,12 +239,13 @@ function renderCamp(panel: HTMLElement) {
 function renderDifficulty(panel: HTMLElement) {
   panel.style.display = "flex";
   const title = document.createElement("h2"); title.textContent = t(lang, "pickDifficulty");
-  const list = document.createElement("div"); list.className = "cards";
+  const list = document.createElement("div"); list.className = "cards pick";
   for (const d of Object.keys(DIFFICULTY) as Difficulty[]) {
-    const b = document.createElement("button"); b.className = "card";
+    const b = document.createElement("button"); b.className = "card ico";
+    b.innerHTML = `${iconTile(pk(RUN_PACK[d]), d === "hard" ? "epic" : d === "normal" ? "rare" : "common")}<span class="tx"></span>`;
     const name = document.createElement("b"); name.textContent = t(lang, `diff.${d}`);
     const desc = document.createElement("span"); desc.textContent = t(lang, `diff.${d}.desc`);
-    b.append(name, desc); b.onclick = () => pickDifficulty(d);
+    b.querySelector(".tx")!.append(name, desc); b.onclick = () => pickDifficulty(d);
     list.append(b);
   }
   // Sap tiers opened by winning on Hard: each adds its twist to the ones below it.
@@ -285,6 +286,7 @@ function showMap() {
     // Keeps keyboard and controller focus on the card just swapped.
     twin: (base, on) => { try { update(wearTwin(journey, base, on)); document.querySelector<HTMLButtonElement>(`[data-twin="${base}"]`)?.focus(); } catch (e) { console.warn(e); } },
     newRun: () => startRun(),
+    face: (look) => portrait(images, look),
   }, gearOpen, () => { gearOpen = false; showMap(); });
   if (choosingDifficulty) (atCamp ? renderCamp : renderDifficulty)($("runPanel"));
   else if (statsOpen) renderStats($("runPanel"), lang, () => { statsOpen = false; showMap(); });
@@ -781,7 +783,12 @@ function abilityHelp(id: string, u: Unit | null): string {
   if (ab.area === "square1") chip("area", t(lang, "h.square"));
   if (ab.combo) chip("recruit", t(lang, "h.combo", { name: state.units.find((x) => x.id === ab.combo!.partner)?.name ?? ab.combo.partner, n: ab.combo.reach }));
   if (ab.los) chip("sight", t(lang, "h.sight"));
-  if (ab.damage) chip("sword", `${ab.damage.min}–${ab.damage.max} · ${t(lang, ab.damage.stat)}`);
+  // League-style: the base roll, the stat's share in its own colour, then what it comes to for this unit.
+  if (ab.damage) {
+    const k = ab.damage.stat, stat = u ? u[k] : 0, f = 1 + stat / 100;
+    const total = u ? ` = <b>${Math.floor(ab.damage.min * f)}–${Math.floor(ab.damage.max * f)}</b>` : "";
+    chip("sword", `${ab.damage.min}–${ab.damage.max} <i class="s-${k}">(+${u ? `${stat}% ` : ""}${t(lang, k)})</i>${total}`);
+  }
   if (ab.heal) chip("heal", `+${ab.heal.min}–${ab.heal.max}`);
   if (ab.push) chip("push", t(lang, "h.push", { n: ab.shove ? "1–2" : ab.push }));
   if (ab.status) chip(ab.status.id, `${t(lang, `st.${ab.status.id}` as TextKey)} · ${t(lang, "turnsLeft", { n: ab.status.turns })}`);
@@ -950,6 +957,7 @@ function refresh() {
   const over = $("overlay");
   over.style.display = state.winner && !onMap ? "flex" : "none";
   $("result").textContent = state.winner === "heroes" && !lost ? t(lang, "victory") : t(lang, "defeat");
+  over.classList.toggle("lost", !!state.winner && lost);
   const escaped = state.units.filter((x) => x.team === "foes" && x.life === "escaped").length;
   const spared = state.units.filter((x) => x.team === "foes" && x.life === "spared").length;
   $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", spared ? t(lang, "sparedNote", { n: spared }) : "", lost ? t(lang, "runLost") : ""].filter(Boolean).join(" ");
@@ -1041,8 +1049,8 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       const base = damagePreview(state, u, target, ab), bump = pushDmg;
       const r = { min: base.min + bump, max: base.max + bump };
       const m = elementMultiplier(ab.element, target.element);
-      const dir = directionBonus(target, u.pos);
       lines.push(`${abilityName(lang, selected)}: <b>${r.min}–${r.max}</b>${m > 1 ? ` · ${t(lang, "strong")}` : m < 1 ? ` · ${t(lang, "weak")}` : ""}`);
+      lines.push(dmgBreakdown(u, target, ab));
       // Forecast: what is left of the target, and whether this can put it down.
       // Holding back, nobody standing drops under 1 HP.
       const floor = holdBack && target.life === "up" ? 1 : 0;
@@ -1052,8 +1060,6 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       else if (r.min >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "downsIt")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
       else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
       else if (Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<span class="down">${t(lang, "critDown")}</span>`);
-      if (dir > SIDE_BONUS) lines.push(t(lang, "back")); else if (dir > 1) lines.push(t(lang, "side"));
-      heightLines(lines, u, target);
       pushLines();
       lines.push(t(lang, "crit"));
     } else if (ab.push && target.team !== u.team) {
@@ -1103,9 +1109,15 @@ function objectLines(at: Pos): string[] {
 }
 
 /** The height chip: how standing higher changes this attack's damage (its reach is in reachLines). */
-function heightLines(lines: string[], u: Unit, target: Unit) {
-  const diff = (tileAt(state.map, u.pos)?.h ?? 0) - (tileAt(state.map, target.pos)?.h ?? 0);
-  if (diff > 0) lines.push(`<span class="hg">${t(lang, "highGround", { n: Math.round(Math.min(HEIGHT_CAP, diff * HEIGHT_PER_LEVEL) * 100) })}</span>`);
+/** The forecast's sum, League-style: the ability's base roll, then every factor that scales it, each in its own
+    colour (green for a boost, red for a cut), so the player sees why the number is what it is. */
+function dmgBreakdown(u: Unit, target: Unit, ab: Ability): string {
+  const pct = (f: number) => { const n = Math.round((f - 1) * 100); return n >= 0 ? `+${n}%` : `−${-n}%`; };
+  const label = (p: DamagePart) => p.why === "str" || p.why === "mag" ? t(lang, p.why) : p.why === "strong" || p.why === "weak" ? t(lang, p.why)
+    : p.why === "res" ? `${t(lang, "p.res")} ${ELEMENTS[ab.element][lang]}` : t(lang, `p.${p.why}` as TextKey);
+  const parts = damageParts(state, u, target, ab).filter((p) => Math.round((p.f - 1) * 100) !== 0)
+    .map((p) => `<i class="${p.why === "str" || p.why === "mag" ? `s-${p.why}` : p.f > 1 ? "up" : "dn"}">${label(p)} ${pct(p.f)}</i>`);
+  return `<span class="sum">${ab.damage!.min}–${ab.damage!.max} ${t(lang, "dmgBase")}${parts.length ? ` ${parts.join(" ")}` : ""}</span>`;
 }
 
 /** While aiming: is this tile in reach, and if not, why. Height and Aim are spelled out. */

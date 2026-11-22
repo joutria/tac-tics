@@ -233,28 +233,46 @@ export function areaTiles(ab: Ability, target: Pos): Pos[] {
   return [target, ...NEIGHBOURS.map((d) => ({ x: target.x + d.x, y: target.y + d.y }))];
 }
 
-/** Everything that changes the damage except the roll and the critical. */
-export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Ability, at: Pos = caster.pos): number {
-  if (!ab.damage) return 0;
+/** One thing that scales an attack's damage, for the forecast's breakdown: what it is and by how much. */
+export type DamagePart = { why: "str" | "mag" | "height" | "back" | "side" | "strong" | "weak" | "res" | "retreat" | "flee" | "weaken"
+  | "executioner" | "guarded" | "guardStrike" | "rules"; f: number };
+
+/** Everything that changes the damage except the roll and the critical, factor by factor (the stat first, always
+    there; the rest only when they change something). damageFactor multiplies them in this order. */
+export function damageParts(s: BattleState, caster: Unit, target: Unit, ab: Ability, at: Pos = caster.pos): DamagePart[] {
+  if (!ab.damage) return [];
   const stat = ab.damage.stat === "str" ? caster.str : caster.mag;
   // Giants: the caster's tile closest to the target, and the target's tile closest to that.
   const from = nearestCell(at, sizeOf(caster), nearestOf(target, at));
   const up = (tileAt(s.map, from)?.h ?? 0) - (tileAt(s.map, nearestOf(target, from))?.h ?? 0);
-  const height = 1 + Math.min(HEIGHT_CAP, Math.max(0, up) * HEIGHT_PER_LEVEL);
-  const res = (target.res[ab.element] ?? 0) / 100;
-  const weak = statusOf(caster, "weaken") ? WEAKEN_FACTOR : 1;
-  return (1 + stat / 100) * height * directionBonus(target, from) * elementMultiplier(ab.element, target.element) * (1 - res) * takenFactor(target) * weak
-    * passiveFactor(s, caster, target) * (caster.guardStrike ? GUARD_STRIKE : 1)
-    * (caster.team === "heroes" ? RULES.damage : RULES.foeDamage);
+  const dir = directionBonus(target, from), el = elementMultiplier(ab.element, target.element);
+  const parts: DamagePart[] = [{ why: ab.damage.stat, f: 1 + stat / 100 }];
+  const add = (why: DamagePart["why"], f: number) => { if (f !== 1) parts.push({ why, f }); };
+  add("height", 1 + Math.min(HEIGHT_CAP, Math.max(0, up) * HEIGHT_PER_LEVEL));
+  add(dir > SIDE_BONUS ? "back" : "side", dir);
+  add(el > 1 ? "strong" : "weak", el);
+  add("res", 1 - (target.res[ab.element] ?? 0) / 100);
+  add(target.escape === "flee" ? "flee" : "retreat", takenFactor(target));
+  add("weaken", statusOf(caster, "weaken") ? WEAKEN_FACTOR : 1);
+  add("executioner", caster.passive === "executioner" && target.hp < target.maxHp / 2 ? EXECUTIONER_FACTOR : 1);
+  add("guarded", guardedBy(s, target) ? GUARD_FACTOR : 1);
+  add("guardStrike", caster.guardStrike ? GUARD_STRIKE : 1);
+  add("rules", caster.team === "heroes" ? RULES.damage : RULES.foeDamage);
+  return parts;
+}
+
+export function damageFactor(s: BattleState, caster: Unit, target: Unit, ab: Ability, at: Pos = caster.pos): number {
+  return damageParts(s, caster, target, ab, at).reduce((a, p) => a * p.f, 1);
 }
 
 /** Job passives: Executioner hits foes under half HP harder; Guard shields the allies standing next to it. */
 function passiveFactor(s: BattleState, caster: Unit, target: Unit): number {
-  let f = caster.passive === "executioner" && target.hp < target.maxHp / 2 ? EXECUTIONER_FACTOR : 1;
-  const guarded = s.units.some((g) => g.passive === "guard" && g.id !== target.id && g.life === "up" && !isFoe(g, target)
-    && unitGap(g, target) === 1);
-  if (guarded) f *= GUARD_FACTOR;
-  return f;
+  return (caster.passive === "executioner" && target.hp < target.maxHp / 2 ? EXECUTIONER_FACTOR : 1) * (guardedBy(s, target) ? GUARD_FACTOR : 1);
+}
+
+/** Guard (a job passive) shields the allies standing next to it. */
+function guardedBy(s: BattleState, target: Unit): boolean {
+  return s.units.some((g) => g.passive === "guard" && g.id !== target.id && g.life === "up" && !isFoe(g, target) && unitGap(g, target) === 1);
 }
 
 /** Where the attack lands relative to the way the target faces. */

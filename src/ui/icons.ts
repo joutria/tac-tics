@@ -895,6 +895,24 @@ const ABILITY_PACK: Partial<Record<string, PackIcon>> = {
   sapRay: "S_Poison08", sanctuary: "S_Holy09", purge: "S_Holy10", brand: "S_Fire08", sapBloom: "S_Poison05", sapCapRich: "S_Poison01",
   lighthouseWall: "E_Gold01", thunderhead: "S_Thunder07", myceliumNet: "S_Earth06",
 };
+/** Each item's pack icon (data/gear.ts ITEMS), for the shop, rewards and gear screens. */
+export const ITEM_PACK: Partial<Record<string, PackIcon>> = {
+  ashStaff: "W_Staff03", glassKnife: "W_Dagger002", emberRod: "W_Mace007", vineWhip: "W_Staff02", sunlance: "W_Gold_Spear",
+  patchedCoat: "A_Clothing02", tileVest: "A_Armour01", tideCloak: "A_Clothing01", sapBark: "A_Armour03",
+  bellCharm: "Ac_Medal02", featherCharm: "I_Feather01", hourglass: "I_Clock",
+};
+/** Each perk's pack icon (data/gear.ts PERKS). */
+export const PERK_PACK: Partial<Record<string, PackIcon>> = {
+  vigor: "S_Holy01", focus: "S_Magic02", might: "S_Buff08", stride: "A_Shoes02", quick: "S_Wind05", slip: "S_Buff04", ward: "E_Wood02",
+  keepRemanso: "Ac_Necklace06", keepGuijo: "I_Rock02", keepCentella: "I_Scroll02", keepMoheda: "I_C_Mushroom",
+};
+/** Other run screens: rewards that are not items, the three difficulties, gear slots left empty, a job, a talk. */
+export const RUN_PACK = {
+  coins: "I_GoldCoin", shards: "I_Jade", heal: "P_Red01", easy: "I_Clover", normal: "W_Sword002", hard: "S_Shadow14", tier: "S_Poison05",
+  weapon: "W_Sword001", armour: "A_Clothing02", charm: "Ac_Medal02", job: "W_Book05", chest: "I_Chest02",
+} as const satisfies Record<string, PackIcon>;
+export const pk = (name: PackIcon | undefined, fallback: IconId = "gear"): MenuIcon => (name ? `pk:${name}` : fallback);
+
 /** A menu icon: one of the hand-drawn icons, or a pack icon by name ("pk:S_Fire03"). */
 export type MenuIcon = IconId | `pk:${PackIcon}`;
 
