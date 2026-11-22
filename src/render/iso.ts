@@ -439,7 +439,8 @@ export interface DrawOptions {
 const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", tallgrass: "#5f9a3a", dirt: "#c08a58", water: "#4fb8e0", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
 
 const FACING_FRAME = { S: { col: 0, flip: false }, N: { col: 2, flip: false }, E: { col: 4, flip: false }, W: { col: 4, flip: true } } as const;
-const SHEET_ROW: Record<string, number> = { lumo: 1 };
+/** Which row of a multi-row sheet a look uses (all current sheets use their first row). */
+const SHEET_ROW: Record<string, number> = {};
 
 /** A small face for the turn bar: the unit's front frame, as an image URL. Cached per look. */
 const portraits = new Map<string, string>();

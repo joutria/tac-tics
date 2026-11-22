@@ -3,7 +3,7 @@
 import { existsSync } from "node:fs";
 import { ELEMENTS, ELEMENT_IDS, BEATS } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
-import { TEST_UNITS } from "../src/data/units";
+import { TEST_UNITS, lookArt } from "../src/data/units";
 import { standable, TERRAIN, tileAt } from "../src/engine/grid";
 import { TEXT } from "../src/i18n/text";
 import { ABILITIES } from "../src/data/abilities";
@@ -82,7 +82,7 @@ for (const m of [MEADOW]) {
     const tile = tileAt(m, u.pos);
     if (!standable(tile)) fail(`unit ${u.id} starts on a tile it cannot stand on in ${m.id}`);
     if (!ELEMENTS[u.element]) fail(`unit ${u.id} has unknown element ${u.element}`);
-    if (!existsSync(`public/art/creatures/${u.look}.png`)) fail(`unit ${u.id}: missing art public/art/creatures/${u.look}.png`);
+    if (!existsSync(`public/${lookArt(u.look)}`)) fail(`unit ${u.id}: missing art public/${lookArt(u.look)}`);
   }
 }
 
@@ -104,7 +104,7 @@ for (const [id, c] of Object.entries(COMPANIONS)) {
   if (c.id !== id || c.spec.id !== id) fail(`companion ${id}: ids do not match`);
   for (const a of c.spec.abilities) if (!ABILITIES[a]) fail(`companion ${id} has unknown ability ${a}`);
   if (c.spec.quick && !ABILITIES[c.spec.quick]?.quick) fail(`companion ${id}: its own quick action ${c.spec.quick} is not a quick action`);
-  if (!existsSync(`public/art/creatures/${c.spec.look}.png`)) fail(`companion ${id}: missing art ${c.spec.look}.png`);
+  if (!existsSync(`public/${lookArt(c.spec.look)}`)) fail(`companion ${id}: missing art public/${lookArt(c.spec.look)}`);
   for (const [k, l] of Object.entries(c.remarks)) lineOk(`companion ${id} remark ${k}`, l!);
   for (const [k, l] of Object.entries(c.escalation)) lineOk(`companion ${id} escalation ${k}`, l);
   lineOk(`companion ${id} warning`, c.forbiddenWarning);
@@ -123,7 +123,7 @@ for (const r of REGIONS) {
   if (!r.species[r.boss.species]) fail(`region ${r.id}: boss species ${r.boss.species} does not exist`);
   if (!r.arenas.length) fail(`region ${r.id}: no arenas`);
   for (const sp of [...r.species, ...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])]) {
-    if (!existsSync(`public/art/creatures/${sp.look}.png`)) fail(`region ${r.id}: ${sp.name} has no art ${sp.look}.png`);
+    if (!existsSync(`public/${lookArt(sp.look)}`)) fail(`region ${r.id}: ${sp.name} has no art public/${lookArt(sp.look)}`);
     for (const a of sp.abilities) if (!ABILITIES[a]) fail(`region ${r.id}: ${sp.name} has unknown ability ${a}`);
   }
   for (const a of r.variant?.abilities ?? []) if (!ABILITIES[a]) fail(`region ${r.id}: variant teaches unknown ability ${a}`);
