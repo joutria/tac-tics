@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Tac-tics</title>
   <style>
-    /* FFTA-style windows: deep blue gradient, a cream frame inside a dark rim, a pixel font, a pointing hand on the
-       item in focus. Every window shares the .win look; buttons inside the battle menus are rows (.cmd). */
+    /* Handheld-style windows: a dark grey body in a gold pixel frame (the CC0 Golden UI pack, see the pixel skin at the
+       end), a pixel font, a pointing hand on the item in focus. Every window shares the .win look; buttons inside the
+       battle menus are rows (.cmd). */
     :root {
-      color-scheme: dark; --bg: #1d1f2b; --ink: #f7f3e8; --quiet: #b9c2e8; --accent: #ffe06b; --hero: #ffe680; --foe: #ff8a7a;
-      --win-top: #3a5fc2; --win-mid: #233d92; --win-bot: #172a6e; --frame: #ece6d2; --rim: #0b1033;
-      --panel: linear-gradient(180deg, var(--win-top) 0%, var(--win-mid) 55%, var(--win-bot) 100%);
+      color-scheme: dark; --bg: #15121c; --ink: #f5eedb; --quiet: #cfc6d6; --accent: #ffd96b; --hero: #ffe680; --foe: #ff9c8c;
+      --win-top: #4e4a4e; --win-mid: #4e4a4e; --win-bot: #4e4a4e; --frame: #d27d2c; --rim: #140c1c;
+      --panel: #4e4a4e;
       --px: "Pixelify Sans", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
@@ -286,6 +287,36 @@
     #system { grid-template-columns: repeat(5, auto); }
     #runHead .meters { display: none; }
   }
+  /* Pixel skin: windows and buttons framed by nine-slice pixel art from the CC0 "Golden UI" pack (tools/ui-art.py),
+     one art pixel per CSS pixel (2-3 screen pixels on a phone), so the menus are made of hard pixels like the board:
+     a gold rim, square stepped corners, hard offset shadows instead of blurred ones. main.ts sets the --skin-*
+     pictures (the base URL differs between the site and the app). The plain colours show if a picture is missing. */
+  .win, #runPanel .cards, #runPanel h2 { background: var(--panel); border: 3px solid var(--frame); border-radius: 0;
+    border-image: var(--skin-win) 7 9 7 10 fill / 7px 9px 7px 10px / 0 repeat; box-shadow: 3px 3px 0 rgba(4, 2, 9, 0.5); image-rendering: pixelated; }
+  button { background: #844c30; border: 3px solid #d27d2c; border-radius: 0; border-image: var(--skin-btn) 5 fill / 5px / 0 stretch;
+    box-shadow: 2px 2px 0 rgba(4, 2, 9, 0.5); image-rendering: pixelated; padding: 6px 11px 7px; }
+  button.primary { border-image-source: var(--skin-btn-gold); background: #d27d2c; }
+  button.primary:active:not(:disabled) { border-image-source: var(--skin-btn-lit); }
+  button.go { border-image-source: var(--skin-btn-go); background: #4f9e48; }
+  button.on, button.armed { border-image-source: var(--skin-btn-red); background: #b9473a; }
+  button:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
+  .win button.icon, .win button.flat, #system .row button, button.cmd, #runPanel .card, .chip, .sign { border-image: none; }
+  .win button.icon, .win button.flat, #system .row button, button.cmd, #runPanel .card { box-shadow: none; }
+  #abilities button.cmd, #abilities button.cmd.on { border-radius: 0; }
+  .win button.icon.on, #system .row button.on, #system .row button.armed { border-radius: 0; }
+  .chip, .gauge .track, .pips i, .meter .track, .meter .fill, #unitCard .face, #mercy .foe, #runPanel pre.stats { border-radius: 0; }
+  #unitCard .face { border-color: var(--frame); background: #2e2a30; }
+  .gauge .track { background: #1c1820; border-color: #141018; }
+  .chip { background: #2e2a30; } .chip.foes { background: #4a2028; } .chip.now { background: #6a4a1c; }
+  #help::after { border-color: var(--frame); }
+  /* Icons from the CC0 "496 pixel art icons" pack are 32 px: smooth them when a screen shrinks them, keep them sharp
+     when it enlarges them. */
+  @media (max-resolution: 1.5dppx) { img.ico.pk { image-rendering: auto; } }
+  /* Windows unroll in three steps when they open, like a handheld menu (not a smooth web fade). */
+  @keyframes unroll { 0% { transform: scaleY(0.15); } 50% { transform: scaleY(0.6); } 100% { transform: scaleY(1); } }
+  .fold.open .fold-list { transform-origin: top; animation: unroll 0.12s steps(1, end); }
+  #soundPanel, #mercy:not(:empty) { transform-origin: top; animation: unroll 0.12s steps(1, end); }
+  @media (prefers-reduced-motion: reduce) { .fold.open .fold-list, #soundPanel, #mercy { animation: none; } button.cmd::before { animation: none !important; } }
 </style>
 </head>
 <body>
