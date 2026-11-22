@@ -403,6 +403,27 @@
   #overlay.lost h1 { color: #ff7a6a; text-shadow: 0 4px 0 #6a1414, 4px 4px 0 #140c1c, -4px 4px 0 #140c1c, 0 0 24px rgba(255, 60, 40, 0.4); }
   @keyframes banner { from { transform: scale(1.6); opacity: 0; } to { transform: none; opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { #overlay h1 { animation: none; } }
+  /* Boot splash: the name and five pips lighting one after another, on the backdrop colour, then a short fade. */
+  #splash { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    background: radial-gradient(ellipse at 50% 45%, #2a2236, #0b0910 75%); transition: opacity 0.4s ease-out; }
+  #splash b { font: 400 56px/1 "Jacquard 12", var(--px, monospace); color: #ffd96b; letter-spacing: 2px; text-shadow: 0 3px 0 #6a3c14, 3px 3px 0 #140c1c; }
+  #splash .pips { display: flex; gap: 6px; }
+  #splash .pips i { width: 10px; height: 10px; background: #3a2f44; box-shadow: inset 0 0 0 1px #140c1c; animation: pip 1.2s steps(1, end) infinite; }
+  #splash .pips i:nth-child(2) { animation-delay: 0.2s; } #splash .pips i:nth-child(3) { animation-delay: 0.4s; }
+  #splash .pips i:nth-child(4) { animation-delay: 0.6s; } #splash .pips i:nth-child(5) { animation-delay: 0.8s; }
+  @keyframes pip { 0% { background: #ffd96b; } 40% { background: #3a2f44; } }
+  #splash.gone { opacity: 0; pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { #splash .pips i { animation: none; background: #ffd96b; } }
+  /* Camp stations: three big tiles, each a place at the fire, with a badge for what is new. */
+  .stations { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; width: 100%; }
+  .station { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; text-align: center; }
+  .station b { font-size: 16px; } .station small { font-size: 12px; color: var(--quiet); }
+  .station .badge { position: absolute; top: 6px; right: 8px; min-width: 18px; padding: 1px 5px; font-style: normal; font-size: 12px; background: #c0392b; color: #fff; box-shadow: 0 0 0 2px #140c1c; }
+  /* Run summary: the journey in six numbers. */
+  .summary { width: 100%; } .summary .where { margin: 0 0 6px; text-align: center; color: var(--frame); letter-spacing: 1px; }
+  .summary .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .summary .tile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; background: rgba(0,0,0,0.2); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
+  .summary .tile b { font-size: 20px; color: var(--accent); } .summary .tile small { font-size: 11px; color: var(--quiet); text-transform: uppercase; letter-spacing: 1px; }
   /* The title screen (src/ui/title.ts): the name in a blackletter pixel face over the dimmed board, embers rising,
      and a short centred menu of plain words, the hand on the one in focus (like a console game's title, not a web
      page of buttons). */
@@ -464,6 +485,8 @@
 </style>
 </head>
 <body>
+  <!-- Boot splash: shown from the first paint until the art has loaded and the title opens (main.ts hides it). -->
+  <div id="splash" role="status" aria-label="Loading"><b>tac·tics</b><span class="pips"><i></i><i></i><i></i><i></i><i></i></span></div>
   <canvas id="game"></canvas>
   <div id="top" class="bar">
     <div id="head" class="win"><div id="unitCard"></div><div id="queue"></div></div>

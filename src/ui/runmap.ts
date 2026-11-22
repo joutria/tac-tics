@@ -16,7 +16,7 @@ import { ALIGN, ALIGNMENTS, type Align, type Meter } from "../data/alignment";
 import { TWINS } from "../data/twins";
 import { alignOf, alignmentOf, heroEnding, lockWarning, twinBar } from "../run/alignment";
 import { heroSpec, sheetStats, statSources } from "../run/hero";
-import { HERO, SAP_TIERS } from "../data/region";
+import { HERO, REGIONS, SAP_TIERS } from "../data/region";
 import { abilityIcon, icon, ICONS, ITEM_PACK, PERK_PACK, pk, RUN_PACK, type IconId } from "./icons";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛", floodgate: "💧" };
@@ -121,10 +121,29 @@ function talkBox(companion: string, lines: string[], act: MapActions, reply?: st
   return box;
 }
 
+/** The run in numbers, as the journey ends (like a roguelike's run recap): how far, how strong, what it held, who
+    came along. Tiles with pack icons; the face slot takes whatever portrait the hero has. */
+function runSummary(run: RunState, lang: Lang): HTMLElement {
+  const box = document.createElement("div"); box.className = "summary";
+  const regions = REGIONS.length, reached = Math.min(regions, run.region + 1);
+  const met = run.party.length, stayed = run.party.filter((m) => m.status === "with").length;
+  const tile = (ic: string, value: string, label: string) => `<span class="tile">${ic}<b>${value}</b><small>${label}</small></span>`;
+  box.innerHTML = `<p class="where">${html(regionOf(run).name[lang])} · ${html(t(lang, `diff.${run.difficulty}`))}</p>`
+    + `<div class="tiles">`
+    + tile(iconTile(pk(RUN_PACK.normal)), `${reached}/${regions}`, t(lang, "sumRegions"))
+    + tile(iconTile(pk(RUN_PACK.job)), `${run.hero.level}`, t(lang, "sumLevel"))
+    + tile(iconTile(pk(RUN_PACK.easy)), `${run.spared?.length ?? 0}`, t(lang, "sumSpared"))
+    + tile(iconTile(pk(RUN_PACK.coins)), `${run.coins}`, t(lang, "sumCoins"))
+    + tile(iconTile(pk(RUN_PACK.shards)), `${run.shards}`, t(lang, "sumShards"))
+    + tile(iconTile(pk(RUN_PACK.charm)), `${stayed}/${met}`, t(lang, "sumParty"))
+    + `</div>`;
+  return box;
+}
+
 /** The first thing to answer (perk, reward or shop), or the gear panel when `gearOpen`. */
 function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActions, gearOpen: boolean, closeGear: () => void) {
   const offer = run.offers[0];
-  const epilogue = !!run.over && (run.party.length > 0 || run.over === "won" || !!run.endedBy) && !gearOpen;
+  const epilogue = !!run.over && !gearOpen;
   panel.style.display = offer || gearOpen || epilogue ? "flex" : "none";
   if (!offer && !gearOpen && !epilogue) { panel.replaceChildren(); return; }
   const button = (inner: string, onClick: () => void, cls = "card", disabled = false) => {
@@ -141,7 +160,9 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     + (alignShiftText(sp.align, lang) ? ` · ${alignShiftText(sp.align, lang)}` : "");
   if (epilogue) {
     // The run is over: one short epilogue per companion ever recruited.
-    title.textContent = t(lang, "epilogue");
+    title.textContent = t(lang, run.over === "won" ? "summaryWon" : "summaryLost");
+    list.append(runSummary(run, lang));
+    if (run.party.length || run.over === "won" || run.endedBy) { const h = document.createElement("h3"); h.textContent = t(lang, "epilogue"); list.append(h); }
     // The hero's own ending comes first, from where the two meters ended up.
     if (run.over === "won") {
       const a = alignOf(run), end = heroEnding(a);
