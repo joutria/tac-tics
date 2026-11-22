@@ -15,7 +15,7 @@ import { endingOf, readyForLesson, type Member } from "../run/party";
 import { ALIGN, ALIGNMENTS, type Align, type Meter } from "../data/alignment";
 import { TWINS } from "../data/twins";
 import { alignOf, alignmentOf, heroEnding, lockWarning, twinBar } from "../run/alignment";
-import { heroSpec, statSources } from "../run/hero";
+import { heroSpec, sheetStats, statSources } from "../run/hero";
 import { HERO, SAP_TIERS } from "../data/region";
 import { abilityIcon, icon, ICONS, ITEM_PACK, PERK_PACK, pk, RUN_PACK, type IconId } from "./icons";
 
@@ -261,11 +261,11 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     const src = statSources(HERO, run.hero);
     const row = (k: string, value: string, parts: string, what: string) =>
       `<div class="srow s-${k}"><b>${t(lang, k as "str")}</b><em>${value}</em><small>${parts}</small><p>${what}</p></div>`;
-    stats.innerHTML = (["ap", "mp", "speed", "str", "mag", "agi"] as const).map((k) => {
-      const c = src[k];
+    stats.innerHTML = sheetStats().map((k) => {
+      const c = src[k], value = c.base + c.lv + c.perk + c.gear;
       const parts = [`${c.base} ${t(lang, "src.base")}`, ...([["lv", c.lv], ["perk", c.perk], ["gear", c.gear]] as const).filter(([, n]) => n)
         .map(([w, n]) => `<i class="${n > 0 ? "up" : "dn"}">${n > 0 ? "+" : "−"}${Math.abs(n)} ${t(lang, `src.${w}`)}</i>`)].join(" ");
-      return row(k, `${spec[k]}`, parts, t(lang, `sx.${k}`));
+      return row(k, `${value}`, parts, t(lang, `sx.${k}`));
     }).join("")
       + (Object.values(spec.res).some((v) => v)
         ? row("res", "", Object.entries(spec.res).filter(([, v]) => v).map(([e, v]) => `<span>${icon(elIcon(e))}${v}%</span>`).join(" "), t(lang, "sx.res")) : "");
