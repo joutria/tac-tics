@@ -17,7 +17,8 @@ import { bodyGap, cellsOf, coversPos, GridMap, NEIGHBOURS, nearestCell, Pos, sam
 import { routeTo } from "./movement";
 import { BIG_BODY } from "./sight";
 import { rngNext, seedFrom } from "./rng";
-import { fireUnder, sapUnder, shockNear, updateTiles, type TerrainFx } from "./terrain";
+import { fireUnder, sapUnder, shockNear, soak, updateTiles, type TerrainFx } from "./terrain";
+import { canSwim, inWater, nativeSwimmer, SWIM_EXTRA_MP } from "./swim";
 import { cowering, escapeStateFor, FLEE_LOCK, isBorder, turnMp, yielding, type EscapeState } from "./escape";
 
 export type Team = "heroes" | "foes";
@@ -247,6 +248,7 @@ export function lockAt(s: BattleState, mover: Unit, p: Pos): number {
 export function moveRules(s: BattleState, u: Unit) {
   return {
     mp: u.mp, jump: u.jump, size: sizeOf(u),
+    ...(canSwim(u) ? { swim: nativeSwimmer(u) ? 0 : SWIM_EXTRA_MP } : {}),
     blocked: (p: Pos) => { const o = unitAt(s, p); return !!o && o.id !== u.id; },
     // Oil: one extra MP to walk out of it.
     lockAt: (p: Pos) => lockAt(s, u, p) + (tileAt(s.map, p)?.surface === "oil" ? 1 : 0),
@@ -332,6 +334,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
         u.ct += delayFor(u.speed); u.seq = ++s.seqCounter;
         continue;
       }
+      soak(s, u);
       if (fireUnder(s, u)) events.push({ e: "caughtFire", unit: u.id });
       const sap = sapUnder(s, u);
       if (sap) events.push({ e: "sapped", unit: u.id, status: sap });
@@ -417,6 +420,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       events.push({ e: "moved", unit: actor.id, path: walked }, ...after);
       s.winner = winnerOf(s);
       if (actor.life !== "up") return applyEnd(s, actor, events);
+      soak(s, actor);
       if (fireUnder(s, actor)) events.push({ e: "caughtFire", unit: actor.id });
       const sap = sapUnder(s, actor);
       if (sap) events.push({ e: "sapped", unit: actor.id, status: sap });
@@ -480,6 +484,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
     case "guard": {
       const id = guardAbility(actor);
       if (actor.escape !== "none" || !id) return { ok: false, error: "needs AP left for an attack that reaches next to you" };
+      if (inWater(s.map, actor) && !nativeSwimmer(actor)) return { ok: false, error: "no footing while swimming" };
       actor.guard = id;
       actor.spentAp = true;
       events.push({ e: "guarded", unit: actor.id });
