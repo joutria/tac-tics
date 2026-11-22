@@ -30,7 +30,7 @@ import { approachScene, departScene, placeOf, type Origin, type Scene } from "./
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, nodeLabel, renderRunMap } from "./ui/runmap";
-import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, type IconId } from "./ui/icons";
+import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, type IconId } from "./ui/icons";
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
@@ -1904,10 +1904,23 @@ function sizeCanvas() {
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 }
 
+/** Behind the board: a dim plum glow in the middle fading to near black at the edges, so the island floats in a
+    vignette instead of on a flat colour. Rebuilt only when the canvas changes size. */
+let backdropFill: { w: number; h: number; g: CanvasGradient } | null = null;
+function backdrop(): CanvasGradient {
+  const w = canvas.width, h = canvas.height;
+  if (!backdropFill || backdropFill.w !== w || backdropFill.h !== h) {
+    const g = ctx.createRadialGradient(w / 2, h * 0.45, 0, w / 2, h * 0.45, Math.hypot(w, h) * 0.6);
+    g.addColorStop(0, "#2a2236"); g.addColorStop(0.55, "#1a1522"); g.addColorStop(1, "#0b0910");
+    backdropFill = { w, h, g };
+  }
+  return backdropFill.g;
+}
+
 function frame(time: number) {
   if (onMap || mapOpen) sizeCanvas();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "#1d1f2b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = backdrop(); ctx.fillRect(0, 0, canvas.width, canvas.height);
   pollPads(time);
   if (mapOpen) { drawRoute(time); requestAnimationFrame(frame); return; }
   if (onMap) {
@@ -1951,9 +1964,12 @@ async function start() {
     reloadOk: () => onMap && !(play && !play.finished && play.started !== null),
     get: safeGet, set: safeSet,
   });
-  images = await loadImages(srcs);
+  [images] = await Promise.all([loadImages(srcs), loadPackIcons(import.meta.env.BASE_URL)]);
   // Pixel icons everywhere: the menu hand, and every emoji any text still carries becomes a pixel icon as it lands.
   document.documentElement.style.setProperty("--pointer", `url(${iconUrl("pointer")})`);
+  // The pixel window and button frames (tools/ui-art.py), used by the nine-slice skin at the end of index.html's style.
+  for (const f of ["win", "btn", "btn-gold", "btn-lit", "btn-go", "btn-red"])
+    document.documentElement.style.setProperty(`--skin-${f}`, `url(${import.meta.env.BASE_URL}art/ui/${f}.png)`);
   iconize(document.body);
   new MutationObserver((list) => {
     for (const m of list) {
