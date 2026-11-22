@@ -19,6 +19,21 @@ const recolor = (rows: Rows, map: Record<string, string>): Rows => rows.map((r) 
 /** `top` drawn over `base` (its see-through pixels show the base). */
 const overlay = (base: Rows, top: Rows): Rows => base.map((r, y) => [...r].map((c, x) => (top[y]![x] !== "." ? top[y]![x] : c)).join(""));
 
+const MENU = pad([
+  "................",
+  "................",
+  "..kkkkkkkkkkkk..",
+  "..kwwwwwwwwwwk..",
+  "..kkkkkkkkkkkk..",
+  "................",
+  "..kkkkkkkkkkkk..",
+  "..kwwwwwwwwwwk..",
+  "..kkkkkkkkkkkk..",
+  "................",
+  "..kkkkkkkkkkkk..",
+  "..kwwwwwwwwwwk..",
+  "..kkkkkkkkkkkk..",
+]);
 const HEART = pad([
   "................",
   "..kkk.....kkk...",
@@ -847,7 +862,7 @@ export const ICONS = {
   // Buttons.
   end: FLAG, wait: CLOCK, undo: recolor(HOOK, { c: "w" }), rewind: REWIND, danger: WARN, flat: GRID, rotL: HOOK, rotR: mirror(HOOK),
   map: MAP, gear: PACK, stats: CHART, lang: BUBBLE, hold: HAND, zoomIn: LENS, zoomOut: LENS_OUT, confirm: CHECK, cancel: CROSS,
-  sound: SPEAKER, muted: MUTED, skip: CHEVRONS, spare: recolor(FLAG, { r: "w", w: "l" }), coin: COIN, shard: SHARD,
+  sound: SPEAKER, muted: MUTED, menu: MENU, skip: CHEVRONS, spare: recolor(FLAG, { r: "w", w: "l" }), coin: COIN, shard: SHARD,
   // Run map stops.
   battle: overlay(SWORD, mirror(SWORD)), elite: recolor(SKULL, { p: "w", P: "R" }), rest: CAMPFIRE, shop: COIN, recruit: FACE,
   rival: recolor(STAR, { y: "p", Y: "P" }), quest: recolor(DIAMOND, { l: "c", s: "b" }), boss: CROWN, floodgate: SLUICE,

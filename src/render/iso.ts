@@ -338,7 +338,7 @@ export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: numbe
   return near?.p ?? null;
 }
 
-export type Mark = "move" | "range" | "blocked" | "target" | "area" | "chosen" | "short";
+export type Mark = "move" | "range" | "blocked" | "target" | "area" | "chosen" | "short" | "deploy";
 /** Small notes on reach: up = reached only thanks to height, down = lost to lower ground. */
 export type ReachBadge = "up" | "down";
 /** A line of sight cut by `blocker`, drawn over the board while aiming at a blocked tile. */
@@ -400,6 +400,8 @@ function placeOf(m: GridMap, u: Unit, mo: Motion | undefined, time: number, rot:
 
 export interface DrawOptions {
   marks: Map<string, Mark>;
+  /** Per tile: how far it has dropped and how faded it is (the battle intro). */
+  sink?: (p: Pos) => { dy: number; alpha: number } | null;
   hover: Pos | null;
   active: string | null;
   time: number;
@@ -457,6 +459,7 @@ const MARK_STYLE: Record<Mark, [string, string]> = {
   area: ["rgba(255, 170, 60, 0.5)", "rgba(255, 230, 160, 1)"],
   chosen: ["rgba(255, 216, 107, 0.6)", "rgba(255, 255, 255, 1)"],
   short: ["rgba(20, 16, 30, 0.22)", "rgba(255, 170, 150, 0.28)"], // inside the card's reach, but too close or too low
+  deploy: ["rgba(255, 216, 107, 0.42)", "rgba(255, 240, 180, 1)"], // where a party member may start (before a fight)
 };
 /** Marks inside an ability's reach: the outline runs around them. */
 const IN_REACH = new Set<Mark>(["range", "target", "blocked", "area", "chosen"]);
@@ -489,6 +492,10 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       const p = unrotate(m, { x, y: k - x }, view.rot);
       const tile = tileAt(m, p);
       if (!tile || tile.offMap) continue;
+      // The battle intro: ground outside the arena drops away, with whatever stands on it.
+      const sunk = opt.sink?.(p);
+      if (sunk && sunk.alpha <= 0) continue;
+      if (sunk) { ctx.save(); ctx.translate(0, sunk.dy); ctx.globalAlpha = sunk.alpha; }
       const c = tileCenter(m, p, view.rot);
       const k2 = `${p.x},${p.y}`;
       if (flat) {
@@ -589,6 +596,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       for (const pl of places) if (!pl.moving && !pl.big && pl.slot.x === p.x && pl.slot.y === p.y) drawPlace(pl);
       // A front fringe over whoever stands in it, so they read as hidden in the grass.
       if (tile.terrain === "tallgrass" && here) tallGrass(ctx, c, p.x * 5 + p.y * 11, opt.time, true, flat);
+      if (sunk) ctx.restore();
     }
     // A unit between two tiles goes after the whole diagonal it is entering, so nothing on that row covers it; so
     // does a giant, whose body spills over the tiles beside its front one.

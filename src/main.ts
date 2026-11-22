@@ -25,6 +25,7 @@ import { KITS, LORE, MILESTONE_HINT } from "./data/camp";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
 import { aheadOf, choices } from "./run/map";
 import { memberSpec } from "./run/party";
+import { deployUnit, deployZone } from "./run/deploy";
 import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
@@ -92,7 +93,7 @@ const animating = () => performance.now() < animUntil;
 function safeGet(k: string) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode: play without saving */ } }
 
-const heroTurn = () => !state.winner && activeUnit(state).team === "heroes";
+const heroTurn = () => !deploy && !state.winner && activeUnit(state).team === "heroes";
 
 /** Replays a save one command at a time to rebuild the turn bookkeeping (where the current turn began, where each
     of the hero's turns began), so Undo and Rewind still work after a reload. */
@@ -128,6 +129,15 @@ let campPage: string | null = null;
 let statsOpen = false;
 /** When the battle on screen started, for the play log (0 for a battle resumed from a save). */
 let battleStartedAt = 0;
+/** Before a fight: the tiles the party may start on and the party member picked to move (run/deploy.ts). */
+let deploy: { zone: Pos[]; pick: string | null } | null = null;
+/** The battle view grows (or shrinks) from the travel scene's size when a fight opens after the intro. */
+let introZoom: { from: number; at: number } | null = null;
+const INTRO_ZOOM_MS = 750;
+/** The travel scene's scale when its intro handed over to a fight (0 when there was no intro). */
+let introFrom = 0;
+/** The battle intro on the travel screen: the ground around the arena drops away while the camera settles on it. */
+const INTRO = { rowMs: 55, jitterMs: 140, fallMs: 520, holdMs: 350 };
 
 /** A new run starts with the difficulty choice; the run itself is made once the player picks. */
 function startRun() {
@@ -275,6 +285,7 @@ function showMap() {
   label("mapSound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), t(lang, "soundHint"));
   label("mapLang", "lang", lang === "es" ? "English" : "Español", t(lang, "langHint"));
   label("mapBtn", "map", t(lang, "routeMap"), t(lang, "mapKeys"));
+  label("travelMore", "menu", t(lang, "more"), t(lang, "moreRunHint"));
   document.documentElement.lang = lang;
   ensureDepart();
   // A finished run shows the route it took, under the epilogue.
@@ -327,11 +338,39 @@ function startBattle(announce: boolean) {
   battleStartedAt = save.commands.length ? 0 : Date.now();
   rebuild(save.commands);
   resetView();
+  // A fresh fight (not an ambush) first lets the player place the party.
+  deploy = !save.commands.length && !save.setup.ambush && !save.placed ? { zone: deployZone(save.setup), pick: HERO.id } : null;
+  if (introFrom) { introZoom = { from: introFrom, at: performance.now() }; introFrom = 0; }
   persist(); refresh(); followHero();
   const rivals = journey.rivals.filter((r) => !r.settled && save.setup.units.some((u) => u.id === r.id));
   if (announce && rivals.length && !save.commands.length) toast(rivals.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
   else if (save.setup.ambush && !save.commands.length) toast(t(lang, "ambush"), 2600);
   else if (journey.help && journey.help.node === journey.battle!.node && !save.commands.length) toast(helpLine(journey, lang), 3200);
+  maybeFoeTurn();
+}
+
+/** Placing the party: a tap on a party member picks it; a tap on a gold tile moves it there (or swaps two). */
+function deployTap(p: Pos) {
+  if (!deploy) return;
+  const who = unitAt(state, p);
+  if (who && who.team === "heroes" && who.id !== deploy.pick) { deploy.pick = who.id; sfx("select"); refresh(); return; }
+  if (!deploy.pick) return;
+  const next = deployUnit(save.setup, deploy.pick, p, deploy.zone);
+  if (next === save.setup) { if (!who) sfx("error"); return; }
+  save.setup = next;
+  rebuild([]);
+  sfx("step");
+  persist(); refresh();
+}
+
+/** The party is placed: the fight begins. */
+function beginFight() {
+  if (!deploy) return;
+  deploy = null;
+  save.placed = true;
+  battleStartedAt = Date.now();
+  sfx("select");
+  persist(); refresh(); followHero();
   maybeFoeTurn();
 }
 
@@ -538,7 +577,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
 }
 
 async function maybeFoeTurn() {
-  if (busy || onMap) return;
+  if (busy || onMap || deploy) return;
   busy = true; pending = null; tooltip(null); refresh();
   while (!state.winner && activeUnit(state).team === "foes") {
     for (const c of planTurn(state)) {
@@ -626,6 +665,12 @@ function marks(): Map<string, Mark> {
     ▼ lost to lower ground) and, over a tile whose line of sight is cut, that line and what cuts it. */
 function aimView(): { marks: Map<string, Mark>; badges: Map<string, ReachBadge>; line?: SightLine } {
   const out = new Map<string, Mark>(), badges = new Map<string, ReachBadge>();
+  if (deploy) {
+    for (const p of deploy.zone) out.set(`${p.x},${p.y}`, "deploy");
+    const at = deploy.pick ? unitById(state, deploy.pick).pos : null;
+    if (at) out.set(`${at.x},${at.y}`, "chosen");
+    return { marks: out, badges };
+  }
   if (!heroTurn() || busy) return { marks: out, badges };
   const u = activeUnit(state);
   if (!selected) {
@@ -664,20 +709,42 @@ function aimView(): { marks: Map<string, Mark>; badges: Map<string, ReachBadge>;
     that explains itself is marked data-h and registers how to say it. */
 const helpers = new WeakMap<Element, () => string>();
 let helpHover: Element | null = null;
+/** How long a finger holds an item before its help shows. */
+const HOLD_MS = 380;
+/** True while a finger holds an item to read its help (a tap never shows it). */
+let held = false;
 function explains(el: HTMLElement, say: () => string) { el.dataset.h = "1"; helpers.set(el, say); el.removeAttribute("title"); }
 const plainHelp = (title: string, body: string, ic?: IconId) => `<div class="head">${ic ? icon(ic, "big") : ""}<span>${title}</span></div><p>${body}</p>`;
 
 function showHelp() {
   const box = $("help");
   // The item hovered may have been rebuilt by a refresh: find the one under the pointer now.
-  if (helpHover && !document.contains(helpHover)) helpHover = [...document.querySelectorAll("[data-h]:hover")].pop() ?? null;
+  if (helpHover && !document.contains(helpHover)) helpHover = held ? null : [...document.querySelectorAll("[data-h]:hover")].pop() ?? null;
   const say = helpHover && helpers.get(helpHover);
-  const html = say ? say() : !onMap && selected && heroTurn() ? abilityHelp(selected, activeUnit(state)) : "";
-  if (!html || mapOpen || (onMap && !say)) { box.style.display = "none"; return; }
+  const html = say ? say() : "";
+  if (!html || mapOpen) { box.style.display = "none"; return; }
   box.innerHTML = html;
   box.style.display = "block";
-  const topBar = onMap ? $("travelTop") : $("top");
-  box.style.top = `${topBar.getBoundingClientRect().bottom + 4}px`;
+  placeBeside(box, helpHover!);
+}
+
+/** Puts a popup right next to the item it explains, like a spell bar's tooltip: above it when there is room, else
+    beside the window the item sits in, never off screen. A small caret points at the item. */
+function placeBeside(box: HTMLElement, el: Element) {
+  const r = el.getBoundingClientRect();
+  const win = (el.closest(".win") ?? el).getBoundingClientRect();
+  const w = box.offsetWidth, h = box.offsetHeight, gap = 8, edge = 6;
+  const clampX = (x: number) => Math.max(edge, Math.min(innerWidth - w - edge, x));
+  const clampY = (y: number) => Math.max(edge, Math.min(innerHeight - h - edge, y));
+  let x: number, y: number, side: string;
+  if (win.top - gap - h >= edge) { x = clampX(r.left + r.width / 2 - w / 2); y = win.top - gap - h; side = "below"; }
+  else if (innerHeight - win.bottom - gap - h >= edge) { x = clampX(r.left + r.width / 2 - w / 2); y = win.bottom + gap; side = "above"; }
+  else if (win.left - gap - w >= edge) { x = win.left - gap - w; y = clampY(r.top + r.height / 2 - h / 2); side = "right"; }
+  else { x = Math.min(innerWidth - w - edge, win.right + gap); y = clampY(r.top + r.height / 2 - h / 2); side = "left"; }
+  box.style.left = `${x}px`; box.style.top = `${y}px`;
+  box.dataset.caret = side;
+  // Where along its edge the caret sits: at the item's centre.
+  box.style.setProperty("--caret", side === "below" || side === "above" ? `${Math.max(12, Math.min(w - 12, r.left + r.width / 2 - x))}px` : `${Math.max(12, Math.min(h - 12, r.top + r.height / 2 - y))}px`);
 }
 
 /** Why an ability can't be used, in words. */
@@ -754,7 +821,13 @@ function dress(id: string, ic: IconId, label: string, help: () => string, iconOn
 function refresh() {
   if (onMap) return;
   const u = activeUnit(state);
-  renderUnitCard(u);
+  renderUnitCard(deploy?.pick ? unitById(state, deploy.pick) : u);
+  document.body.classList.toggle("deploying", !!deploy);
+  if (deploy) {
+    $("deployTitle").textContent = t(lang, "deployTitle");
+    $("deployHint").textContent = t(lang, "deployHint");
+    $("deployGo").innerHTML = `${icon("confirm")}<span>${t(lang, "deployGo")}</span>`;
+  }
   const queue = $("queue");
   const label = document.createElement("span"); label.className = "label"; label.textContent = `${t(lang, "upNext")}:`;
   queue.replaceChildren(label);
@@ -763,7 +836,10 @@ function refresh() {
     const chip = document.createElement("button");
     chip.className = `chip ${v.team}${i === 0 ? " now" : ""}`;
     const face = portrait(images, v.look);
-    chip.innerHTML = `${face ? `<img src="${face}" alt="">` : ""}<span>${v.life === "downed" ? `${v.name} ✚` : yielding(v) ? `🏳 ${v.name}` : v.name}</span>`;
+    const mark = v.life === "downed" ? "✚" : yielding(v) ? "🏳" : "";
+    chip.innerHTML = `${face ? `<img src="${face}" alt="">` : `<span>${v.name.slice(0, 2)}</span>`}${mark ? `<span class="mark">${mark}</span>` : ""}`;
+    chip.setAttribute("aria-label", `${i === 0 ? `${t(lang, "turnOf", { name: v.name })}` : v.name}${mark ? ` ${mark}` : ""}`);
+    explains(chip, () => plainHelp(v.name, `${t(lang, "hp")} ${v.hp}/${v.maxHp}${v.life === "downed" ? " ✚" : ""}`));
     chip.onclick = () => {
       // Find the unit: pan to it and make it pulse; for a foe, also show its reach.
       focus = { id: v.id, until: performance.now() + 1800 };
@@ -798,6 +874,7 @@ function refresh() {
     const ab = ABILITIES[id]!;
     const b = document.createElement("button");
     b.className = `cmd${ab.quick ? " sub" : ""}${selected === id ? " on" : ""}`;
+    b.style.setProperty("--el", ELEMENTS[ab.element].col);
     const why = abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
@@ -821,9 +898,9 @@ function refresh() {
   const armed = performance.now() < rewindArmed;
   dress("rewind", "rewind", armed ? t(lang, "rewindAgain") : `${t(lang, "rewind")} (${left})`, () => plainHelp(t(lang, "rewind"), t(lang, "rewindHint"), "rewind"));
   rw.classList.toggle("armed", armed);
-  dress("danger", "danger", t(lang, "danger"), () => plainHelp(t(lang, "danger"), `${t(lang, "dangerHint")} (Y)`, "danger"), true);
+  dress("danger", "danger", t(lang, "danger"), () => plainHelp(t(lang, "danger"), `${t(lang, "dangerHint")} (Y)`, "danger"));
   $("danger").classList.toggle("on", dangerAll);
-  dress("flat", "flat", t(lang, "flat"), () => plainHelp(t(lang, "flat"), t(lang, "flatHint"), "flat"), true);
+  dress("flat", "flat", t(lang, "flat"), () => plainHelp(t(lang, "flat"), t(lang, "flatHint"), "flat"));
   $("flat").classList.toggle("on", isFlat());
   dress("end", "end", t(lang, "endTurn"), () => plainHelp(t(lang, "endTurn"), t(lang, "endHint"), "end"));
   dress("wait", "wait", t(lang, "wait"), () => plainHelp(t(lang, "wait"), t(lang, "waitHint"), "wait"));
@@ -835,18 +912,19 @@ function refresh() {
   for (const [id, dir, key, ic] of [["rotateL", "rotateLeft", "Q", "rotL"], ["rotateR", "rotateRight", "E", "rotR"]] as const) {
     dress(id, ic, t(lang, dir), () => plainHelp(t(lang, dir), `${t(lang, dir)} (${key}, ${key === "Q" ? "LB" : "RB"})`, ic), true);
   }
-  dress("zoomIn", "zoomIn", t(lang, "zoomIn"), () => plainHelp(t(lang, "zoomIn"), t(lang, "zoomIn"), "zoomIn"), true);
-  dress("zoomOut", "zoomOut", t(lang, "zoomOut"), () => plainHelp(t(lang, "zoomOut"), t(lang, "zoomOut"), "zoomOut"), true);
-  dress("sound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), () => plainHelp(t(lang, "sound"), t(lang, "soundHint"), "sound"), true);
-  dress("lang", "lang", lang === "es" ? "English" : "Español", () => plainHelp(lang === "es" ? "English" : "Español", t(lang, "langHint"), "lang"), true);
+  dress("zoomIn", "zoomIn", t(lang, "zoomIn"), () => plainHelp(t(lang, "zoomIn"), t(lang, "zoomIn"), "zoomIn"));
+  dress("zoomOut", "zoomOut", t(lang, "zoomOut"), () => plainHelp(t(lang, "zoomOut"), t(lang, "zoomOut"), "zoomOut"));
+  dress("sound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), () => plainHelp(t(lang, "sound"), t(lang, "soundHint"), "sound"));
+  dress("lang", "lang", lang === "es" ? "English" : "Español", () => plainHelp(lang === "es" ? "English" : "Español", t(lang, "langHint"), "lang"));
+  dress("toolsBtn", "menu", t(lang, "more"), () => plainHelp(t(lang, "more"), t(lang, "moreHint"), "menu"), true);
   const confirm = $<HTMLButtonElement>("confirm");
   confirm.style.display = mine && pending ? "" : "none";
   confirm.innerHTML = `${icon("confirm")}<span>${selected ? abilityName(lang, selected) : t(lang, "moveHere")}</span>`;
   $("cancel").style.display = mine && (pending || selected) ? "" : "none";
   $("cancel").innerHTML = `${icon("cancel")}<span>${t(lang, "cancel")}</span>`;
   const bottomH = $("bottom").getBoundingClientRect().height;
-  $("hint").style.bottom = `${innerWidth > 720 ? 10 : bottomH + 2}px`;
-  $("act").style.bottom = `${innerWidth > 720 ? 36 : bottomH + 24}px`;
+  $("hint").style.bottom = `${roomy() ? 10 : bottomH + 2}px`;
+  $("act").style.bottom = `${roomy() ? 36 : bottomH + 24}px`;
   $("hint").textContent = !mine ? t(lang, u.team === "foes" ? "foeTurn" : "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
   const lost = state.winner === "foes" || state.units.some((x) => x.id === HERO.id && x.life !== "up");
   const boss = journey.battle && journey.map.nodes[journey.battle.node]!.kind === "boss";
@@ -1165,6 +1243,8 @@ interface Play {
   finished: boolean;
   /** Ambush foes jump out once the party arrives; then this is when they landed. */
   sprung?: number;
+  /** When the intro before a fight began (the ground around the arena drops away). */
+  intro?: number;
   onDone?: () => void;
 }
 let play: Play | null = null;
@@ -1275,6 +1355,16 @@ function tickPlay(now: number) {
     play.done = now + 1100;
     return;
   }
+  if (play.kind === "approach" && play.scene.arenaRows > 0 && play.intro === undefined) {
+    // Before the fight: everything that is not the arena falls away, row by row from the arena's edge.
+    play.intro = now;
+    const rows = play.stage.map.h - play.scene.arenaRows;
+    play.done = now + rows * INTRO.rowMs + INTRO.jitterMs + INTRO.fallMs + INTRO.holdMs;
+    $("runHint").textContent = "";
+    sfx("door");
+    return;
+  }
+  if (play.intro !== undefined) introFrom = sceneView.scale;
   play.finished = true;
   if (play.kind === "depart" && $("runHint").textContent === t(lang, "walking")) $("runHint").textContent = t(lang, "travelHint");
   const next = play.onDone;
@@ -1305,15 +1395,36 @@ function drawScene(time: number) {
   tickPlay(time);
   const dpr = window.devicePixelRatio || 1;
   const top = $("travelTop").getBoundingClientRect().height, bottom = $("travelBottom").getBoundingClientRect().height;
-  const scale = sceneScale(dpr);
-  // The camera follows the hero, a little ahead of them on the way, eased so it never jerks.
+  let scale = sceneScale(dpr);
+  if (play.intro !== undefined) {
+    // The intro also pulls back until the whole arena fits, so the fight opens at nearly the same size.
+    const size = mapPixelSize({ ...play.stage.map, h: play.scene.arenaRows });
+    // Same rule as the battle's own first zoom (layout): never smaller than a finger-sized tile.
+    const base = Math.min((innerWidth - 16) / size.w, (innerHeight - top - bottom - 40) / size.h);
+    const fit = base * Math.min(2, Math.max(1, MIN_TILE_PX / (TW * base))) * dpr;
+    const k = Math.min(1, (time - play.intro) / Math.max(1, (play.done - play.intro) * 0.85)), e = k * k * (3 - 2 * k);
+    if (fit < scale) scale = scale + (fit - scale) * e;
+  }
+  // The camera follows the hero, a little ahead of them on the way, eased so it never jerks; in the intro before a
+  // fight it settles slowly on the middle of the arena.
+  const intro = play.intro;
   const at = walkerPoint(play, time);
-  const target = { x: at.x + 40, y: at.y - 50 };
-  sceneCam = sceneCam ? { x: sceneCam.x + (target.x - sceneCam.x) * 0.08, y: sceneCam.y + (target.y - sceneCam.y) * 0.08 } : target;
+  const arenaMid = intro !== undefined ? tileCenter(play.stage.map, { x: (play.stage.map.w - 1) / 2, y: (play.scene.arenaRows - 1) / 2 }, 0) : null;
+  const target = arenaMid ?? { x: at.x + 40, y: at.y - 50 };
+  const ease = arenaMid ? 0.045 : 0.08;
+  sceneCam = sceneCam ? { x: sceneCam.x + (target.x - sceneCam.x) * ease, y: sceneCam.y + (target.y - sceneCam.y) * ease } : target;
   const midY = top + (innerHeight - top - bottom) / 2;
   sceneView = { rot: 0, scale, ox: canvas.width / 2 - sceneCam.x * scale, oy: midY * dpr - sceneCam.y * scale };
   const wasFlat = isFlat(); setFlat(false);
-  drawBattle(ctx, play.stage, images, sceneView, { marks: new Map(), hover: null, active: null, time, floaters: sceneFloaters, motions: play.motions, bare: true });
+  const arenaRows = play.scene.arenaRows;
+  const sink = intro === undefined ? undefined : (p: Pos) => {
+    if (p.y < arenaRows) return null;
+    const delay = (p.y - arenaRows) * INTRO.rowMs + ((p.x * 37 + p.y * 17) % 7) / 6 * INTRO.jitterMs;
+    const k = (time - intro - delay) / INTRO.fallMs;
+    if (k <= 0) return null;
+    return { dy: 260 * k * k, alpha: Math.max(0, 1 - k * 1.1) };
+  };
+  drawBattle(ctx, play.stage, images, sceneView, { marks: new Map(), hover: null, active: null, time, floaters: sceneFloaters, motions: play.motions, bare: true, sink });
   setFlat(wasFlat);
   placeSigns();
 }
@@ -1570,8 +1681,9 @@ function input(k: Input) {
   if (k === "hold") { toggleHold(); return; }
   if (k === "rotL" || k === "rotR") { view.rot = (view.rot + (k === "rotL" ? -1 : 1) + 4) % 4; hover = cursor; tooltip(cursor); return; }
   if (k === "danger") { dangerAll = !dangerAll; refresh(); return; }
-  if (!heroTurn() || busy || animating()) return;
-  if (k === "end") { $("end").click(); return; }
+  if ((!heroTurn() && !deploy) || busy || animating()) return;
+  if (k === "end") { if (deploy) beginFight(); else $("end").click(); return; }
+  if (deploy && k === "next") return;
   if (k === "back") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); return; }
   if (k === "next") {
     // Cycles the abilities that can be used now, then back to moving.
@@ -1627,6 +1739,9 @@ function pollPads(now: number) {
 
 /* ---------- view: fit, zoom, pan, rotate ---------- */
 
+/** A screen big enough for the menus to sit in the corners beside the map (not a phone either way up). */
+const roomy = () => innerWidth > 720 && innerHeight > 560;
+
 function layout() {
   const dpr = window.devicePixelRatio || 1;
   // Size the drawing buffer to the box the canvas really fills. Mobile browsers can make 100vh taller than the
@@ -1635,7 +1750,7 @@ function layout() {
   canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
   // On a wide screen the menus sit in the bottom corners, where the diamond-shaped map leaves room, so the map may
   // use the height down to the hint line; on a phone the menu spans the width and the map stays above it.
-  const wide = innerWidth > 720;
+  const wide = roomy();
   const top = $("top").getBoundingClientRect().height, bottom = wide ? 34 : $("bottom").getBoundingClientRect().height;
   const size = mapPixelSize(state.map);
   const availW = innerWidth - 16, availH = innerHeight - top - bottom - 8;
@@ -1712,6 +1827,7 @@ function act(cmd: Command) {
 /** A mouse click acts at once (the hover already previewed it). A finger has no hover, so its first tap chooses
     the tile and shows what will happen; tapping it again or pressing Confirm does it. */
 function onTap(p: Pos, touch: boolean) {
+  if (deploy) { deployTap(p); tooltip(p); return; }
   if (!heroTurn() || busy || animating()) return;
   const a = actionAt(p);
   if (!a) {
@@ -1804,7 +1920,16 @@ function frame(time: number) {
   if (focus && time > focus.until) focus = null;
   const shake = time < shakeUntil ? Math.round(Math.sin(time / 22) * 3 * ((shakeUntil - time) / 320) * (window.devicePixelRatio || 1)) : 0;
   const aiming = moving ? null : aimView();
-  drawBattle(ctx, state, images, shake ? { ...view, ox: view.ox + shake, oy: view.oy + shake / 2 } : view, {
+  let shown = shake ? { ...view, ox: view.ox + shake, oy: view.oy + shake / 2 } : view;
+  if (introZoom) {
+    // The fight opens at the travel scene's size and eases to its own, about the arena's centre.
+    const k = Math.min(1, (time - introZoom.at) / INTRO_ZOOM_MS), e = 1 - (1 - k) ** 3;
+    const size = mapPixelSize(state.map), sc = introZoom.from + (view.scale - introZoom.from) * e;
+    const cx = view.ox + (size.w * view.scale) / 2, cy = view.oy + (size.h * view.scale) / 2;
+    shown = { ...shown, scale: sc, ox: cx - (size.w * sc) / 2, oy: cy - (size.h * sc) / 2 };
+    if (k >= 1) introZoom = null;
+  }
+  drawBattle(ctx, state, images, shown, {
     marks: aiming?.marks ?? new Map(), badges: aiming?.badges, sightLine: aiming?.line, outline: !!selected, hover, active: state.active, time, floaters, bursts, motions, flashes,
     danger: dangerTiles(), preview: moving ? undefined : previewHit(), effects: moving ? undefined : previewMoves(), focus: focus?.id,
     escapePaths: moving ? undefined : escapePaths(),
@@ -1837,10 +1962,40 @@ async function start() {
     }
   }).observe(document.body, { childList: true, subtree: true, characterData: true });
   // The help window follows the pointer, the keyboard focus and the controller's focus.
-  document.addEventListener("pointerover", (ev) => { const el = (ev.target as Element).closest?.("[data-h]") ?? null; if (el !== helpHover) { helpHover = el; showHelp(); } });
-  document.addEventListener("pointerout", (ev) => { if (!(ev.relatedTarget as Element | null)?.closest?.("[data-h]")) { helpHover = null; showHelp(); } });
-  document.addEventListener("focusin", (ev) => { const el = (ev.target as Element).closest?.("[data-h]"); if (el) { helpHover = el; showHelp(); } });
-  document.addEventListener("focusout", () => { helpHover = null; showHelp(); });
+  // Help: a mouse shows it on hover; a finger has to hold the item (a tap just uses it); the keyboard and the
+  // controller show it for the item in focus.
+  document.addEventListener("pointerover", (ev) => {
+    if (ev.pointerType !== "mouse") return;
+    const el = (ev.target as Element).closest?.("[data-h]") ?? null;
+    if (el !== helpHover) { helpHover = el; showHelp(); }
+  });
+  document.addEventListener("pointerout", (ev) => { if (ev.pointerType === "mouse" && !(ev.relatedTarget as Element | null)?.closest?.("[data-h]")) { helpHover = null; showHelp(); } });
+  let holdTimer = 0, holdFrom = { x: 0, y: 0 }, swallowClick = false;
+  const letGo = () => { clearTimeout(holdTimer); holdTimer = 0; if (held) { held = false; helpHover = null; showHelp(); } };
+  document.addEventListener("pointerdown", (ev) => {
+    if (ev.pointerType === "mouse") return;
+    const el = (ev.target as Element).closest?.("[data-h]");
+    if (!el) return;
+    holdFrom = { x: ev.clientX, y: ev.clientY };
+    clearTimeout(holdTimer);
+    holdTimer = window.setTimeout(() => { held = true; swallowClick = true; helpHover = el; showHelp(); navigator.vibrate?.(10); }, HOLD_MS);
+  });
+  document.addEventListener("pointermove", (ev) => { if (holdTimer && !held && Math.hypot(ev.clientX - holdFrom.x, ev.clientY - holdFrom.y) > 10) { clearTimeout(holdTimer); holdTimer = 0; } });
+  document.addEventListener("pointerup", letGo);
+  document.addEventListener("pointercancel", letGo);
+  // Letting go after reading the help does not also press the button.
+  document.addEventListener("click", (ev) => { if (swallowClick) { swallowClick = false; ev.stopPropagation(); ev.preventDefault(); } }, true);
+  document.addEventListener("contextmenu", (ev) => { if ((ev.target as Element).closest?.("[data-h]")) ev.preventDefault(); });
+  document.addEventListener("focusin", (ev) => { const el = (ev.target as Element).closest?.("[data-h]"); if (el && el.matches(":focus-visible")) { helpHover = el; showHelp(); } });
+  document.addEventListener("focusout", () => { if (!held) { helpHover = null; showHelp(); } });
+  // Fold-out menus (the ☰ buttons): open on press, close on a press anywhere else.
+  for (const fold of document.querySelectorAll<HTMLElement>(".fold")) {
+    const btn = fold.querySelector<HTMLButtonElement>(".fold-btn")!;
+    btn.addEventListener("click", () => { const open = !fold.classList.contains("open"); fold.classList.toggle("open", open); btn.setAttribute("aria-expanded", String(open)); if (open) fold.querySelector<HTMLButtonElement>(".fold-list button")?.focus({ preventScroll: true }); });
+  }
+  document.addEventListener("pointerdown", (ev) => {
+    for (const fold of document.querySelectorAll<HTMLElement>(".fold.open")) if (!fold.contains(ev.target as Node)) { fold.classList.remove("open"); fold.querySelector(".fold-btn")?.setAttribute("aria-expanded", "false"); }
+  }, true);
   setFlat(safeGet(VIEW_KEY) === "flat");
   holdBack = safeGet(HOLD_KEY) === "1";
   // Until a battle starts (the map screen comes first), the battle screen holds the test fight, never shown.
@@ -1918,6 +2073,7 @@ async function start() {
   $("undo").addEventListener("click", undo);
   $("hold").addEventListener("click", toggleHold);
   $("confirm").addEventListener("click", confirmPending);
+  $("deployGo").addEventListener("click", () => beginFight());
   $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
   $("again").addEventListener("click", afterBattleButton);
   $("gearBtn").addEventListener("click", () => { if (choosingDifficulty) return; gearOpen = !gearOpen; statsOpen = false; showMap(); });

@@ -11,6 +11,8 @@ export interface BattleSave {
   commands: Command[];
   /** Rewinds spent this battle (the screen allows one). Not part of the rules, so replay ignores it. */
   rewindsUsed?: number;
+  /** The party has been placed (or the player skipped placing it): the fight is under way. Screen only. */
+  placed?: boolean;
 }
 
 export function replay(setup: BattleSetup, commands: Command[]): BattleState {
