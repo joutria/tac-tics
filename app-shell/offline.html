@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- Shown by the phone app when the game can't be reached and isn't saved on the phone yet (the first start offline).
+     After one start online, the game is kept on the phone and opens without a connection. -->
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Tac-tics</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1d1f2b; color: #f7f3e8; font: 16px/1.4 system-ui, sans-serif; }
+  main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 16px; box-sizing: border-box; text-align: center; }
+  h1 { margin: 0; color: #ffe06b; font-size: 26px; }
+  p { margin: 0; max-width: 32em; color: #b9c2e8; }
+  button { font: inherit; color: #f7f3e8; background: #2f5fa8; border: 2px solid #f7f3e8; border-radius: 8px; padding: 10px 22px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tac-tics</h1>
+  <p lang="es">Sin conexión. Conéctate una vez para descargar el juego; después funciona también sin conexión.</p>
+  <p lang="en">No connection. Connect once to download the game; after that it works offline too.</p>
+  <button onclick="location.href='https://joutria.github.io/tac-tics/'">Reintentar · Retry</button>
+</main>
+</body>
+</html>

@@ -1,5 +1,6 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
+import { startUpdates } from "./app/update";
 import { AUDIO_KEY, audioSettings, battleSounds, initAudio, playMusic, readAudioSettings, setAudio, sfx } from "./audio/sound";
 import "@fontsource/pixelify-sans/400.css";
 import "@fontsource/pixelify-sans/600.css";
@@ -1819,6 +1820,12 @@ async function start() {
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   Object.assign(srcs, fxSources(base));
   initAudio(base, readAudioSettings(safeGet(AUDIO_KEY)));
+  // Always the newest build: offline copy, a word when it changed, a check when back from the background.
+  startUpdates({
+    updated: (build) => setTimeout(() => toast(t(lang, "updated", { build }), 2600), 1200),
+    reloadOk: () => onMap && !(play && !play.finished && play.started !== null),
+    get: safeGet, set: safeSet,
+  });
   images = await loadImages(srcs);
   // Pixel icons everywhere: the menu hand, and every emoji any text still carries becomes a pixel icon as it lands.
   document.documentElement.style.setProperty("--pointer", `url(${iconUrl("pointer")})`);

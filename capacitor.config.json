@@ -1,0 +1,12 @@
+{
+  "appId": "io.github.joutria.tactics",
+  "appName": "Tac-tics",
+  "webDir": "app-shell",
+  "server": {
+    "url": "https://joutria.github.io/tac-tics/",
+    "errorPath": "offline.html"
+  },
+  "android": {
+    "backgroundColor": "#1d1f2b"
+  }
+}

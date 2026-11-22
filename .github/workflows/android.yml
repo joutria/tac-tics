@@ -1,0 +1,47 @@
+# Builds the Android app (Capacitor, android/) and, on master, publishes the APK as the "app-latest" release.
+# The app opens the live game on GitHub Pages and keeps it for offline play, so game updates reach phones without a
+# new APK: this only needs to run when the app shell itself changes.
+name: Android app
+on:
+  push:
+    branches: [master]
+    paths: [android/**, app-shell/**, capacitor.config.json, package.json, package-lock.json, .github/workflows/android.yml]
+  pull_request:
+    paths: [android/**, app-shell/**, capacitor.config.json, package.json, package-lock.json, .github/workflows/android.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npx cap sync android
+      - name: Build the APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk tac-tics.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tac-tics-apk
+          path: tac-tics.apk
+      - name: Publish the app-latest release
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete app-latest --yes --cleanup-tag || true
+          gh release create app-latest tac-tics.apk --target "$GITHUB_SHA" --title "Tac-tics for Android" \
+            --notes "Install tac-tics.apk on an Android phone (allow installs from your browser or files app). The app always opens the newest version of the game, and keeps it for playing offline. Built from $GITHUB_SHA."
