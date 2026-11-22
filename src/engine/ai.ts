@@ -12,6 +12,7 @@ import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain"
 import { reachable } from "./movement";
 import { cowering, isBorder, yielding } from "./escape";
 import { hasLineOfSight } from "./sight";
+import { actionCost, manaCost, RULES } from "./rules";
 import { statusOf, STATUS, type Status } from "./status";
 import { activeUnit, applyCommand, BattleState, bodiesInWay, Command, isFoe, moveRules, nearestOf, onMap, roundOf, sizeOf, unitAt, unitGap, type AiKind, type Temper, type Unit } from "./state";
 
@@ -79,11 +80,11 @@ function threatAt(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<string, Po
     let best = 0;
     for (const id of h.abilities) {
       const ab = ABILITIES[id]!;
-      if (!ab.damage || h.cooldowns[id]) continue; // learned: abilities on cooldown are not a threat next turn
+      if (!ab.damage || h.cooldowns[id] || !canAffordNext(h, ab)) continue; // learned: abilities on cooldown are not a threat next turn
       const dummy = { ...u, pos: spot };
       for (const from of enemyReach.get(h.id) ?? [h.pos]) {
         if (!reachesBody(s, ab, from, spot, sizeOf(u), [h.id, u.id], sizeOf(h)) || hiddenFrom(s, h, dummy, from)) continue;
-        const hitsPerTurn = Math.min(ab.perTurn, Math.floor(h.maxAp / ab.ap));
+        const hitsPerTurn = Math.min(ab.perTurn, Math.floor(h.maxAp / actionCost(ab)));
         best = Math.max(best, avg(damagePreview(s, h, dummy, ab, from)) * hitsPerTurn);
       }
     }
@@ -92,12 +93,15 @@ function threatAt(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<string, Po
   return total;
 }
 
+/** Will the unit have the mana for `ab` when its next turn starts? */
+const canAffordNext = (u: Unit, ab: Ability) => manaCost(ab) <= Math.min(u.maxMana, (u.mana ?? 0) + RULES.mana.regen) || !manaCost(ab);
+
 /** Damage this unit could deal next turn if it stood on `spot`: in reach now, or a short walk away. */
 function offenseAt(s: BattleState, u: Unit, spot: Pos): number {
   let best = 0;
   for (const id of u.abilities) {
     const ab = ABILITIES[id]!;
-    if (!ab.damage || (u.cooldowns[id] ?? 0) > 1) continue;
+    if (!ab.damage || (u.cooldowns[id] ?? 0) > 1 || !canAffordNext(u, ab)) continue;
     const wet = !!swimProblem(s.map, u, ab, spot);
     for (const o of s.units) {
       if (o.life !== "up" || !isFoe(u, o)) continue;
@@ -221,7 +225,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
         else v += Math.min(dmg, o.hp) + (dmg >= o.hp ? 25 : 0) + (1 - o.hp / o.maxHp) * 8 + (u.hunts === "healer" && isHealer(o) ? 12 : 0);
       } else if (o.id !== u.id) v -= dmg * 1.5 + 5; // casters are spared by their own area attacks
     }
-    if (ab.heal && !enemy && o.life === "up") v += Math.min(avg(ab.heal), o.maxHp - o.hp);
+    if (ab.heal && !enemy && o.life === "up") v += Math.min(avg(ab.heal) * RULES.heal, o.maxHp - o.hp);
     if (ab.revive && !enemy && o.life === "downed") v += 40;
     if (ab.revive && !enemy && o.life === "up" && o.id !== u.id) v += (statusOf(o, "stun") ? 20 : 0) + (o.rooted ? 8 : 0);
     if (ab.root && enemy && o.life === "up") v += 6;

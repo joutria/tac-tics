@@ -15,6 +15,7 @@ import { abilityAvailable, castProblem, guardAbility, hurt, resolveCast, type Hi
 import { absorb, removeStatus, statusOf, tickDown, POISON_HEAL_FACTOR, type Status, type StatusId } from "./status";
 import { bodyGap, cellsOf, coversPos, GridMap, NEIGHBOURS, nearestCell, Pos, samePos, standable, tileAt } from "./grid";
 import { routeTo } from "./movement";
+import { actionCost, actionsFor, manaCost, RULES } from "./rules";
 import { BIG_BODY } from "./sight";
 import { rngNext, seedFrom } from "./rng";
 import { fireUnder, sapUnder, shockNear, soak, updateTiles, type TerrainFx } from "./terrain";
@@ -91,6 +92,9 @@ export interface Unit extends UnitSpec {
   maxHp: number;
   maxAp: number;
   maxMp: number;
+  /** Mana for spells ("act" and "pips" turn rules only, see rules.ts; always 0 under "ap"). */
+  mana: number;
+  maxMana: number;
   facing: Facing;
   life: Life;
   /** Own turns left before a downed unit dies. */
@@ -269,7 +273,7 @@ export function createBattle(setup: BattleSetup): BattleState {
   // First turns: half a delay in, so faster units start first; equal speeds are ordered by a seeded roll.
   const order = [...setup.units].sort((a, b) => b.speed - a.speed || rolls.get(b.id)! - rolls.get(a.id)!);
   const units: Unit[] = order.map((u, i) => ({
-    ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: u.ap, maxMp: u.mp, facing: u.team === "heroes" ? "S" : "N",
+    ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: actionsFor(u), ap: actionsFor(u), maxMp: u.mp, maxMana: RULES.mode === "ap" ? 0 : RULES.mana.max, mana: RULES.mode === "ap" ? 0 : Math.round(RULES.mana.max * RULES.mana.start), facing: u.team === "heroes" ? "S" : "N",
     life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, downs: 0, escape: "none", cooldowns: {}, usedThisTurn: {}, rooted: false, statuses: [],
     ct: setup.ambush && u.team === "foes" ? i : Math.round(delayFor(u.speed) / 2) + (setup.ambush ? order.length : 0), seq: i, waited: false, spentAp: false, moved: false,
     ...(u.team === "foes" && !u.temper ? { temper: rollTemper(setup.seed, u) } : {}),
@@ -341,6 +345,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
       if (startOfTurnTicks(s, u, events)) { s.winner = winnerOf(s); u.ct += delayFor(u.speed); u.seq = ++s.seqCounter; continue; }
       u.ap = u.opener ? Math.ceil(u.maxAp * AMBUSH_OPENER_AP) : u.maxAp;
       delete u.opener;
+      u.mana = Math.min(u.maxMana, u.mana + (u.maxMana ? RULES.mana.regen : 0));
       u.mp = Math.max(0, turnMp(u) - (statusOf(u, "slow")?.power ?? 0));
       u.rooted = false;
       u.usedThisTurn = {};
@@ -442,14 +447,15 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       if (!samePos(cmd.target, origin)) actor.facing = facingOf(origin, cmd.target);
       const fx: TerrainFx[] = [];
       const hits = resolveCast(s, actor, ab, cmd.target, fx, !!cmd.hold);
-      actor.ap -= ab.ap;
+      actor.ap -= actionCost(ab);
+      actor.mana -= manaCost(ab);
       // A quick action is free: it does not count as spending AP, so a turn of moving plus a quick action still
       // comes back sooner. It does count as acting, so Wait is gone after it.
       if (!ab.quick) actor.spentAp = true;
       if (ab.damage || ab.push) actor.revealed = true;
       actor.usedThisTurn[ab.id] = (actor.usedThisTurn[ab.id] ?? 0) + 1;
       if (ab.quick) actor.usedThisTurn.quick = 1;
-      if (ab.cooldown > 0) actor.cooldowns[ab.id] = ab.cooldown + 1;
+      if (ab.cooldown > 0 && RULES.cooldowns) actor.cooldowns[ab.id] = ab.cooldown + 1;
       if (actor.team === "heroes" && (ab.damage || ab.root || ab.push)) {
         const dist = Math.abs(cmd.target.x - origin.x) + Math.abs(cmd.target.y - origin.y);
         if (dist <= 1) s.habits.melee++; else s.habits.ranged++;

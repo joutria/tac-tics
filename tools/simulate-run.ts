@@ -7,7 +7,7 @@
    nemesis into the next (src/run/legacy.ts), as a player's runs do. Add `--kit <id>` to set out with that camp
    kit (src/data/camp.ts) every run, opened or not, to see what it changes. Add `--tier <n>` with hard to play at
    that Sap tier (src/data/region.ts SAP_TIERS). */
-import { PaceStats } from "./battle-stats";
+import { PaceStats, rulesFromArgs } from "./battle-stats";
 import { writeFileSync } from "node:fs";
 import { planTurn } from "../src/engine/ai";
 import { activeUnit, applyCommand, createBattle, unsettled, type Temper } from "../src/engine/state";
@@ -21,6 +21,8 @@ import { carriedNemesis, carriedReturn, closeRun, keepsakeOf, newLegacy } from "
 import { buy, choose, enterNode, finishBattle, heroMaxHp, leaveShop, newRun, nextNodes, priceIn, shopHeal, type RunState } from "../src/run/run";
 
 const args = process.argv.slice(2);
+const rulesLine = rulesFromArgs(args);
+if (rulesLine) console.log(rulesLine);
 const logAt = args.indexOf("--log");
 const logFile = logAt >= 0 ? args.splice(logAt, 2)[1] : undefined;
 const mercyAt = args.indexOf("--mercy");
