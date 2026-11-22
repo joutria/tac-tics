@@ -11,7 +11,7 @@ import { elementMultiplier, ELEMENTS } from "./data/elements";
 import { COMPANIONS } from "./data/companions";
 import { MEADOW } from "./data/maps/meadow";
 import { HERO } from "./data/region";
-import { TEST_UNITS } from "./data/units";
+import { TEST_UNITS, lookArt } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, comboProblem, guardAbility, CRIT_MULT, HEIGHT_CAP, HEIGHT_PER_LEVEL, SIDE_BONUS, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, rockSizeOf, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
@@ -46,10 +46,6 @@ import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { fxSources, type Burst } from "./render/fx";
 import { SCENERY_IMAGES } from "./render/scenery";
 import { drawBattle, Floater, type ReachBadge, type SightLine, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
-
-/** The party's looks drawn as humanoid job sprites (public/art/heroes/, built by tools/hero-art.py); every other look
-    is a creature sheet in public/art/creatures/. */
-const HERO_LOOKS = new Set(["lumo", "remolin", "guijo", "centella", "moheda"]);
 
 /** The run save: the run, with the battle being fought inside it. */
 const RUN_KEY = "tac-tics.run.v1";
@@ -2054,7 +2050,7 @@ async function start() {
   const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", ...SCENERY_IMAGES];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
-  for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/${HERO_LOOKS.has(u.look) ? "heroes" : "creatures"}/${u.look}.png`;
+  for (const u of looks) srcs[`unit-${u.look}`] = `${base}${lookArt(u.look)}`;
   Object.assign(srcs, fxSources(base));
   initAudio(base, readAudioSettings(safeGet(AUDIO_KEY)));
   // Always the newest build: offline copy, a word when it changed, a check when back from the background.

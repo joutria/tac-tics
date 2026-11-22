@@ -13,7 +13,7 @@ two frames facing the viewer (S), two facing away (N), two facing right (E; W is
 Changes to the pack's art, all done here by script: the magenta backdrop becomes transparent, the blank faces get
 two small dark eyes (one in profile), and the downed pose is the standing frame laid on its side with the eyes shut.
 To dress a character as another job, change its row in JOBS (row 0 is the pack's blank template) and run this again;
-the looks loaded from public/art/heroes/ are listed in HERO_LOOKS in src/main.ts."""
+the looks loaded from public/art/heroes/ are listed in HERO_LOOKS in src/data/units.ts."""
 import io
 import os
 import sys

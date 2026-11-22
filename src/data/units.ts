@@ -1,6 +1,13 @@
-/* Units for the M1 test fight. Looks are Evolvlings creature sheets (Ninja Adventure, CC0); the hero's real art
-   (a mid-range Light fighter, human or anthropomorphic) comes later. */
+/* Units for the M1 test fight. Foes' looks are Evolvlings creature sheets (Ninja Adventure, CC0); the party's are
+   humanoid job sprites (see HERO_LOOKS). */
 import type { UnitSpec } from "../engine/state";
+
+/** The party's looks, drawn as humanoid job sprites in public/art/heroes/ (built by tools/hero-art.py); every other
+    look is a creature sheet in public/art/creatures/. */
+export const HERO_LOOKS = new Set(["lumo", "remolin", "guijo", "centella", "moheda"]);
+
+/** Where a look's sprite sheet lives, relative to the site's public folder. */
+export const lookArt = (look: string) => `art/${HERO_LOOKS.has(look) ? "heroes" : "creatures"}/${look}.png`;
 
 export const TEST_UNITS: UnitSpec[] = [
   { id: "hero", name: "Hero", team: "heroes", element: "light", look: "lumo", pos: { x: 2, y: 6 },
