@@ -5,6 +5,7 @@ import { rngInt, seedFrom } from "../engine/rng";
 import type { UnitSpec } from "../engine/state";
 import { JOBS, type Job } from "../data/jobs";
 import { twinOf, type Twin } from "../data/twins";
+import { RULES } from "../engine/rules";
 
 export interface HeroProgress {
   level: number;
@@ -25,6 +26,8 @@ function apply(spec: UnitSpec, m: Mods, times = 1) {
   spec.hp += (m.hp ?? 0) * times; spec.ap += (m.ap ?? 0) * times; spec.mp += (m.mp ?? 0) * times;
   spec.speed += (m.speed ?? 0) * times; spec.str += (m.str ?? 0) * times; spec.mag += (m.mag ?? 0) * times;
   spec.agi += (m.agi ?? 0) * times;
+  if (m.mana) spec.mana = (spec.mana ?? RULES.mana.max) + m.mana * times;
+  if (m.regen) spec.regen = (spec.regen ?? 0) + m.regen * times;
   for (const [e, v] of Object.entries(m.res ?? {})) spec.res[e as keyof UnitSpec["res"]] = (spec.res[e as keyof UnitSpec["res"]] ?? 0) + v! * times;
 }
 

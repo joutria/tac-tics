@@ -1,16 +1,15 @@
-/* Turn rules: how much a unit can do in one turn, and what spells cost. A PROTOTYPE switch for comparing the
-   Dofus-style AP turn the game ships with against FFTA-style turns (one Move and one Act, spells paid with mana).
+/* Turn rules: how much a unit can do in one turn, and what spells cost. The game plays "act" (Jose chose it,
+   2026-11-22); the other two stay for comparison in the simulators and with ?rules= in the address.
 
-   - "ap"   (default, the game as it is): 6 AP a turn, every card costs its AP, cooldowns gate the big ones.
-   - "act"  (FFTA style): one Move and one Act a turn, any order, plus the free quick action. Every card is one
-            Act. The unit's basic attack (a damaging card with no cooldown) costs no mana; every other card costs
-            mana, which refills a little at the start of each turn. Damage and healing are scaled up, since a turn
-            now holds one hit instead of two.
-   - "pips" (hybrid): two action pips a turn. Light cards (2-3 AP) take one pip, heavy ones (4 AP) take both.
-            Spells cost mana as in "act", so two basic attacks are still a full turn, but two spells rarely are.
+   - "act"  (the game, FFTA style): one Move and one Act a turn, any order, plus the free quick action. Every card
+            is one Act. The basic attack (a damaging card with no cooldown) costs no mana; every other card costs
+            mana, which refills a little at the start of each turn. Cooldowns still gate the big cards. Damage and
+            healing are scaled up (party more than foes, see PRESETS), since a turn holds one hit instead of two.
+   - "ap"   (the old Dofus-style turn): 6 AP a turn, every card costs its AP, cooldowns only.
+   - "pips" (hybrid, not used): two pips a turn. Light cards (2-3 AP) take one pip, heavy ones (4 AP) take both,
+            and spells cost mana as in "act".
 
-   The battle reads RULES as it plays; nothing about it is saved, so the browser game always uses "ap" unless
-   `?rules=act` (or pips) is in the address, and the simulators set it from `--rules`. */
+   The battle reads RULES as it plays; it is not saved. The simulators set it from `--rules` and friends. */
 import type { Ability } from "../data/abilities";
 
 export type RulesMode = "ap" | "act" | "pips";
@@ -32,7 +31,7 @@ export interface Rules {
   bossActs: number;
 }
 
-export const DEFAULT_RULES: Rules = { mode: "ap", damage: 1, foeDamage: 1, heal: 1, mana: { max: 20, start: 0.5, regen: 5 }, cooldowns: true, bossActs: 1 };
+export const DEFAULT_RULES: Rules = { mode: "act", damage: 1, foeDamage: 1, heal: 1, mana: { max: 20, start: 0.5, regen: 5 }, cooldowns: true, bossActs: 1 };
 /** The tuned starting points for each mode, used when only `mode` is given. */
 export const PRESETS: Record<RulesMode, Partial<Rules>> = {
   ap: {},
@@ -42,12 +41,15 @@ export const PRESETS: Record<RulesMode, Partial<Rules>> = {
 
 export const RULES: Rules = structuredClone(DEFAULT_RULES);
 
+/** Sets the rules: `mode` (default "act") with its preset, then any overrides. `setRules({})` restores the game's. */
 export function setRules(r: Partial<Rules> & { mode?: RulesMode }) {
-  const mode = r.mode ?? RULES.mode;
+  const mode = r.mode ?? DEFAULT_RULES.mode;
   Object.assign(RULES, structuredClone(DEFAULT_RULES), PRESETS[mode], r, { mode });
 }
 
 /** The basic attack: damaging, no cooldown, not a quick action. It never costs mana. */
+setRules({});
+
 export const isBasic = (ab: Ability) => !!ab.damage && ab.cooldown === 0 && !ab.quick;
 
 /** What a card takes out of the turn's action budget (AP, Acts or pips). */

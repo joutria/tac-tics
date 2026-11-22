@@ -11,10 +11,15 @@ const unit = (o: Partial<UnitSpec> & Pick<UnitSpec, "id" | "team" | "pos">): Uni
 });
 const duel = () => createBattle({ seed: 1, map: flat, units: [unit({ id: "a", team: "heroes", pos: { x: 0, y: 0 }, speed: 60 }), unit({ id: "b", team: "foes", pos: { x: 0, y: 3 } })] });
 
-afterEach(() => setRules({ mode: "ap" }));
+afterEach(() => setRules({}));
 
 describe("turn rules", () => {
-  it("ship as AP rules, where nothing changes", () => {
+  it("the game plays Move + Act by default", () => {
+    expect(RULES.mode).toBe("act");
+    expect(activeUnit(duel()).maxAp).toBe(1);
+  });
+
+  it("AP rules are still there, unchanged, for comparison", () => {
     setRules({ mode: "ap" });
     const s = duel();
     expect(activeUnit(s).maxAp).toBe(6);
@@ -54,6 +59,7 @@ describe("turn rules", () => {
   });
 
   it("scale party and foe damage separately", () => {
+    setRules({ mode: "ap" });
     const s0 = duel();
     const base = damagePreview(s0, s0.units[0]!, s0.units[1]!, ABILITIES.ray!).max;
     setRules({ mode: "act", damage: 2, foeDamage: 1.5 });
@@ -69,5 +75,14 @@ describe("turn rules", () => {
     expect(actionCost(ABILITIES.ray!)).toBe(1);
     expect(actionCost(ABILITIES.flare!)).toBe(2);
     expect(activeUnit(duel()).maxAp).toBe(2);
+  });
+});
+
+describe("mana per character", () => {
+  it("a unit's own pool and extra regen (the Broken Hourglass) are used", () => {
+    const s = createBattle({ seed: 1, map: flat, units: [unit({ id: "a", team: "heroes", pos: { x: 0, y: 0 }, speed: 60, mana: 26, regen: 2 }), unit({ id: "b", team: "foes", pos: { x: 0, y: 3 } })] });
+    const a = activeUnit(s);
+    expect(a.maxMana).toBe(26);
+    expect(a.mana).toBe(13 + RULES.mana.regen + 2);
   });
 });

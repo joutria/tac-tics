@@ -9,7 +9,9 @@ export type Rarity = "common" | "rare" | "epic";
 
 /** Stat changes an item or perk gives. */
 export interface Mods {
-  hp?: number; ap?: number; mp?: number; speed?: number; str?: number; mag?: number; agi?: number;
+  hp?: number; ap?: number; mp?: number;
+  /** Mana pool, and mana regained each turn (Move + Act rules). */
+  mana?: number; regen?: number; speed?: number; str?: number; mag?: number; agi?: number;
   res?: Partial<Record<Element, number>>;
 }
 
@@ -40,7 +42,7 @@ export const ITEMS: Record<string, Item> = {
   // Charms
   bellCharm: { id: "bellCharm", slot: "charm", rarity: "common", name: { es: "Cascabel", en: "Little Bell" }, mods: { speed: 6 }, price: 25 },
   featherCharm: { id: "featherCharm", slot: "charm", rarity: "rare", name: { es: "Pluma ligera", en: "Light Feather" }, mods: { mp: 1 }, price: 70 },
-  hourglass: { id: "hourglass", slot: "charm", rarity: "epic", name: { es: "Reloj de arena roto", en: "Broken Hourglass" }, mods: { ap: 1 }, price: 4 },
+  hourglass: { id: "hourglass", slot: "charm", rarity: "epic", name: { es: "Reloj de arena roto", en: "Broken Hourglass" }, mods: { regen: 2 }, price: 4 },
 };
 
 export interface Perk {

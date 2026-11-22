@@ -46,7 +46,8 @@ const html = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&
 /** "+6 Mag · Res fire +15%", from an item's or a perk's mods. */
 export function modsText(m: Mods, lang: Lang): string {
   const parts: string[] = [];
-  for (const k of ["hp", "ap", "mp", "speed", "str", "mag", "agi"] as const) if (m[k]) parts.push(`+${m[k]} ${t(lang, k)}`);
+  for (const k of ["hp", "ap", "mp", "mana", "speed", "str", "mag", "agi"] as const) if (m[k]) parts.push(`+${m[k]} ${t(lang, k)}`);
+  if (m.regen) parts.push(t(lang, "manaRegen", { n: m.regen }));
   for (const [e, v] of Object.entries(m.res ?? {})) parts.push(`${ELEMENTS[e as Element].icon} ${t(lang, "res")} +${v}%`);
   return parts.join(" · ");
 }

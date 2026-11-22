@@ -85,6 +85,6 @@ export function rulesFromArgs(args: string[]): string {
   if (boss) r.bossActs = Number(boss[0]);
   if (nocd) r.cooldowns = false;
   setRules({ ...r, ...(mode ? { mode } : {}) });
-  if (RULES.mode === "ap" && !Object.keys(r).length) return "";
+  if (!mode && !Object.keys(r).length) return "";
   return `rules ${RULES.mode}: damage x${RULES.damage} (foes x${RULES.foeDamage}), heal x${RULES.heal}, mana ${RULES.mana.max} (start ${RULES.mana.start * 100}%, +${RULES.mana.regen}/turn), cooldowns ${RULES.cooldowns ? "on" : "off"}, boss acts ${RULES.bossActs}`;
 }

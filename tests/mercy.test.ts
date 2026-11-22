@@ -1,5 +1,5 @@
 /* Sparing and mercy: the white flag, Spare, Hold back, the choice after a win, and what sparing pays. */
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { planTurn } from "../src/engine/ai";
 import { castProblem, unitAbilities } from "../src/engine/combat";
 import { cowering, yielding } from "../src/engine/escape";
@@ -12,6 +12,12 @@ import { ITEMS } from "../src/data/gear";
 import { newMember, react, readDeeds } from "../src/run/party";
 import { activeRivals, afterBattle } from "../src/run/rivals";
 import { battleSetup, choose, enterNode, finishBattle, helpAt, newRun, nextNodes, priceIn, priceOf, type RunState } from "../src/run/run";
+import { setRules } from "../src/engine/rules";
+
+// These tests pin exact numbers and several casts a turn, written for the AP turn; the Move + Act rules the
+// game plays by are covered in rules.test.ts.
+beforeAll(() => setRules({ mode: "ap" }));
+afterAll(() => setRules({}));
 
 const flat = (rows = 7, cols = 7) => parseMap("flat", Array.from({ length: rows }, () => Array(cols).fill("g0").join(" ")));
 const unit = (o: Partial<UnitSpec> & Pick<UnitSpec, "id" | "team" | "pos">): UnitSpec => ({

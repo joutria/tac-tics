@@ -84,6 +84,9 @@ export interface UnitSpec {
   quick?: string;
   /** A rival's learned habit: it goes for units that can heal first. */
   hunts?: "healer";
+  /** Its mana pool under Move + Act (default RULES.mana.max), and extra mana it regains each turn. */
+  mana?: number;
+  regen?: number;
   /** Poison hurts this much less per turn (Moheda's research, finished). */
   poisonWard?: number;
 }
@@ -273,7 +276,7 @@ export function createBattle(setup: BattleSetup): BattleState {
   // First turns: half a delay in, so faster units start first; equal speeds are ordered by a seeded roll.
   const order = [...setup.units].sort((a, b) => b.speed - a.speed || rolls.get(b.id)! - rolls.get(a.id)!);
   const units: Unit[] = order.map((u, i) => ({
-    ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: actionsFor(u), ap: actionsFor(u), maxMp: u.mp, maxMana: RULES.mode === "ap" ? 0 : RULES.mana.max, mana: RULES.mode === "ap" ? 0 : Math.round(RULES.mana.max * RULES.mana.start), facing: u.team === "heroes" ? "S" : "N",
+    ...structuredClone(u), hp: Math.max(1, Math.min(u.hp, u.hpNow ?? u.hp)), maxHp: u.hp, maxAp: actionsFor(u), ap: actionsFor(u), maxMp: u.mp, maxMana: RULES.mode === "ap" ? 0 : u.mana ?? RULES.mana.max, mana: RULES.mode === "ap" ? 0 : Math.round((u.mana ?? RULES.mana.max) * RULES.mana.start), facing: u.team === "heroes" ? "S" : "N",
     life: "up", downedTurns: 0, baseHp: u.hp, revives: 0, downs: 0, escape: "none", cooldowns: {}, usedThisTurn: {}, rooted: false, statuses: [],
     ct: setup.ambush && u.team === "foes" ? i : Math.round(delayFor(u.speed) / 2) + (setup.ambush ? order.length : 0), seq: i, waited: false, spentAp: false, moved: false,
     ...(u.team === "foes" && !u.temper ? { temper: rollTemper(setup.seed, u) } : {}),
@@ -345,7 +348,7 @@ function advance(s: BattleState, events: BattleEvent[]) {
       if (startOfTurnTicks(s, u, events)) { s.winner = winnerOf(s); u.ct += delayFor(u.speed); u.seq = ++s.seqCounter; continue; }
       u.ap = u.opener ? Math.ceil(u.maxAp * AMBUSH_OPENER_AP) : u.maxAp;
       delete u.opener;
-      u.mana = Math.min(u.maxMana, u.mana + (u.maxMana ? RULES.mana.regen : 0));
+      u.mana = Math.min(u.maxMana, u.mana + (u.maxMana ? RULES.mana.regen + (u.regen ?? 0) : 0));
       u.mp = Math.max(0, turnMp(u) - (statusOf(u, "slow")?.power ?? 0));
       u.rooted = false;
       u.usedThisTurn = {};

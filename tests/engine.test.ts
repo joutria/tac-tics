@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ABILITIES, type Ability } from "../src/data/abilities";
 import { elementMultiplier } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
@@ -15,6 +15,12 @@ import { activeUnit, AMBUSH_OPENER_AP, applyCommand, BattleSetup, BattleState, C
 import { activeRivals, afterBattle, pickCounter, readStyle, rivalSpec, rivalTaunt, RESIST_STEP } from "../src/run/rivals";
 import { BLAST_DAMAGE, IMPACT, REGROW_TICKS, ROCK } from "../src/engine/terrain";
 import { ESCAPE_FROM_ROUND, FLEE_TAKEN, RETREAT_TAKEN, turnMp, wavering } from "../src/engine/escape";
+import { setRules } from "../src/engine/rules";
+
+// These tests pin exact numbers and several casts a turn, written for the AP turn; the Move + Act rules the
+// game plays by are covered in rules.test.ts.
+beforeAll(() => setRules({ mode: "ap" }));
+afterAll(() => setRules({}));
 
 const setup: BattleSetup = { seed: "test-seed", map: MEADOW, units: TEST_UNITS };
 

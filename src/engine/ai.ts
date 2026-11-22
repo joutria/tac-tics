@@ -94,7 +94,7 @@ function threatAt(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<string, Po
 }
 
 /** Will the unit have the mana for `ab` when its next turn starts? */
-const canAffordNext = (u: Unit, ab: Ability) => manaCost(ab) <= Math.min(u.maxMana, (u.mana ?? 0) + RULES.mana.regen) || !manaCost(ab);
+const canAffordNext = (u: Unit, ab: Ability) => manaCost(ab) <= Math.min(u.maxMana, (u.mana ?? 0) + RULES.mana.regen + (u.regen ?? 0)) || !manaCost(ab);
 
 /** Damage this unit could deal next turn if it stood on `spot`: in reach now, or a short walk away. */
 function offenseAt(s: BattleState, u: Unit, spot: Pos): number {
