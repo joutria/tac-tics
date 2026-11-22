@@ -2,6 +2,7 @@
    (rewards, perks, shops, talks, the epilogue). The travel scene and the route map themselves are drawn on the
    canvas (main.ts, src/run/travel.ts, src/ui/worldmap.ts). */
 import { ELEMENTS, type Element } from "../data/elements";
+import { ABILITIES } from "../data/abilities";
 import { ITEMS, PERKS, SHOP, xpToNext, type Mods } from "../data/gear";
 import { abilityDesc, abilityName, t, type Lang } from "../i18n/text";
 import type { NodeKind, RunNode } from "../run/map";
@@ -14,8 +15,9 @@ import { endingOf, readyForLesson, type Member } from "../run/party";
 import { ALIGN, ALIGNMENTS, type Align, type Meter } from "../data/alignment";
 import { TWINS } from "../data/twins";
 import { alignOf, alignmentOf, heroEnding, lockWarning, twinBar } from "../run/alignment";
-import { heroSpec } from "../run/hero";
+import { heroSpec, statSources } from "../run/hero";
 import { HERO, SAP_TIERS } from "../data/region";
+import { abilityIcon, icon, ICONS, ITEM_PACK, PERK_PACK, pk, RUN_PACK, type IconId } from "./icons";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛", floodgate: "💧" };
 
@@ -39,8 +41,14 @@ export interface MapActions {
   twin?: (base: string, on: boolean) => void;
   /** Starts a new run (from the epilogue). */
   newRun?: () => void;
+  /** A character's face as an image URL (from its sprite sheet), for the talk box. */
+  face?: (look: string) => string;
 }
 
+/** An ability's element, for its icon when it has no picture of its own. */
+const ABILITY_ELEMENT = (id: string) => ABILITIES[id]?.element ?? "neutral";
+/** An element's icon, or the plain diamond for the elements no icon draws yet. */
+const elIcon = (e: string): IconId => (e in ICONS ? (e as IconId) : "neutral");
 const html = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 /** "+6 Mag · Res fire +15%", from an item's or a perk's mods. */
@@ -52,18 +60,23 @@ export function modsText(m: Mods, lang: Lang): string {
   return parts.join(" · ");
 }
 
+/** A card's picture: a pack icon in a small framed tile, its frame coloured by rarity. */
+export const iconTile = (ic: Parameters<typeof icon>[0], rarity = "common") => `<span class="ic r-${rarity}">${icon(ic, "huge")}</span>`;
+/** A card with its picture on the left (or on top in a row of picks) and its words beside it. */
+const withIcon = (tile: string, words: string) => `${tile}<span class="tx">${words}</span>`;
+
 function itemCard(id: string, lang: Lang, extra = ""): string {
   const it = ITEMS[id]!;
   const teach = it.teaches ? `<br>${t(lang, "teaches", { ab: abilityName(lang, it.teaches) })}` : "";
-  return `<b class="r-${it.rarity}">${html(it.name[lang])}</b><small>${t(lang, `slot.${it.slot}`)} · ${t(lang, `rarity.${it.rarity}`)}</small>`
-    + `<span>${modsText(it.mods, lang)}${teach}</span>${extra}`;
+  return withIcon(iconTile(pk(ITEM_PACK[id]), it.rarity), `<b class="r-${it.rarity}">${html(it.name[lang])}</b><small>${t(lang, `slot.${it.slot}`)} · ${t(lang, `rarity.${it.rarity}`)}</small>`
+    + `<span>${modsText(it.mods, lang)}${teach}</span>${extra}`);
 }
 
 function rewardCard(r: RewardOption, lang: Lang): string {
   if (r.t === "item") return itemCard(r.id, lang);
-  if (r.t === "coins") return `<b>🪙 ${t(lang, "coins", { n: r.n })}</b>`;
-  if (r.t === "shards") return `<b class="r-epic">◆ ${t(lang, "shards", { n: r.n })}</b>`;
-  return `<b>✚ ${t(lang, "healReward", { n: r.n })}</b>`;
+  if (r.t === "coins") return withIcon(iconTile(pk(RUN_PACK.coins)), `<b>${t(lang, "coins", { n: r.n })}</b>`);
+  if (r.t === "shards") return withIcon(iconTile(pk(RUN_PACK.shards), "epic"), `<b class="r-epic">${t(lang, "shards", { n: r.n })}</b>`);
+  return withIcon(iconTile(pk(RUN_PACK.heal)), `<b>${t(lang, "healReward", { n: r.n })}</b>`);
 }
 
 /** "Mercy +5 · Sap +1": what a fight or a choice moved. Empty when nothing moved. */
@@ -91,6 +104,21 @@ export function metersHtml(run: RunState, lang: Lang): string {
   const a = alignOf(run), id = alignmentOf(a);
   return `<span class="meters"><span class="alignName">${html(t(lang, "align"))}: <b>${html(ALIGNMENTS[id].name[lang])}</b></span>`
     + meterBar(a, "mercy", lang, run.alignLock?.mercy) + meterBar(a, "purity", lang, run.alignLock?.purity) + `</span>`;
+}
+
+/** A companion speaking: their face in a frame and a name plate beside the lines, like a handheld RPG's talk box. */
+function talkBox(companion: string, lines: string[], act: MapActions, reply?: string): HTMLElement {
+  const c = COMPANIONS[companion]!;
+  const box = document.createElement("div"); box.className = "talk";
+  const face = act.face?.(c.spec.look) ?? "";
+  box.innerHTML = `<span class="face">${face ? `<img src="${face}" alt="">` : ""}</span>`;
+  const words = document.createElement("div"); words.className = "lines";
+  const who = document.createElement("b"); who.className = "who"; who.textContent = c.spec.name;
+  words.append(who);
+  for (const l of lines) { const p = document.createElement("p"); p.textContent = l; words.append(p); }
+  if (reply) { const p = document.createElement("p"); p.className = "reply"; p.textContent = reply; words.append(p); }
+  box.append(words);
+  return box;
 }
 
 /** The first thing to answer (perk, reward or shop), or the gear panel when `gearOpen`. */
@@ -151,15 +179,14 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     title.textContent = t(lang, "pickJob");
     for (const [i, id] of offer.options.entries()) {
       const j = JOBS[id];
-      list.append(button(`<b>${html(j.name[lang])}</b><span>${html(j.desc[lang])}</span><small>${j.abilities.map((a) => html(abilityName(lang, a))).join(" · ")}</small>`, () => act.choose(i)));
+      list.append(button(withIcon(iconTile(pk(RUN_PACK.job)), `<b>${html(j.name[lang])}</b><span>${html(j.desc[lang])}</span><small>${j.abilities.map((a) => html(abilityName(lang, a))).join(" · ")}</small>`), () => act.choose(i), "card ico"));
     }
     if (offer.options.length === 1) { const p = document.createElement("p"); p.className = "spoils"; p.textContent = t(lang, "jobLocked"); list.append(p); }
   } else if (offer?.kind === "quest") {
     const view = questView(run, offer.companion);
     title.textContent = t(lang, "questOf", { name: COMPANIONS[offer.companion]!.spec.name });
-    for (const l of view.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
+    list.append(talkBox(offer.companion, view.lines.map((l) => l[lang]), act, offer.reply?.[lang]));
     if (offer.reply) {
-      const p = document.createElement("p"); p.className = "say reply"; p.textContent = offer.reply[lang]; list.append(p);
       for (const l of run.remarks) { const r = document.createElement("p"); r.className = "spoils"; r.textContent = l[lang]; list.append(r); }
       foot.append(button(t(lang, "goOn"), () => act.choose(0), "primary"));
     } else {
@@ -182,9 +209,8 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
   } else if (offer?.kind === "talk") {
     const talk = TALKS[offer.id]!;
     title.textContent = COMPANIONS[talk.companion]!.spec.name;
-    for (const l of talk.lines) { const p = document.createElement("p"); p.className = "say"; p.textContent = l[lang]; list.append(p); }
+    list.append(talkBox(talk.companion, talk.lines.map((l) => l[lang]), act, offer.reply?.[lang]));
     if (offer.reply) {
-      const p = document.createElement("p"); p.className = "say reply"; p.textContent = offer.reply[lang]; list.append(p);
       foot.append(button(t(lang, "goOn"), () => act.choose(0), "primary"));
     } else talk.choices.forEach((c, i) => list.append(button(`<span>${html(c.text[lang])}</span>`, () => act.choose(i))));
   } else if (offer?.kind === "altar") {
@@ -199,22 +225,53 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     list.append(button(`<b>◆ ${html(t(lang, "altarKeep"))}</b>`, () => act.choose(1)));
   } else if (offer?.kind === "perk") {
     title.textContent = t(lang, "pickPerk");
-    offer.options.forEach((id, i) => list.append(button(`<b>${html(PERKS[id]!.name[lang])}</b><span>${html(PERKS[id]!.desc[lang])}</span>`, () => act.choose(i))));
+    list.classList.add("pick");
+    offer.options.forEach((id, i) => list.append(button(withIcon(iconTile(pk(PERK_PACK[id])), `<b>${html(PERKS[id]!.name[lang])}</b><span>${html(PERKS[id]!.desc[lang])}</span>`), () => act.choose(i), "card ico")));
   } else if (offer?.kind === "reward") {
     title.textContent = offer.gift ? t(lang, "giftFrom", { name: offer.gift }) : t(lang, "pickReward");
-    offer.options.forEach((r, i) => list.append(button(rewardCard(r, lang), () => act.choose(i))));
+    list.classList.add("pick");
+    offer.options.forEach((r, i) => list.append(button(rewardCard(r, lang), () => act.choose(i), "card ico")));
   } else if (offer?.kind === "shop") {
     title.textContent = offer.discount ? `${t(lang, "shopTitle")} · ${t(lang, "shopDiscount", { name: offer.discount })}` : t(lang, "shopTitle");
+    list.classList.add("shop");
+    const purse = document.createElement("p"); purse.className = "purse"; purse.textContent = `🪙 ${run.coins}   ◆ ${run.shards}`; list.append(purse);
     for (const id of offer.stock) {
       const p = priceIn(run, id);
       const cost = p.currency === "coins" ? `🪙 ${p.amount}` : `◆ ${p.amount}`;
-      list.append(button(itemCard(id, lang, `<em>${t(lang, "buy")} · ${cost}</em>`), () => act.buy(id), "card", run[p.currency] < p.amount));
+      list.append(button(itemCard(id, lang, `<em class="price">${cost}</em>`), () => act.buy(id), "card ico", run[p.currency] < p.amount));
     }
     const heal = Math.round(heroMaxHp(run) * SHOP.heal);
     foot.append(button(t(lang, "shopHeal", { n: heal, p: SHOP.healPrice }), act.heal, "", run.coins < SHOP.healPrice || run.heroHp >= heroMaxHp(run)));
     foot.append(button(t(lang, "leave"), act.leave, "primary"));
   } else {
     title.textContent = t(lang, "gear");
+    // The character sheet, like FFTA's status screen: the face, name, job and level with HP and XP bars; the stats as
+    // a grid; the abilities as icons. Then the slots, the meters and the twin cards they open.
+    const spec = heroSpec(HERO, run.hero), maxHp = heroMaxHp(run), lv = run.hero.level;
+    const sheet = document.createElement("div"); sheet.className = "sheet";
+    const face = act.face?.(spec.look) ?? "";
+    const bar = (cls: string, a: number, b: number, label: string) =>
+      `<span class="statbar ${cls}"><small>${label}</small><span class="track"><b style="width:${Math.max(0, Math.min(100, (a / Math.max(1, b)) * 100))}%"></b></span><em>${a}/${b}</em></span>`;
+    sheet.innerHTML = `<span class="face big">${face ? `<img src="${face}" alt="">` : ""}</span>`
+      + `<span class="who"><b>${html(spec.name)}</b><small>${icon(elIcon(spec.element))} ${html(run.hero.job ? JOBS[run.hero.job].name[lang] : ELEMENTS[spec.element][lang])} · ${t(lang, "level", { n: lv })}</small>`
+      + bar("hp", run.heroHp, maxHp, t(lang, "hp")) + bar("xp", run.hero.xp, xpToNext(lv), "XP") + `</span>`;
+    const stats = document.createElement("div"); stats.className = "stats";
+    // Each stat as a row, like a League tooltip: the value, what it is made of (base, levels, perks, gear) and what
+    // it does, so the player sees why a number grew and what it buys.
+    const src = statSources(HERO, run.hero);
+    const row = (k: string, value: string, parts: string, what: string) =>
+      `<div class="srow s-${k}"><b>${t(lang, k as "str")}</b><em>${value}</em><small>${parts}</small><p>${what}</p></div>`;
+    stats.innerHTML = (["ap", "mp", "speed", "str", "mag", "agi"] as const).map((k) => {
+      const c = src[k];
+      const parts = [`${c.base} ${t(lang, "src.base")}`, ...([["lv", c.lv], ["perk", c.perk], ["gear", c.gear]] as const).filter(([, n]) => n)
+        .map(([w, n]) => `<i class="${n > 0 ? "up" : "dn"}">${n > 0 ? "+" : "−"}${Math.abs(n)} ${t(lang, `src.${w}`)}</i>`)].join(" ");
+      return row(k, `${spec[k]}`, parts, t(lang, `sx.${k}`));
+    }).join("")
+      + (Object.values(spec.res).some((v) => v)
+        ? row("res", "", Object.entries(spec.res).filter(([, v]) => v).map(([e, v]) => `<span>${icon(elIcon(e))}${v}%</span>`).join(" "), t(lang, "sx.res")) : "");
+    const abils = document.createElement("div"); abils.className = "abils";
+    abils.innerHTML = spec.abilities.map((a) => `<span>${icon(abilityIcon(a, ABILITY_ELEMENT(a)))}${html(abilityName(lang, a))}</span>`).join("");
+    list.append(sheet, stats, abils);
     // The hero sheet: both meters, then the twin cards they open.
     const meters = document.createElement("p"); meters.className = "say"; meters.innerHTML = metersHtml(run, lang);
     list.append(meters);
@@ -252,11 +309,17 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
         + (out.includes(m) ? "" : ` · ${t(lang, "atCamp")}`);
       list.append(p);
     }
+    // What the hero wears: three framed slots, like a console RPG's equip screen; an empty slot shows a faded picture.
+    const slots = document.createElement("div"); slots.className = "slots";
     for (const slot of ["weapon", "armour", "charm"] as const) {
-      const id = run.hero.gear[slot];
-      if (id) list.append(button(itemCard(id, lang, `<em>${t(lang, "worn")}</em>`), () => {}, "card worn"));
+      const id = run.hero.gear[slot], it = id ? ITEMS[id] : undefined;
+      const s = document.createElement("div"); s.className = `slot${it ? "" : " empty"}`;
+      s.innerHTML = iconTile(it ? pk(ITEM_PACK[id!]) : pk(RUN_PACK[slot]), it?.rarity ?? "common")
+        + `<small>${t(lang, `slot.${slot}`)}</small><b class="r-${it?.rarity ?? "common"}">${it ? html(it.name[lang]) : "—"}</b>${it ? `<span>${modsText(it.mods, lang)}</span>` : ""}`;
+      slots.append(s);
     }
-    for (const id of run.hero.bag) list.append(button(itemCard(id, lang, `<em>${t(lang, "wear")}</em>`), () => act.wear(id)));
+    abils.after(slots);
+    for (const id of run.hero.bag) list.append(button(itemCard(id, lang, `<em>${t(lang, "wear")}</em>`), () => act.wear(id), "card ico"));
     if (!run.hero.bag.length) { const p = document.createElement("p"); p.textContent = t(lang, "bagEmpty"); list.append(p); }
     foot.append(button(t(lang, "close"), closeGear, "primary"));
   }

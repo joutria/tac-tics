@@ -54,6 +54,17 @@ export function heroSpec(base: UnitSpec, p: HeroProgress, canWear?: (tw: Twin, a
   return spec;
 }
 
+export type SheetStat = "ap" | "mp" | "speed" | "str" | "mag" | "agi";
+/** Where each of the hero's stats comes from, for the character sheet: the base, the levels, the perks and the
+    worn items. They add up to what heroSpec gives. */
+export function statSources(base: UnitSpec, p: HeroProgress): Record<SheetStat, { base: number; lv: number; perk: number; gear: number }> {
+  const keys: SheetStat[] = ["ap", "mp", "speed", "str", "mag", "agi"];
+  const sum = (mods: Mods[], k: SheetStat, times = 1) => mods.reduce((a, m) => a + (m[k] ?? 0) * times, 0);
+  const perks = p.perks.map((id) => PERKS[id]!.mods), gear = Object.values(p.gear).map((id) => ITEMS[id!]!.mods);
+  return Object.fromEntries(keys.map((k) => [k, { base: base[k], lv: sum([GROWTH], k, p.level - 1), perk: sum(perks, k), gear: sum(gear, k) }])) as
+    Record<SheetStat, { base: number; lv: number; perk: number; gear: number }>;
+}
+
 /** Adds XP; returns the new progress and, for each second level reached, a pair of perks to pick from. */
 export function gainXp(p: HeroProgress, xp: number, seed: string): { progress: HeroProgress; perkChoices: string[][]; levels: number } {
   const next = structuredClone(p);

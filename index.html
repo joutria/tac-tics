@@ -312,6 +312,76 @@
   /* Icons from the CC0 "496 pixel art icons" pack are 32 px: smooth them when a screen shrinks them, keep them sharp
      when it enlarges them. */
   @media (max-resolution: 1.5dppx) { img.ico.pk { image-rendering: auto; } }
+  /* Run screens with pictures: every item, perk, reward and difficulty carries a pack icon in a framed tile, its frame
+     coloured by rarity. A choice of 2-3 (rewards, perks, difficulty) stands side by side as tall cards when there is
+     room, like a deck-builder's pick; the shop is a two-column shelf with price tags; gear opens on three slots. */
+  .ic { display: inline-flex; align-items: center; justify-content: center; width: 46px; height: 46px; flex: none; background: #2a262c;
+    box-shadow: inset 0 0 0 2px #140c1c, inset 0 0 0 4px var(--rc, #7d7684), 2px 2px 0 rgba(4, 2, 9, 0.45); }
+  .ic.r-rare { --rc: #5f9bea; } .ic.r-epic { --rc: #b57cf0; }
+  .ic img.ico.huge { width: 32px; height: 32px; }
+  #runPanel .card.ico { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: center; }
+  #runPanel .card.ico .tx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  #runPanel .card.ico .tx em.price { align-self: flex-start; margin-top: 3px; padding: 1px 8px; background: #2a1e10; box-shadow: inset 0 0 0 1px var(--frame); color: var(--accent); font-size: 13px; }
+  #runPanel .cards.pick { width: min(440px, 100%); }
+  @media (min-width: 640px) {
+    #runPanel .cards.pick { flex-direction: row; width: min(760px, 100%); gap: 8px; padding: 8px; }
+    #runPanel .cards.pick > .card.ico { flex: 1 1 0; grid-template-columns: 1fr; justify-items: center; text-align: center; padding: 14px 10px 14px; align-content: start; }
+    #runPanel .cards.pick > .card.ico + .card.ico { box-shadow: -4px 0 0 -2px rgba(236, 230, 210, 0.15); }
+    #runPanel .cards.pick > .card.ico .tx { align-items: center; }
+    #runPanel .cards.pick .ic { width: 64px; height: 64px; } #runPanel .cards.pick .ic img.ico.huge { width: 48px; height: 48px; }
+    #runPanel .cards.pick > .card.ico:hover::before, #runPanel .cards.pick > .card.ico:focus-visible::before { left: 8px; top: 8px; }
+    #runPanel .cards.shop { display: grid; grid-template-columns: 1fr 1fr; width: min(720px, 100%); }
+    #runPanel .cards.shop > .purse { grid-column: 1 / -1; }
+  }
+  #runPanel .cards .purse { margin: 0; padding: 4px 12px; text-align: right; color: var(--accent); font-size: 15px; }
+  #runPanel .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 6px; }
+  #runPanel .slot { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; padding: 8px 4px; background: rgba(0,0,0,0.18); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07); }
+  #runPanel .slot small { color: var(--frame); text-transform: uppercase; letter-spacing: 1px; font-size: 10px; margin-top: 4px; }
+  #runPanel .slot b { font-size: 13px; } #runPanel .slot span { font-size: 11px; color: var(--quiet); }
+  #runPanel .slot.empty .ic { opacity: 0.35; filter: grayscale(1); }
+  /* Character sheet (gear screen): face, name, job and level with bars, a stat grid and the abilities as icons. */
+  #runPanel .sheet { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; padding: 10px 12px 4px; }
+  #runPanel .face.big { width: 80px; height: 80px; display: flex; align-items: center; justify-content: center; background: radial-gradient(#3a3440, #221e26);
+    box-shadow: inset 0 0 0 2px #140c1c, inset 0 0 0 4px var(--frame), 3px 3px 0 rgba(4,2,9,0.45); }
+  #runPanel .face.big img { width: 72px; height: 72px; image-rendering: pixelated; object-fit: contain; }
+  #runPanel .sheet .who { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  #runPanel .sheet .who b { font-size: 20px; color: var(--accent); } #runPanel .sheet .who small { color: var(--quiet); font-size: 13px; }
+  #runPanel .statbar { display: grid; grid-template-columns: 26px 1fr auto; gap: 6px; align-items: center; font-size: 12px; }
+  #runPanel .statbar .track { height: 8px; background: #1c1820; box-shadow: inset 0 0 0 1px #140c1c; position: relative; }
+  #runPanel .statbar .track b { position: absolute; inset: 1px auto 1px 1px; background: linear-gradient(#a4f07c, #4fb03a); }
+  #runPanel .statbar.xp .track b { background: linear-gradient(#bfe6ff, #3f8ad8); } #runPanel .statbar em { font-style: normal; color: var(--quiet); }
+  #runPanel .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px; padding: 4px 12px; }
+  #runPanel .srow { display: grid; grid-template-columns: 44px 30px 1fr; align-items: baseline; gap: 0 6px; padding: 4px 8px; background: rgba(0,0,0,0.2); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
+  #runPanel .srow b { font-size: 11px; color: var(--frame); text-transform: uppercase; letter-spacing: 1px; }
+  #runPanel .srow em { font-style: normal; font-size: 16px; text-align: right; }
+  #runPanel .srow small { font-size: 11px; color: var(--quiet); } #runPanel .srow small i { font-style: normal; }
+  #runPanel .srow small span { display: inline-flex; align-items: center; gap: 2px; color: var(--ink, #fff); }
+  #runPanel .srow p { grid-column: 1 / -1; margin: 2px 0 0; font-size: 11px; line-height: 1.3; color: #c9bfae; }
+  #runPanel .srow.s-str b { color: var(--c-str); } #runPanel .srow.s-mag b { color: var(--c-mag); }
+  /* Stat colours, as in League tooltips: a stat's share of a number is always painted in that stat's colour. */
+  :root { --c-str: #f0965a; --c-mag: #9aa8ff; --c-up: #8fd16a; --c-dn: #ec6a5e; }
+  .s-str { color: var(--c-str); } .s-mag { color: var(--c-mag); } i.s-str, i.s-mag, i.up, i.dn { font-style: normal; }
+  i.up { color: var(--c-up); } i.dn { color: var(--c-dn); }
+  .sum { display: inline-flex; flex-wrap: wrap; gap: 0 8px; font-size: 12px; color: var(--quiet); }
+  #runPanel .abils { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 12px; font-size: 13px; }
+  #runPanel .abils span { display: inline-flex; align-items: center; gap: 4px; }
+  /* Talk box: the companion's face in a frame, a name plate, then the lines (src/ui/runmap.ts talkBox). */
+  #runPanel .talk { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: start; padding: 10px 12px; }
+  #runPanel .talk .face { width: 72px; height: 72px; display: flex; align-items: center; justify-content: center; background: #2a262c;
+    box-shadow: inset 0 0 0 2px #140c1c, inset 0 0 0 4px var(--frame), 2px 2px 0 rgba(4,2,9,0.45); }
+  #runPanel .talk .face img { width: 64px; height: 64px; image-rendering: pixelated; object-fit: contain; }
+  #runPanel .talk .lines { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  #runPanel .talk .who { align-self: flex-start; padding: 1px 10px; background: #6a3c14; box-shadow: inset 0 0 0 1px var(--frame); color: #ffe9c0; font-size: 14px; }
+  #runPanel .talk p { margin: 0; line-height: 1.45; } #runPanel .talk p.reply { color: var(--accent); }
+  /* Battle result: the word in the display face on a gold banner; a defeat turns it red and the night darker. */
+  #overlay h1 { font: 400 clamp(64px, 14vw, 120px)/1 "Jacquard 12", var(--px); letter-spacing: 3px; padding: 4px 36px 10px; color: #ffd96b;
+    background: linear-gradient(90deg, transparent, rgba(20, 12, 28, 0.85) 18%, rgba(20, 12, 28, 0.85) 82%, transparent);
+    border-top: 3px solid var(--frame); border-bottom: 3px solid var(--frame); border-image: linear-gradient(90deg, transparent, var(--frame) 20%, var(--frame) 80%, transparent) 1;
+    text-shadow: 0 4px 0 #8a4a14, 4px 4px 0 #140c1c, -4px 4px 0 #140c1c, 0 0 24px rgba(255, 170, 60, 0.4); animation: banner 0.5s steps(5, end) both; }
+  #overlay.lost { background: rgba(20, 2, 6, 0.72); }
+  #overlay.lost h1 { color: #ff7a6a; text-shadow: 0 4px 0 #6a1414, 4px 4px 0 #140c1c, -4px 4px 0 #140c1c, 0 0 24px rgba(255, 60, 40, 0.4); }
+  @keyframes banner { from { transform: scale(1.6); opacity: 0; } to { transform: none; opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { #overlay h1 { animation: none; } }
   /* The title screen (src/ui/title.ts): the name in a blackletter pixel face over the dimmed board, embers rising,
      and a short centred menu of plain words, the hand on the one in focus (like a console game's title, not a web
      page of buttons). */
