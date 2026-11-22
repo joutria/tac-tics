@@ -15,7 +15,8 @@
    once a turn, for everyone, and cannot move heavy units such as bosses. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
-import { bodyGap, cellsOf, coversPos, HIDE_RANGE, inside, manhattan, NEIGHBOURS, nearestCell, Pos, samePos, standable, TERRAIN, tileAt, type Terrain } from "./grid";
+import { bodyGap, cellsOf, coversPos, HIDE_RANGE, inside, manhattan, NEIGHBOURS, nearestCell, Pos, samePos, standable, swimmable, TERRAIN, tileAt, type Terrain, type Tile } from "./grid";
+import { swimProblem } from "./swim";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor, yielding } from "./escape";
 import { absorb, addStatus, POISON_HEAL_FACTOR, removeStatus, STATUS, statusOf, WEAKEN_FACTOR, type StatusId } from "./status";
@@ -23,7 +24,7 @@ import { EXECUTIONER_FACTOR, GUARD_FACTOR } from "../data/jobs";
 import { hasLineOfSight } from "./sight";
 import { actionCost, manaCost, RULES } from "./rules";
 import { canStep } from "./movement";
-import { burning, chainBolt, explode, giveFire, takeFire, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
+import { burning, chainBolt, explode, giveFire, soak, takeFire, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
 import { bodiesInWay, isFoe, nearestOf, sizeOf, unitAt, unitGap, type BattleState, type Unit } from "./state";
 
 /* Pacing (FFTA-style, 2026-11-21): positional bonuses are a nudge, not a kill switch. Standing high, hitting
@@ -46,7 +47,7 @@ export const PUSH_HIT = 3;
 /** Fall damage per level dropped, before the pusher's Strength, the landing and the target's defences. */
 export const FALL_PER_LEVEL = 4;
 /** How hard the landing is. Grass is soft, ice is hard. */
-export const LANDING: Partial<Record<Terrain, number>> = { grass: 0.85, ice: 1.25 };
+export const LANDING: Partial<Record<Terrain, number>> = { grass: 0.85, ice: 1.25, water: 0.4 };
 /** Agility cuts fall damage by 1% per point, at most this share. */
 export const FALL_AGI_CAP = 0.4;
 /** A shove moves 2 tiles instead of 1 when the shover's Strength beats the target's by this much. */
@@ -163,6 +164,8 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, at
   const d = manhattan(from, target);
   if (d < ab.range[0] || d > maxRange(s, ab, from, target, u)) return "out of range";
   if ((ab.jump || ab.step) && u.rooted) return "rooted";
+  const wet = swimProblem(s.map, u, ab, at);
+  if (wet) return wet;
   const occupant = unitAt(s, target);
   const other = occupant && occupant.id !== u.id ? occupant : undefined;
   if (other && hiddenFrom(s, u, other, at)) return "hidden in tall grass";
@@ -492,6 +495,7 @@ export const stuck = (u: Unit) => u.rooted || !!statusOf(u, "stun");
 
 export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number): PushOutcome {
   if (sizeOf(u) > 1) return giantPushOutcome(s, pusher, u, from, tiles);
+  const open = (t: Tile | undefined): t is Tile => standable(t) || swimmable(t);
   const dx = u.pos.x - from.x, dy = u.pos.y - from.y;
   const step = Math.abs(dx) >= Math.abs(dy) ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dy) };
   let at = { ...u.pos }, fell = 0, slid = false;
@@ -500,10 +504,10 @@ export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, ti
   for (let i = 0; i < tiles; i++) {
     const n = { x: at.x + step.x, y: at.y + step.y };
     const here = tileAt(s.map, at)!, next = tileAt(s.map, n);
-    // Pushed units can be shoved down any drop, but never up a step.
+    // Pushed units can be shoved down any drop, but never up a step. Into water they splash in and swim.
     const other = unitAt(s, n);
-    const free = standable(next) && (!other || other.id === u.id) && next.h <= here.h;
-    if (!free && other && standable(next) && next.h < here.h) {
+    const free = open(next) && (!other || other.id === u.id) && next.h <= here.h;
+    if (!free && other && open(next) && next.h < here.h) {
       // Falling onto someone below: they break the fall and take the full blow, the faller takes half. If the
       // tile beyond them is free and not higher, they are knocked onto it and the faller lands in their place;
       // otherwise the faller bounces back onto the ledge.
@@ -511,7 +515,7 @@ export function pushOutcome(s: BattleState, pusher: Unit, u: Unit, from: Pos, ti
       const b = { x: n.x + step.x, y: n.y + step.y }, beyond = tileAt(s.map, b);
       out.landedOn = true; out.blocker = "unit"; out.other = other.id; out.at = n; out.splash = crush;
       // A giant below is not knocked aside: the faller bounces back.
-      if (sizeOf(other) <= 1 && standable(beyond) && !unitAt(s, b) && beyond.h <= next.h) { out.otherTo = b; at = n; }
+      if (sizeOf(other) <= 1 && open(beyond) && !unitAt(s, b) && beyond.h <= next.h) { out.otherTo = b; at = n; }
       out.to = at; out.fell = fell + here.h - next.h; out.fall = Math.floor(crush / 2);
       return out;
     }
@@ -586,6 +590,7 @@ function push(s: BattleState, pusher: Unit, u: Unit, from: Pos, tiles: number, h
   const o = pushOutcome(s, pusher, u, from, tiles);
   if (o.otherTo) { const v = s.units.find((x) => x.id === o.other); if (v) v.pos = { ...o.otherTo }; }
   if (!samePos(o.to, u.pos)) { u.pos = { ...o.to }; hit.pushedTo = { ...o.to }; }
+  soak(s, u);
   if (o.fell) hit.fell = o.fell;
   if (o.slid) hit.slid = true;
   if (o.blocker) hit.slammed = o.blocker;

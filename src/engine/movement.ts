@@ -1,11 +1,11 @@
 /* Where a unit can walk this turn.
    Each step to a neighbouring tile costs 1 MP. A step may climb at most `jump` levels and drop at most
-   `jump + 1`. Other units block the tile. Lock: a step that leaves a tile next to standing foes costs 1 extra MP
+   `jump + 1`. Other units block the tile. A unit that can swim may also step into water, for extra MP (swim.ts). Lock: a step that leaves a tile next to standing foes costs 1 extra MP
    for each of those foes whose Agility is at least the walker's (a slippery unit escapes, a slow one is pinned).
    A giant (size 2) moves its whole body one tile at a time: every tile it steps onto must take it, and each of its
    tiles keeps to the climb and drop limits. It walks straight through crates (they break) and tall grass (it is
    trampled flat), see state.ts. */
-import { cellsOf, GridMap, NEIGHBOURS, Pos, standable, TERRAIN, tileAt, type Tile } from "./grid";
+import { cellsOf, GridMap, NEIGHBOURS, Pos, standable, swimmable, TERRAIN, tileAt, type Tile } from "./grid";
 
 export interface MoveRules {
   mp: number;
@@ -16,15 +16,17 @@ export interface MoveRules {
   lockAt?: (p: Pos) => number;
   /** Tiles per side of the walker's body (2 for giants). Positions are its corner with the lowest x and y. */
   size?: number;
+  /** Can swim: the extra MP for each step into water (0 for water creatures). Unset: water is closed to it. */
+  swim?: number;
 }
 
 export interface Route { cost: number; path: Pos[] }
 
 const key = (p: Pos) => `${p.x},${p.y}`;
 
-export function canStep(m: GridMap, from: Pos, to: Pos, jump: number): boolean {
+export function canStep(m: GridMap, from: Pos, to: Pos, jump: number, swim = false): boolean {
   const a = tileAt(m, from), b = tileAt(m, to);
-  if (!a || !b || !standable(b)) return false;
+  if (!a || !b || !(standable(b) || (swim && swimmable(b)))) return false;
   const rise = b.h - a.h;
   return rise <= jump && -rise <= jump + 1;
 }
@@ -33,8 +35,8 @@ export function canStep(m: GridMap, from: Pos, to: Pos, jump: number): boolean {
 const giantFloor = (t: Tile | undefined): t is Tile => !!t && TERRAIN[t.terrain].walkable && (!t.prop || t.prop === "crate");
 
 /** One step of a whole body (corner `from` to corner `to`): each of its tiles must take the step on its own. */
-export function canStepBody(m: GridMap, from: Pos, to: Pos, jump: number, size = 1): boolean {
-  if (size <= 1) return canStep(m, from, to, jump);
+export function canStepBody(m: GridMap, from: Pos, to: Pos, jump: number, size = 1, swim = false): boolean {
+  if (size <= 1) return canStep(m, from, to, jump, swim);
   const dx = to.x - from.x, dy = to.y - from.y;
   return cellsOf(from, size).every((c) => {
     const a = tileAt(m, c), b = tileAt(m, { x: c.x + dx, y: c.y + dy });
@@ -57,8 +59,8 @@ export function reachable(m: GridMap, start: Pos, rules: MoveRules): Map<string,
     const leave = 1 + (rules.lockAt?.(cur.p) ?? 0);
     for (const d of NEIGHBOURS) {
       const n = { x: cur.p.x + d.x, y: cur.p.y + d.y };
-      const cost = cur.cost + leave;
-      if (cost > rules.mp || cellsOf(n, size).some(rules.blocked) || !canStepBody(m, cur.p, n, rules.jump, size)) continue;
+      const cost = cur.cost + leave + (rules.swim !== undefined && tileAt(m, n)?.terrain === "water" ? rules.swim : 0);
+      if (cost > rules.mp || cellsOf(n, size).some(rules.blocked) || !canStepBody(m, cur.p, n, rules.jump, size, rules.swim !== undefined)) continue;
       const k = key(n);
       if (cost >= (best.get(k)?.cost ?? Infinity)) continue;
       const path = [...cur.path, n];

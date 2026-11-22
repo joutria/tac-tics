@@ -1,5 +1,6 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
+import { inWater, nativeSwimmer, swimProblem } from "./engine/swim";
 import { startUpdates } from "./app/update";
 import { AUDIO_KEY, audioSettings, battleSounds, initAudio, playMusic, readAudioSettings, setAudio, sfx } from "./audio/sound";
 import "@fontsource/pixelify-sans/400.css";
@@ -12,7 +13,7 @@ import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, comboProblem, guardAbility, CRIT_MULT, HEIGHT_CAP, HEIGHT_PER_LEVEL, SIDE_BONUS, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
-import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
+import { manhattan, Pos, rockSizeOf, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { heightShapesReach, reachAt, reachBound, type Reach } from "./engine/reach";
 import { dangerZone } from "./engine/threat";
@@ -31,7 +32,7 @@ import { approachScene, departScene, placeOf, type Origin, type Scene } from "./
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, nodeLabel, renderRunMap } from "./ui/runmap";
-import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, type IconId } from "./ui/icons";
+import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, type IconId } from "./ui/icons";
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
@@ -660,6 +661,7 @@ function explain(why: string): string {
     ["needs an empty tile", "err.empty"], ["needs a yielding foe", "err.yielding"], ["not enough AP", "err.ap"], ["not enough mana", "err.mana"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
     ["the combo partner is not standing", "err.comboDown"], ["the combo partner is too far", "err.comboFar"], ["needs the combo partner", "err.comboTarget"],
   ];
+  if (why.endsWith("while swimming")) return t(lang, "swimming");
   const hit = map.find(([k]) => why.startsWith(k));
   return hit ? t(lang, hit[1]) : why;
 }
@@ -784,7 +786,7 @@ function abilityHelp(id: string, u: Unit | null): string {
   if (ab.cooldown) chip("cooldown", t(lang, "h.cd", { n: ab.cooldown }));
   if (ab.perTurn > 1 && ab.perTurn < 4) chip(null, t(lang, "h.perTurn", { n: ab.perTurn }));
   if (ab.quick) chip("quick", t(lang, "h.quick"));
-  const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
+  const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? swimProblem(state.map, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
   // How its reach works: height (ranged only), the blind spot next to the caster, and what cuts the line of sight.
   const rules: string[] = [];
   if (ab.range[1] > 0 && !ab.quick) rules.push(t(lang, heightShapesReach(ab) ? "h.heightRule" : "h.meleeRule"));
@@ -885,7 +887,7 @@ function refresh() {
     const b = document.createElement("button");
     b.className = `cmd${ab.quick ? " sub" : ""}${selected === id ? " on" : ""}`;
     b.style.setProperty("--el", ELEMENTS[ab.element].col);
-    const why = abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
+    const why = abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? swimProblem(state.map, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
     b.innerHTML = `${icon(abilityIcon(id, ab.element))}<span class="nm">${abilityName(lang, id)}</span>`
@@ -897,10 +899,11 @@ function refresh() {
   }
   $<HTMLButtonElement>("end").disabled = !mine;
   $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited || !!u.usedThisTurn.quick;
-  const guardWith = mine && u.escape === "none" ? guardAbility(u) : null;
+  const wet = inWater(state.map, u) && !nativeSwimmer(u);
+  const guardWith = mine && u.escape === "none" && !wet ? guardAbility(u) : null;
   const gb = $<HTMLButtonElement>("guard");
   gb.disabled = !guardWith;
-  dress("guard", "shield", t(lang, "guard"), () => plainHelp(t(lang, "guard"), guardWith ? t(lang, "guardHint", { ab: abilityName(lang, guardWith) }) : t(lang, "guardNo"), "shield"));
+  dress("guard", "shield", t(lang, "guard"), () => plainHelp(t(lang, "guard"), guardWith ? t(lang, "guardHint", { ab: abilityName(lang, guardWith) }) : t(lang, wet ? "swimming" : "guardNo"), "shield"));
   $<HTMLButtonElement>("undo").disabled = !canUndo();
   const rw = $<HTMLButtonElement>("rewind");
   const left = rulesOf(journey).rewinds - (save.rewindsUsed ?? 0);
@@ -1160,7 +1163,7 @@ function tileInfo(at: Pos): string[] {
   const out: string[] = [];
   if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
-  if (tile.prop === "rock") out.push(`<b>${t(lang, "rockName")}</b> · ${t(lang, "rockInfo")}`);
+  if (tile.prop === "rock") out.push(`<b>${t(lang, "rockName")}</b> · ${t(lang, ({ s: "rockS", m: "rockM", l: "rockL" } as const)[rockSizeOf(tile)])} ${t(lang, "rockInfo")}`);
   if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, tile.prop || tile.terrain === "tree" ? "burningObjInfo" : "fireInfo")}`);
   if (tile.scorchedAt !== undefined) out.push(t(lang, "scorchedInfo"));
   if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);
@@ -1914,10 +1917,23 @@ function sizeCanvas() {
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 }
 
+/** Behind the board: a dim plum glow in the middle fading to near black at the edges, so the island floats in a
+    vignette instead of on a flat colour. Rebuilt only when the canvas changes size. */
+let backdropFill: { w: number; h: number; g: CanvasGradient } | null = null;
+function backdrop(): CanvasGradient {
+  const w = canvas.width, h = canvas.height;
+  if (!backdropFill || backdropFill.w !== w || backdropFill.h !== h) {
+    const g = ctx.createRadialGradient(w / 2, h * 0.45, 0, w / 2, h * 0.45, Math.hypot(w, h) * 0.6);
+    g.addColorStop(0, "#2a2236"); g.addColorStop(0.55, "#1a1522"); g.addColorStop(1, "#0b0910");
+    backdropFill = { w, h, g };
+  }
+  return backdropFill.g;
+}
+
 function frame(time: number) {
   if (onMap || mapOpen) sizeCanvas();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "#1d1f2b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = backdrop(); ctx.fillRect(0, 0, canvas.width, canvas.height);
   pollPads(time);
   if (mapOpen) { drawRoute(time); requestAnimationFrame(frame); return; }
   if (onMap) {
@@ -1961,9 +1977,12 @@ async function start() {
     reloadOk: () => onMap && !(play && !play.finished && play.started !== null),
     get: safeGet, set: safeSet,
   });
-  images = await loadImages(srcs);
+  [images] = await Promise.all([loadImages(srcs), loadPackIcons(import.meta.env.BASE_URL)]);
   // Pixel icons everywhere: the menu hand, and every emoji any text still carries becomes a pixel icon as it lands.
   document.documentElement.style.setProperty("--pointer", `url(${iconUrl("pointer")})`);
+  // The pixel window and button frames (tools/ui-art.py), used by the nine-slice skin at the end of index.html's style.
+  for (const f of ["win", "btn", "btn-gold", "btn-lit", "btn-go", "btn-red"])
+    document.documentElement.style.setProperty(`--skin-${f}`, `url(${import.meta.env.BASE_URL}art/ui/${f}.png)`);
   iconize(document.body);
   new MutationObserver((list) => {
     for (const m of list) {

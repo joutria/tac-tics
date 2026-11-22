@@ -199,6 +199,10 @@ function isoCampfire(ctx: CanvasRenderingContext2D, img: Images, c: { x: number;
 }
 
 export const TW = 64, TH = 32, LEVEL = 16;
+/** Characters are drawn at this size (Jose: smaller characters). A giant is twice this. */
+export const UNIT_SCALE = 0.8;
+/** How far a swimmer sits in the water: its sprite drops this much and is cut at the waterline. */
+export const SWIM_SINK = 11;
 
 export type Images = Record<string, HTMLImageElement>;
 
@@ -268,7 +272,7 @@ export function pickTile(m: GridMap, px: number, py: number, rot: number): Pos |
 
 /** Where each unit's sprite frame was last drawn (map pixels), so a click counts as on a unit only where the
     sprite actually has paint: a tile peeking out beside or behind a character can still be picked. */
-interface DrawnSprite { map: GridMap; sheet: HTMLImageElement; sx: number; sy: number; x: number; y: number; flip: boolean; scale?: number }
+interface DrawnSprite { map: GridMap; sheet: HTMLImageElement; sx: number; sy: number; x: number; y: number; flip: boolean; scale?: number; waterline?: number }
 const drawnSprites = new Map<string, DrawnSprite>();
 /** The map of the battle being drawn, so sprites recorded for a travel scene never answer clicks in a fight. */
 let spriteMap: GridMap | null = null;
@@ -291,7 +295,8 @@ function alphaOf(sheet: HTMLImageElement) {
 
 /** Is there paint under a point (map pixels), allowing one sprite pixel of slack so edges are not fiddly? */
 function spriteHit(d: DrawnSprite, px: number, py: number) {
-  // Sprite drawn at (-32, -64) .. (32, 0) around its feet, times its scale (2 for a giant).
+  // Sprite drawn at (-32, -64) .. (32, 0) around its feet, times its scale; a swimmer is hidden under its waterline.
+  if (d.waterline !== undefined && py > d.waterline + 1) return false;
   let lx = (px - d.x) / (d.scale ?? 1), ly = (py - d.y) / (d.scale ?? 1);
   if (d.flip) lx = -lx;
   const fx = Math.floor(lx + 32), fy = Math.floor(ly + 64);
@@ -317,8 +322,8 @@ export function pickAt(m: GridMap, units: readonly Unit[], px: number, py: numbe
     const drawn = drawnSprites.get(u.id);
     if (drawn && drawn.map === m) { if (!spriteHit(drawn, px, py)) continue; }
     else {
-      const c = bodyCenter(m, u.pos, k, rot);
-      if (Math.abs(px - c.x) > 18 * k || py < c.y - 58 * k || py > c.y + 10 * k) continue;
+      const c = bodyCenter(m, u.pos, k, rot), z = k * UNIT_SCALE;
+      if (Math.abs(px - c.x) > 18 * z || py < c.y - 58 * z || py > c.y + 10 * z) continue;
     }
     const r = rotate(m, front, rot), depth = r.x + r.y;
     // A giant is picked on the tile of its body under the pointer when there is one, else its front tile.
@@ -482,7 +487,8 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     const pv = opt.preview && opt.preview.unit === pl.u.id ? opt.preview : undefined;
     const hitAt = opt.flashes?.get(pl.u.id);
     const flash = hitAt !== undefined && opt.time >= hitAt && opt.time - hitAt < 180;
-    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round), opt.bare, flash);
+    const swim = !pl.big && tileAt(m, pl.slot)?.terrain === "water";
+    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round), opt.bare, flash, swim);
     ctx.globalAlpha = 1;
   };
   // Painter's order: back diagonals first; on each tile its ground, then what stands on it.
@@ -839,15 +845,17 @@ function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, fill: stri
 
 function drawUnit(
   ctx: CanvasRenderingContext2D, u: Unit, img: Images, c: { x: number; y: number }, active: boolean, time: number, rot: number,
-  preview?: { min: number; max: number }, focus = false, shaky = false, bare = false, flash = false,
+  preview?: { min: number; max: number }, focus = false, shaky = false, bare = false, flash = false, swim = false,
 ) {
   const sheet = img[`unit-${u.look}`];
   const team = u.team === "heroes" ? "#ffe680" : "#ff8a7a";
   const base = ctx.globalAlpha; // lets a blinking unit fade as a whole
   // A giant (size 2) is drawn twice as big, centred on its four tiles, with its shadow and ring over all of them.
-  const k = u.size ?? 1, ring = k > 1 ? 1.9 * k / 2 : 1;
-  ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
-  ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 16 * ring * (k > 1 ? 1.6 : 1), 7 * ring * (k > 1 ? 1.6 : 1), 0, 0, Math.PI * 2); ctx.fill();
+  const k = u.size ?? 1, ring = k > 1 ? 1.9 * k / 2 : 1, z = k * UNIT_SCALE;
+  if (!swim) {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
+    ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 13 * ring * (k > 1 ? 1.6 : 1), 6 * ring * (k > 1 ? 1.6 : 1), 0, 0, Math.PI * 2); ctx.fill();
+  }
   if (!bare) {
     ctx.strokeStyle = team; ctx.lineWidth = active ? 2.5 : 1;
     ctx.globalAlpha = base * (active ? 1 : 0.6);
@@ -859,20 +867,25 @@ function drawUnit(
   const f = FACING_FRAME[rotFacing(u.facing, rot)];
   const frame = downed ? 9 : f.col + (Math.floor(time / 450) % 2); // column 9 is the asleep pose
   const row = Math.min(SHEET_ROW[u.look] ?? 0, sheet.height / 64 - 1);
+  // A swimmer bobs a little, sunk to its chest, and the water cuts it at the waterline.
+  const sink = swim ? SWIM_SINK + Math.round(Math.sin(time / 380 + c.x) * 1.5) : 0, waterline = c.y + 3;
+  const feet = Math.round(c.y + 5 * z + sink);
   ctx.save();
-  ctx.translate(c.x, c.y + 6 * k);
+  if (swim) { ctx.beginPath(); ctx.rect(c.x - 40 * z, waterline - 80 * z, 80 * z, 80 * z); ctx.clip(); }
+  ctx.translate(c.x, feet);
   if (f.flip && !downed) ctx.scale(-1, 1);
   if (downed) ctx.globalAlpha = base * 0.6;
   // Just hit: a white flash (browsers without canvas filters simply skip it), and a small knock back.
   if (flash) { ctx.filter = "brightness(2.6) saturate(0.3)"; ctx.translate(Math.round(Math.sin(time / 18) * 2), 0); }
-  ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32 * k, -64 * k, 64 * k, 64 * k);
-  drawnSprites.set(u.id, { map: spriteMap!, sheet, sx: frame * 64, sy: row * 64, x: c.x, y: c.y + 6 * k, flip: f.flip && !downed, scale: k });
+  ctx.drawImage(sheet, frame * 64, row * 64, 64, 64, -32 * z, -64 * z, 64 * z, 64 * z);
+  drawnSprites.set(u.id, { map: spriteMap!, sheet, sx: frame * 64, sy: row * 64, x: c.x, y: feet, flip: f.flip && !downed, scale: z, ...(swim ? { waterline } : {}) });
   ctx.filter = "none";
   ctx.restore();
+  if (swim) drawRipples(ctx, c.x, waterline, time);
   if (bare) return;
-  // Everything over the head sits higher on a giant.
+  // Everything over the head follows the sprite's size: higher on a giant, lower on a swimmer.
   const foot = c.y;
-  c = { x: c.x, y: c.y - 44 * (k - 1) };
+  c = { x: c.x, y: c.y + Math.round(64 - 64 * z + 20 * (k - 1) * UNIT_SCALE) + sink };
   // Health bar over the head; downed units show the turns they have left.
   const w = 30 + 14 * (k - 1), ratio = u.hp / u.maxHp;
   ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(c.x - w / 2 - 1, c.y - 62, w + 2, 5);
@@ -935,6 +948,17 @@ function drawUnit(
     ctx.fillStyle = "#fff"; ctx.fillText(badge, c.x - 22, c.y - 58.5);
     ctx.textBaseline = "alphabetic"; ctx.globalAlpha = base;
   }
+}
+
+/** Rings on the water round a swimmer: a pale line at the waterline and a wider one spreading out and fading. */
+function drawRipples(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(225, 245, 255, 0.85)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.ellipse(x, y, 12, 4.5, 0, 0, Math.PI * 2); ctx.stroke();
+  const t = (time % 1400) / 1400;
+  ctx.globalAlpha = 0.6 * (1 - t); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.ellipse(x, y + 1, 13 + 9 * t, 5 + 3.5 * t, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
 }
 
 /** A rock or a tree: its pixel picture at 2x, with its foot on the tile's centre. */

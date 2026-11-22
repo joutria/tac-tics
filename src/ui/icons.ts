@@ -3,6 +3,8 @@
    `icon()` gives an <img> for the DOM, `iconCanvas()` a canvas to draw on the battle map. Everything is built once,
    on first use, scaled up with hard edges. tools/check.ts checks every icon is 16x16 and uses known colours. */
 
+import { PACK as PACK_CELLS, PACK_CELL, type PackIcon } from "./pack";
+
 /** One character per colour; "." is see-through. */
 export const PALETTE: Record<string, string> = {
   k: "#1b1626", w: "#f7f3e8", l: "#c9c6d6", s: "#8d8aa0", S: "#555268",
@@ -872,13 +874,62 @@ export const ICONS = {
 
 export type IconId = keyof typeof ICONS;
 
+/** Menu icons from the CC0 "496 pixel art icons for medieval/fantasy RPG" pack (tools/icon-pack.py): richer 32 px
+    pictures for the DOM, where there is room for them. The battle board keeps the hand-drawn 16x16 icons above. */
+const PACK_FOR: Partial<Record<IconId, PackIcon>> = {
+  light: "S_Light02", fire: "S_Fire03", water: "S_Water07", plant: "I_Leaf", stone: "I_Rock01", bolt: "S_Thunder01", ice: "S_Ice02",
+  mush: "I_C_Mushroom", neutral: "I_Opal",
+  burn: "S_Fire02", poison: "S_Poison01", regen: "S_Holy02", slow: "S_Wind03", stun: "S_Light01", weaken: "S_Buff12",
+  hp: "S_Holy01", heal: "S_Holy03", shield: "E_Metal04", range: "S_Bow09", quick: "S_Thunder06",
+  coin: "I_GoldCoin", shard: "I_Jade", map: "I_Map", wait: "I_Clock", battle: "S_Magic08", shop: "I_GoldCoin", quest: "I_Scroll",
+};
+/** Each ability's own pack icon, so no two moves in a menu look alike. */
+const ABILITY_PACK: Partial<Record<string, PackIcon>> = {
+  shove: "S_Physic01", jump: "S_Wind07", dip: "S_Fire07", aim: "S_Bow09", douse: "S_Water04", hurl: "S_Earth05", zip: "S_Thunder05",
+  puff: "S_Poison09", helpUp: "S_Holy06", ray: "S_Light01", flare: "S_Light02", prism: "I_Diamond", blink: "S_Magic02", mend: "P_Blue01",
+  glow: "S_Holy04", ember: "S_Fire03", blaze: "S_Fire02", bite: "I_Fang", stomp: "S_Earth04", snare: "S_Poison06", splash: "S_Water03",
+  undertow: "S_Water02", spark: "S_Thunder01", jolt: "S_Thunder04", chill: "S_Ice02", freeze: "S_Ice07", frostbite: "S_Ice03",
+  shatter: "S_Ice04", glare: "S_Water06", slam: "S_Earth01", bulwark: "E_Metal04", tremor: "S_Earth07", dash: "S_Thunder06",
+  spores: "S_Poison07", wilt: "S_Poison04", sapCap: "I_C_Mushroom", halo: "S_Holy07", dawn: "S_Holy05", sear: "S_Light04",
+  dazzle: "S_Thunder03", sidestep: "S_Wind05", graceGlow: "S_Holy08", verdict: "S_Sword06", cleansingFlare: "S_Holy02",
+  sapRay: "S_Poison08", sanctuary: "S_Holy09", purge: "S_Holy10", brand: "S_Fire08", sapBloom: "S_Poison05", sapCapRich: "S_Poison01",
+  lighthouseWall: "E_Gold01", thunderhead: "S_Thunder07", myceliumNet: "S_Earth06",
+};
+/** A menu icon: one of the hand-drawn icons, or a pack icon by name ("pk:S_Fire03"). */
+export type MenuIcon = IconId | `pk:${PackIcon}`;
+
+let packSheet: HTMLImageElement | null = null;
+/** Loads the pack's sheet; until it has loaded (or if it fails) the menus use the hand-drawn icons. */
+export function loadPackIcons(base: string): Promise<void> {
+  return new Promise((done) => {
+    const img = new Image();
+    img.onload = () => { packSheet = img; urls.clear(); done(); };
+    img.onerror = () => done();
+    img.src = `${base}art/ui/icons.png`;
+  });
+}
+function packUrl(name: PackIcon): string | null {
+  if (!packSheet) return null;
+  const key = `pk:${name}`, hit = urls.get(key);
+  if (hit) return hit;
+  // The pack draws each icon inside a 34 px cell with a 1 px margin: keep the 32 px middle, at 2x.
+  const c = document.createElement("canvas"); c.width = c.height = 64;
+  const g = c.getContext("2d")!; g.imageSmoothingEnabled = false;
+  g.drawImage(packSheet, PACK_CELLS[name] * PACK_CELL + 1, 1, 32, 32, 0, 0, 64, 64);
+  const url = c.toDataURL();
+  urls.set(key, url);
+  return url;
+}
+
 /** The icon for each ability: the special moves get their own, the rest show their element. */
 const ABILITY_ICON: Partial<Record<string, IconId>> = {
   shove: "push", hurl: "push", undertow: "push", jump: "jump", throw: "throw", helpUp: "heal", spare: "spare", aim: "range",
   blink: "quick", dash: "quick", sidestep: "quick", zip: "quick", bulwark: "shield", halo: "shield", sanctuary: "shield", lighthouseWall: "shield",
   mend: "heal", glow: "heal", graceGlow: "heal", sapCap: "heal", sapCapRich: "heal", dawn: "heal", purge: "heal",
 };
-export function abilityIcon(id: string, element: string): IconId {
+export function abilityIcon(id: string, element: string): MenuIcon {
+  const pk = ABILITY_PACK[id];
+  if (pk && packSheet) return `pk:${pk}`;
   return ABILITY_ICON[id] ?? (element in ICONS ? (element as IconId) : "neutral");
 }
 
@@ -900,20 +951,25 @@ export function iconCanvas(id: IconId): HTMLCanvasElement {
   return c;
 }
 
-/** A data URL of the icon at 4x (32 px boxes at 2x screens stay sharp; CSS scales it down with pixelated edges). */
-export function iconUrl(id: IconId): string {
+/** A data URL of the icon at 4x (32 px boxes at 2x screens stay sharp; CSS scales it down with pixelated edges).
+    Menu icons that have a pack picture use it once the pack has loaded. */
+export function iconUrl(id: MenuIcon): string {
+  if (id.startsWith("pk:")) return packUrl(id.slice(3) as PackIcon) ?? iconUrl("neutral");
+  const pk = PACK_FOR[id as IconId];
+  if (pk) { const u = packUrl(pk); if (u) return u; }
   const hit = urls.get(id);
   if (hit) return hit;
   const c = document.createElement("canvas"); c.width = c.height = 64;
   const g = c.getContext("2d")!; g.imageSmoothingEnabled = false;
-  g.drawImage(iconCanvas(id), 0, 0, 64, 64);
+  g.drawImage(iconCanvas(id as IconId), 0, 0, 64, 64);
   const url = c.toDataURL();
   urls.set(id, url);
   return url;
 }
 
 /** An <img> tag for an icon, for HTML strings. `cls` adds classes (e.g. "big"). */
-export const icon = (id: IconId, cls = "") => `<img class="ico${cls ? ` ${cls}` : ""}" src="${iconUrl(id)}" alt="" draggable="false">`;
+export const icon = (id: MenuIcon, cls = "") => `<img class="ico${isPack(id) ? " pk" : ""}${cls ? ` ${cls}` : ""}" src="${iconUrl(id)}" alt="" draggable="false">`;
+const isPack = (id: MenuIcon) => !!packSheet && (id.startsWith("pk:") || !!PACK_FOR[id as IconId]);
 
 /** Emoji the texts and the map still use, and the pixel icon that stands in for each. */
 export const EMOJI_ICON: Record<string, IconId> = {
@@ -954,7 +1010,7 @@ export function iconize(root: Node) {
     for (const p of parts) {
       if (typeof p === "string") { frag.append(p); continue; }
       const img = document.createElement("img");
-      img.className = "ico"; img.src = iconUrl(p.icon); img.alt = ""; img.draggable = false;
+      img.className = isPack(p.icon) ? "ico pk" : "ico"; img.src = iconUrl(p.icon); img.alt = ""; img.draggable = false;
       frag.append(img);
     }
     n.replaceWith(frag);

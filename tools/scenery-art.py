@@ -8,8 +8,8 @@ outline #141b1b, flat tones, light from the top left) and shown at 2x like every
 built from a few blobs (or tiers for pines, lines for bare trees); each pixel's tone comes from the facet of the blob
 it sits on, so the shading is chunky and flat, not smooth. Moss and snow settle on the faces that look up.
 
-Rocks are 28 x 26 with the tile's centre at (14, 22); trees are 40 x 40 with the tile's centre at (20, 36), about as
-big as the pack's tree (obj-tree.png). Writes public/art/iso/rock-<region>-<n>.png and tree-<region>-<n>.png; the lists the
+Rocks are 28 x 26 with the tile's centre at (14, 22), drawn in three sizes (small, medium, big); trees are 40 x 40 with the tile's centre at (20, 36), about as
+big as the pack's tree (obj-tree.png). Writes public/art/iso/rock-<region>-<n>-<s|m|l>.png and tree-<region>-<n>.png; the lists the
 board picks from are ROCKS and TREES in src/render/scenery.ts and must name the same files."""
 import math
 import os
@@ -117,7 +117,9 @@ def facet_tone(n, i, facets, bias=0.0):
 
 # ---- Rocks --------------------------------------------------------------------------------------------------------
 RW, RH, RBX, RBY = 28, 26, 14, 22
-ROCK_K = 1.2   # shapes below are drawn round a base at (12, 20) and grown by this
+# Shapes below are drawn round a base at (12, 20) and grown by this, per rock size (src/engine/grid.ts RockSize):
+# a small stone, a medium rock and a big boulder.
+ROCK_K = {"s": 0.6, "m": 0.82, "l": 1.05}
 
 # Shapes, as blobs round the base. Each is a boulder-sized stone that fills about two thirds of a tile.
 ROCK_SHAPES = {
@@ -129,9 +131,12 @@ ROCK_SHAPES = {
 }
 
 
-def rock(shape, pal, cover=None, seed=0, cracks=2):
+def rock(shape, pal, cover=None, seed=0, cracks=2, size="l"):
     rnd = random.Random(seed)
-    blobs = [(RBX + (cx - 12) * ROCK_K, RBY - (20 - cy) * ROCK_K, rx * ROCK_K, ry * ROCK_K, lift) for cx, cy, rx, ry, lift in ROCK_SHAPES[shape]]
+    grow = ROCK_K[size]
+    if size == "s":
+        cracks = min(cracks, 1)
+    blobs = [(RBX + (cx - 12) * grow, RBY - (20 - cy) * grow, rx * grow, ry * grow, lift) for cx, cy, rx, ry, lift in ROCK_SHAPES[shape]]
     im = Image.new("RGBA", (RW, RH), (0, 0, 0, 0))
     px = im.load()
     for y in range(RH):
@@ -168,7 +173,7 @@ def rock(shape, pal, cover=None, seed=0, cracks=2):
             y += 1
             x += rnd.choice((-1, 0, 0, 1))
     im = outline(im)
-    return with_shadow(im, RBX, RBY - 0.5, 11.5, 3.8)
+    return with_shadow(im, RBX, RBY - 0.5, 11.5 * grow / 1.2, 3.8 * grow / 1.2)
 
 
 # ---- Trees --------------------------------------------------------------------------------------------------------
@@ -309,14 +314,16 @@ def bare(bark, seed=0, twigs=None):
 
 # ---- What each region gets ----------------------------------------------------------------------------------------
 def sets():
-    rocks = {
-        "town": [rock("round", STONE["green"], seed=1), rock("split", STONE["grey"], seed=2), rock("lump", STONE["green"], "moss", seed=3),
-                 rock("slab", STONE["sand"], seed=4), rock("tall", STONE["grey"], "moss", seed=5)],
-        "frost": [rock("round", STONE["frost"], "snow", seed=11), rock("split", STONE["frost"], seed=12), rock("slab", STONE["grey"], "snow", seed=13),
-                  rock("tall", STONE["frost"], "snow", seed=14), rock("lump", STONE["grey"], seed=15)],
-        "hollow": [rock("round", STONE["slate"], "moss", seed=21), rock("split", STONE["slate"], seed=22), rock("lump", STONE["green"], "moss", seed=23),
-                   rock("tall", STONE["slate"], seed=24)],
+    # Each rock comes in every size (rock-<region>-<n>-<size>.png).
+    specs = {
+        "town": [("round", STONE["green"], None, 1), ("split", STONE["grey"], None, 2), ("lump", STONE["green"], "moss", 3),
+                 ("slab", STONE["sand"], None, 4), ("tall", STONE["grey"], "moss", 5)],
+        "frost": [("round", STONE["frost"], "snow", 11), ("split", STONE["frost"], None, 12), ("slab", STONE["grey"], "snow", 13),
+                  ("tall", STONE["frost"], "snow", 14), ("lump", STONE["grey"], None, 15)],
+        "hollow": [("round", STONE["slate"], "moss", 21), ("split", STONE["slate"], None, 22), ("lump", STONE["green"], "moss", 23),
+                   ("tall", STONE["slate"], None, 24)],
     }
+    rocks = {r: [{z: rock(sh, pal, cov, seed=sd, size=z) for z in ROCK_K} for sh, pal, cov, sd in v] for r, v in specs.items()}
     trees = {
         "town": [broadleaf(LEAF["summer"], "round", seed=1), broadleaf(LEAF["deep"], "tall", roots=None, seed=2),
                  broadleaf(LEAF["summer"], "wide", seed=3), broadleaf(LEAF["amber"], "round", roots=None, seed=4),
@@ -335,8 +342,9 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     rocks, trees = sets()
     for region, ims in rocks.items():
-        for i, im in enumerate(ims):
-            im.save(os.path.join(OUT, f"rock-{region}-{i}.png"))
+        for i, by_size in enumerate(ims):
+            for z, im in by_size.items():
+                im.save(os.path.join(OUT, f"rock-{region}-{i}-{z}.png"))
     for region, ims in trees.items():
         for i, im in enumerate(ims):
             im.save(os.path.join(OUT, f"tree-{region}-{i}.png"))

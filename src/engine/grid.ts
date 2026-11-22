@@ -17,6 +17,7 @@ export const TERRAIN: Record<Terrain, TerrainInfo> = {
   /** Tall grass: hides whoever stands in it from enemies more than HIDE_RANGE tiles away; it burns like grass. */
   tallgrass: { walkable: true, blocksSight: false, sightHeight: 0 },
   dirt: { walkable: true, blocksSight: false, sightHeight: 0 },
+  /** Water: not ground to stand on, but a small unit can swim in it (src/engine/swim.ts). */
   water: { walkable: false, blocksSight: false, sightHeight: 0 },
   tree: { walkable: false, blocksSight: true, sightHeight: 2 },
   /** Frozen water: walkable until it thaws (src/engine/terrain.ts). */
@@ -30,6 +31,17 @@ export type Prop = "barrel" | "crate" | "rock";
 /** A rock never breaks: it only rolls when pushed. Every rock on a map is one (Jose: push the scenery's rocks, not
     separate boulders), standing on bare dirt that shows once it rolls away. */
 export const PROP_HP: Record<Prop, number> = { barrel: 1, crate: 12, rock: 99 };
+/** How big a rock is (Jose: rocks of varied sizes). Small stones roll far, hit lightly and are too low to hide
+    behind; big boulders barely roll but hit hard and flatten crates (src/engine/terrain.ts ROCK). */
+export type RockSize = "s" | "m" | "l";
+/** The size a rock gets from where it starts on the map (about 35% small, 40% medium, 25% big), so a map always
+    has the same rocks. A rock keeps its size when it rolls. */
+export function rockSizeAt(p: Pos): RockSize {
+  const v = ((((p.x + 7) * 83492791) ^ ((p.y + 3) * 297121507)) >>> 0) % 20;
+  return v < 7 ? "s" : v < 15 ? "m" : "l";
+}
+/** A rock's size; saves from before sizes had only medium rocks. */
+export const rockSizeOf = (t: Tile): RockSize => t.rockSize ?? "m";
 /** A layer on the ground of a walkable tile (src/engine/terrain.ts): oil slows and blows up in fire; Sap poisons
     the party, feeds foes, and spreads from its sources. */
 export type Surface = "oil" | "sap";
@@ -41,6 +53,8 @@ export interface Tile {
   /** An object on the tile; it blocks movement and some sight. */
   prop?: Prop;
   propHp?: number;
+  /** A rock's size (see RockSize). */
+  rockSize?: RockSize;
   /** Which picture of its kind a rock (or a tree) shows. Unset until a rock first moves: until then the tile's
       place picks it (sceneryLook), and a rolling rock takes it along so it keeps its looks. */
   look?: number;
@@ -70,10 +84,14 @@ export const grassy = (t: Tile | undefined) => !!t && (t.terrain === "grass" || 
 export const HIDE_RANGE = 2;
 /** Units can stand on the tile now (terrain and no object in the way). */
 export const standable = (t: Tile | undefined): t is Tile => !!t && TERRAIN[t.terrain].walkable && !t.prop;
+/** Open water a unit can swim into (nothing floating on it). */
+export const swimmable = (t: Tile | undefined): t is Tile => !!t && t.terrain === "water" && !t.prop;
 /** Levels above the ground that block sight on this tile. */
 export function sightBlock(t: Tile): number {
   const info = TERRAIN[t.terrain];
-  return Math.max(info.blocksSight ? info.sightHeight : 0, t.prop ? 1 : 0, t.steamUntil !== undefined ? 2 : 0);
+  // A small stone is too low to hide behind.
+  const prop = !t.prop || (t.prop === "rock" && rockSizeOf(t) === "s") ? 0 : 1;
+  return Math.max(info.blocksSight ? info.sightHeight : 0, prop, t.steamUntil !== undefined ? 2 : 0);
 }
 
 export interface GridMap {
@@ -106,7 +124,8 @@ export const manhattan = (a: Pos, b: Pos) => Math.abs(a.x - b.x) + Math.abs(a.y 
 
 /**
  * Builds a map from text rows. Each tile is two characters: terrain letter + height digit.
- * g grass, h tall grass, d dirt, w water, r rock (a pushable rock on dirt), t tree, i ice, b bridge. Optional extra
+ * g grass, h tall grass, d dirt, w water, r rock (a pushable rock on dirt; add s, m or l to fix its size, else its
+ * place picks one), t tree, i ice, b bridge. Optional extra
  * characters: B barrel or C crate (an object), o oil, s Sap, S a Sap source (a surface). Example row: "g0 g0 d1 r1 g0B d0o g0S".
  */
 export function parseMap(id: string, rows: string[]): GridMap {
@@ -117,14 +136,17 @@ export function parseMap(id: string, rows: string[]): GridMap {
       const terrain = letters[cell[0] ?? ""];
       const h = Number(cell.slice(1, 2));
       const extra = cell.slice(2);
-      const prop = cell[0] === "r" ? "rock" : [...extra].map((c) => props[c]).find(Boolean);
-      const surface: Surface | undefined = extra.includes("o") ? "oil" : /[sS]/.test(extra) ? "sap" : undefined;
-      if (!terrain || !Number.isInteger(h) || h < 0 || h > 3 || extra.length > 2 || /[^BCosS]/.test(extra) || (surface && !TERRAIN[terrain].walkable) || (cell[0] === "r" && extra))
+      const isRock = cell[0] === "r";
+      const prop = isRock ? "rock" : [...extra].map((c) => props[c]).find(Boolean);
+      const surface: Surface | undefined = isRock ? undefined : extra.includes("o") ? "oil" : /[sS]/.test(extra) ? "sap" : undefined;
+      if (!terrain || !Number.isInteger(h) || h < 0 || h > 3 || (isRock ? !/^[sml]?$/.test(extra)
+        : extra.length > 2 || /[^BCosS]/.test(extra) || (surface && !TERRAIN[terrain].walkable)))
         throw new Error(`map ${id}: bad tile "${cell}" at ${x},${y}`);
       const tile: Tile = { terrain, h };
       if (prop) { tile.prop = prop; tile.propHp = PROP_HP[prop]; }
+      if (prop === "rock") tile.rockSize = (extra as RockSize) || rockSizeAt({ x, y });
       if (surface) tile.surface = surface;
-      if (extra.includes("S")) tile.sapSource = true;
+      if (!isRock && extra.includes("S")) tile.sapSource = true;
       return tile;
     }),
   );
