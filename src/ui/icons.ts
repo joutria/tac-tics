@@ -807,6 +807,32 @@ const POINTER = pad([
   ".kllwwwk........",
   "..kkkkk.........",
 ]);
+const SPEAKER = pad([
+  "................",
+  "......kk........",
+  ".....kwk....k...",
+  "....kwwk.....k..",
+  "kkkkwwwk..k..k..",
+  "kllkwwwk...k..k.",
+  "kllkwwwk...k..k.",
+  "kllkwwwk...k..k.",
+  "kllkwwwk...k..k.",
+  "kkkkwwwk..k..k..",
+  "....kwwk.....k..",
+  ".....kwk....k...",
+  "......kk........",
+]);
+const MUTED = overlay(SPEAKER.map((r) => r.slice(0, 9) + "......."), pad([
+  "................",
+  "................",
+  "................",
+  "................",
+  "..........r...r.",
+  "...........r.r..",
+  "............r...",
+  "...........r.r..",
+  "..........r...r.",
+]));
 /** The bottom of the camp fire icon (stones and logs), for the camp fires on the map; the flame is drawn live. */
 const LOGS = CAMPFIRE.map((r, y) => (y < 10 ? "................" : r));
 
@@ -821,7 +847,7 @@ export const ICONS = {
   // Buttons.
   end: FLAG, wait: CLOCK, undo: recolor(HOOK, { c: "w" }), rewind: REWIND, danger: WARN, flat: GRID, rotL: HOOK, rotR: mirror(HOOK),
   map: MAP, gear: PACK, stats: CHART, lang: BUBBLE, hold: HAND, zoomIn: LENS, zoomOut: LENS_OUT, confirm: CHECK, cancel: CROSS,
-  skip: CHEVRONS, spare: recolor(FLAG, { r: "w", w: "l" }), coin: COIN, shard: SHARD,
+  sound: SPEAKER, muted: MUTED, skip: CHEVRONS, spare: recolor(FLAG, { r: "w", w: "l" }), coin: COIN, shard: SHARD,
   // Run map stops.
   battle: overlay(SWORD, mirror(SWORD)), elite: recolor(SKULL, { p: "w", P: "R" }), rest: CAMPFIRE, shop: COIN, recruit: FACE,
   rival: recolor(STAR, { y: "p", Y: "P" }), quest: recolor(DIAMOND, { l: "c", s: "b" }), boss: CROWN, floodgate: SLUICE,

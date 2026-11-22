@@ -161,6 +161,11 @@
   #runPanel .say.ending.bad { border-color: #ff8a7a; }
   #runPanel .spoils { margin: 0; color: var(--quiet); }
   #runPanel h2 { margin: 0; font-size: 22px; color: var(--accent); text-align: center; text-shadow: 2px 2px 0 var(--rim); }
+  #soundPanel { position: fixed; z-index: 30; top: 64px; right: 16px; display: none; flex-direction: column; gap: 10px; padding: 12px 14px; width: min(280px, calc(100vw - 32px)); }
+  #soundPanel h3 { margin: 0; font-size: 16px; color: var(--accent); }
+  #soundPanel label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  #soundPanel label.check { flex-direction: row; align-items: center; gap: 8px; }
+  #soundPanel input[type=range] { width: 100%; accent-color: var(--accent); }
   #runPanel h3 { margin: 6px 0 0; font-size: 15px; color: var(--quiet); text-align: center; }
   #runPanel .cards { display: flex; flex-direction: column; gap: 8px; width: min(440px, 100%); }
   #runPanel .card { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 9px 12px 9px 26px; position: relative; background: var(--panel); }
@@ -230,6 +235,7 @@
       <button id="flat" class="icon"></button>
       <button id="danger" class="icon"></button>
       <button id="lang" class="icon"></button>
+      <button id="sound" class="icon"></button>
     </div>
     <div id="queue" class="win"></div>
   </div>
@@ -247,12 +253,13 @@
   <div id="callout" class="win" aria-live="polite"></div>
   <div id="act"><button id="cancel"></button><button id="confirm" class="go"></button></div>
   <div id="tip" class="win"></div>
+  <div id="soundPanel" class="win" role="dialog" aria-modal="false"></div>
   <div id="overlay"><h1 id="result"></h1><p id="resultNote"></p><div id="mercy" class="win"></div><button id="again" class="primary"></button></div>
   <div id="travel">
     <div id="travelTop" class="bar">
       <div id="runHead" class="win"></div>
       <span class="spacer"></span>
-      <div id="travelTools" class="win" style="display:flex;gap:4px;padding:4px;flex-wrap:wrap"><button id="mapBtn"></button><button id="gearBtn"></button><button id="statsBtn"></button><button id="mapLang"></button><button id="newRun"></button></div>
+      <div id="travelTools" class="win" style="display:flex;gap:4px;padding:4px;flex-wrap:wrap"><button id="mapBtn"></button><button id="gearBtn"></button><button id="statsBtn"></button><button id="mapLang"></button><button id="mapSound"></button><button id="newRun"></button></div>
     </div>
     <div id="signs"></div>
     <div id="travelBottom" class="bar"><div id="runHintBox" class="win"><span id="runHint"></span></div><span class="spacer"></span><button id="skipBtn"></button></div>
