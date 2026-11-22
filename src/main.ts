@@ -139,6 +139,8 @@ let choosingDifficulty = false;
 let atCamp = false;
 /** The lore page open at the camp. */
 let campPage: string | null = null;
+/** Which camp station is open (null: the camp itself, with its stations). */
+let campTab: "kits" | "keeps" | "lore" | null = null;
 /** While true, the map shows the play log panel. */
 let statsOpen = false;
 /** When the battle on screen started, for the play log (0 for a battle resumed from a save). */
@@ -160,7 +162,7 @@ function startRun() {
   journey = newRun(`${Date.now()}`);
   choosingDifficulty = true;
   // The camp only shows once there is something behind the hero: a first journey goes straight to the difficulty.
-  atCamp = loadLegacy().runs > 0; campPage = null;
+  atCamp = loadLegacy().runs > 0; campPage = null; campTab = null;
   showMap();
 }
 
@@ -232,7 +234,32 @@ function renderCamp(panel: HTMLElement) {
   }
   if (!keeps.childElementCount) keeps.append(el("p", "spoils", t(lang, "campNoKeepsake")));
   if (back) parts.push(el("p", "say down", t(lang, "campReturning", { name: back.base.name })));
-  parts.push(go, el("h3", "", t(lang, "campKits")), kits, el("h3", "", t(lang, "campKeepsakes")), keeps, el("h3", "", t(lang, "campLore")), lore);
+  // The camp as stations, like a hub in a roguelike: the gear chest, the keepsakes, the journal. Each opens its own
+  // cards; Back returns to the fire. The badge counts what is new since the last visit.
+  if (campTab) {
+    const backBtn = el("button", "", t(lang, "menuBack"));
+    backBtn.onclick = () => { sfx("select"); campTab = null; showMap(); };
+    const [head, body] = campTab === "kits" ? [t(lang, "campKits"), kits] : campTab === "keeps" ? [t(lang, "campKeepsakes"), keeps] : [t(lang, "campLore"), lore];
+    title.textContent = head;
+    panel.replaceChildren(title, body, backBtn);
+    (body.querySelector<HTMLElement>("button:not(:disabled)") ?? backBtn).focus();
+    return;
+  }
+  const stations = el("div", "stations");
+  const station = (id: "kits" | "keeps" | "lore", ic: string, name: string, now: string, news: number) => {
+    const b = el("button", "station");
+    b.innerHTML = `${iconTile(pk(ic as never), news ? "rare" : "common")}<b></b><small></small>${news ? `<em class="badge">${news}</em>` : ""}`;
+    b.querySelector("b")!.textContent = name; b.querySelector("small")!.textContent = now;
+    b.onclick = () => { sfx("page"); campTab = id; showMap(); };
+    stations.append(b);
+  };
+  const newKits = KITS.filter((k) => k.needs && fresh.has(k.needs)).length, newLore = LORE.filter((p) => fresh.has(p.needs)).length;
+  const keepName = keepsakesOpen(legacy).find((p) => p.id === worn)?.name[lang];
+  station("kits", RUN_PACK.chest, t(lang, "campKits"), kit.name[lang], newKits);
+  station("keeps", RUN_PACK.charm, t(lang, "campKeepsakes"), keepName ?? t(lang, "campNone"), 0);
+  station("lore", RUN_PACK.job, t(lang, "campLore"), t(lang, "campPages", { n: LORE.filter((p) => hasMilestone(legacy, p.needs)).length, of: LORE.length }), newLore);
+  go.className = "primary";
+  parts.push(stations, go);
   panel.replaceChildren(...parts);
   go.focus();
 }
@@ -2169,6 +2196,8 @@ async function start() {
   followHero();
   // The title comes first, over the saved run (or the new one's first screen) waiting behind it.
   openTitle();
+  const splash = document.getElementById("splash");
+  if (splash) { splash.classList.add("gone"); setTimeout(() => splash.remove(), 450); }
   addEventListener("resize", layout);
 
   // One finger (or the mouse) taps or drags to pan; two fingers pinch to zoom.
