@@ -1,5 +1,5 @@
 /* Alignment meters: the nine alignments, what moves them, lock-in, the hero's ending and the twin cards they open. */
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseMap } from "../src/engine/grid";
 import { activeUnit, applyCommand, createBattle, unitById, unsettled, type BattleSetup, type BattleState, type Command, type UnitSpec } from "../src/engine/state";
 import { ALIGN, GRID, SHIFT, type Align } from "../src/data/alignment";
@@ -7,6 +7,12 @@ import { TWINS } from "../src/data/twins";
 import { alignmentOf, battleShift, heroEnding, lockWarning, shiftAlign, twinBar } from "../src/run/alignment";
 import { noDeeds } from "../src/run/party";
 import { ALTAR, choose, enterNode, finishBattle, heroOf, newRun, nextNodes, relapses, upgradeRun, wearTwin, type RunState } from "../src/run/run";
+import { setRules } from "../src/engine/rules";
+
+// These tests pin exact numbers and several casts a turn, written for the AP turn; the Move + Act rules the
+// game plays by are covered in rules.test.ts.
+beforeAll(() => setRules({ mode: "ap" }));
+afterAll(() => setRules({}));
 
 const at = (mercy: number, purity: number): Align => ({ mercy, purity });
 const levelled = (run: RunState, level: number): RunState => ({ ...run, hero: { ...run.hero, level } });

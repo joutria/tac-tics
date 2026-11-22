@@ -62,8 +62,8 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const canvas = $<HTMLCanvasElement>("game");
 const ctx = canvas.getContext("2d")!;
 
-// Prototype turn rules (src/engine/rules.ts): ?rules=act for FFTA-style Move + Act with mana, ?rules=pips for two pips.
-{ const r = new URLSearchParams(location.search).get("rules"); if (r === "act" || r === "pips") setRules({ mode: r }); }
+// Turn rules (src/engine/rules.ts): the game plays Move + Act; ?rules=ap or ?rules=pips switches, to compare.
+{ const r = new URLSearchParams(location.search).get("rules"); if (r === "ap" || r === "pips") setRules({ mode: r }); }
 /** What a card costs under the turn rules in play: AP (or Acts/pips) and mana. */
 const costText = (ab: Ability) => {
   const m = manaCost(ab), a = actionCost(ab);
@@ -775,7 +775,7 @@ function abilityHelp(id: string, u: Unit | null): string {
   const chips: string[] = [];
   const chip = (ic: IconId | null, text: string) => chips.push(`<span>${ic ? icon(ic) : ""}${text}</span>`);
   if (!usesMana()) chip("ap", ab.ap ? `${ab.ap} ${t(lang, "ap")}` : t(lang, "free"));
-  else chip("mana", manaCost(ab) ? `${manaCost(ab)} ${t(lang, "mana")}` : t(lang, "free"));
+  else chip("mana", manaCost(ab) ? `${manaCost(ab)} ${t(lang, "mana")}` : t(lang, ab.quick ? "free" : "h.basic"));
   chip("range", ab.range[1] === 0 ? t(lang, "h.self") : t(lang, "h.range", { r: ab.range[0] === ab.range[1] ? `${ab.range[1]}` : `${ab.range[0]}–${ab.range[1]}` }));
   if (ab.area === "cross1") chip("area", t(lang, "h.area"));
   if (ab.area === "square1") chip("area", t(lang, "h.square"));
@@ -788,7 +788,7 @@ function abilityHelp(id: string, u: Unit | null): string {
   if (ab.also) chip(ab.also.id, `${t(lang, `st.${ab.also.id}` as TextKey)} · ${t(lang, "turnsLeft", { n: ab.also.turns })}`);
   if (u && u.team === "heroes" && u.aiming && heightShapesReach(ab) && !ab.quick) chip(null, t(lang, "r.aim"));
   if (ab.cooldown) chip("cooldown", t(lang, "h.cd", { n: ab.cooldown }));
-  if (ab.perTurn > 1 && ab.perTurn < 4) chip(null, t(lang, "h.perTurn", { n: ab.perTurn }));
+  if (ab.perTurn > 1 && ab.perTurn < 4 && actionCost(ab) * 2 <= (u?.maxAp ?? 6)) chip(null, t(lang, "h.perTurn", { n: ab.perTurn }));
   if (ab.quick) chip("quick", t(lang, "h.quick"));
   const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? swimProblem(state.map, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
   // How its reach works: height (ranged only), the blind spot next to the caster, and what cuts the line of sight.
@@ -823,7 +823,7 @@ function renderUnitCard(u: Unit) {
     + `<div class="name ${u.team}">${icon(el)}<span>${u.name}</span>${statuses}<span class="round">${t(lang, "round", { n: roundOf(state) })}</span></div>`
     + `<div class="gauge">${icon("hp")}<span class="track"><span class="fill${ratio < 0.25 ? " crit" : ratio < 0.5 ? " low" : ""}" style="width:${ratio * 100}%"></span></span><b>${u.hp}/${u.maxHp}</b></div>`
     + `<div class="gauge">${icon("ap")}<span class="pips ap">${pips(u.ap, u.maxAp)}</span>${icon("mp")}<span class="pips mp">${pips(u.mp, u.maxMp)}</span>${u.maxMana ? `${icon("mana")}<b>${u.mana}/${u.maxMana}</b>` : ""}</div>`;
-  $("unitCard").setAttribute("aria-label", `${t(lang, "turnOf", { name: u.name })} · ${t(lang, "hp")} ${u.hp}/${u.maxHp} · ${t(lang, "ap")} ${u.ap}/${u.maxAp} · ${t(lang, "mp")} ${u.mp}/${u.maxMp}`);
+  $("unitCard").setAttribute("aria-label", `${t(lang, "turnOf", { name: u.name })} · ${t(lang, "hp")} ${u.hp}/${u.maxHp} · ${t(lang, "ap")} ${u.ap}/${u.maxAp} · ${t(lang, "mp")} ${u.mp}/${u.maxMp}${u.maxMana ? ` · ${t(lang, "mana")} ${u.mana}/${u.maxMana}` : ""}`);
 }
 
 /** A button with a pixel icon, a label (hidden on phones for the system buttons) and its help. */
@@ -896,7 +896,7 @@ function refresh() {
     const cd = u.cooldowns[id];
     b.innerHTML = `${icon(abilityIcon(id, ab.element))}<span class="nm">${abilityName(lang, id)}</span>`
       + `<span class="cost${cd ? " cd" : ""}">${cd ? `${icon("cooldown")}${cd}` : costText(ab)}</span>`;
-    b.setAttribute("aria-label", `${abilityName(lang, id)}, ${ab.ap} ${t(lang, "ap")}`);
+    b.setAttribute("aria-label", usesMana() ? `${abilityName(lang, id)}, ${manaCost(ab)} ${t(lang, "mana")}` : `${abilityName(lang, id)}, ${ab.ap} ${t(lang, "ap")}`);
     explains(b, () => abilityHelp(id, activeUnit(state)));
     b.onclick = () => { selected = selected === id ? null : id; pending = null; inspect = null; tooltip(null); refresh(); };
     bar.append(b);

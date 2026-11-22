@@ -1,5 +1,5 @@
 /* Combos, Halo's regen, the poison ward, the Floodgate and the quests' alternative good paths (M3 leftovers). */
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ABILITIES, COMBO_CASTER, COMBOS } from "../src/data/abilities";
 import { QUESTS } from "../src/data/companions";
 import { parseMap } from "../src/engine/grid";
@@ -10,6 +10,12 @@ import { setFloodgate } from "../src/run/map";
 import { abilityDesc, abilityName } from "../src/i18n/text";
 import { ALT_HP_CUT, battleSetup, choose, enterNode, finishBattle, FLOOD, floodMap, newRun, questView, type RunState } from "../src/run/run";
 import { REGIONS } from "../src/data/region";
+import { setRules } from "../src/engine/rules";
+
+// These tests pin exact numbers and several casts a turn, written for the AP turn; the Move + Act rules the
+// game plays by are covered in rules.test.ts.
+beforeAll(() => setRules({ mode: "ap" }));
+afterAll(() => setRules({}));
 
 const flat = (rows = 7, cols = 7) => parseMap("flat", Array.from({ length: rows }, () => Array(cols).fill("g0").join(" ")));
 const unit = (o: Partial<UnitSpec> & Pick<UnitSpec, "id" | "team" | "pos">): UnitSpec => ({

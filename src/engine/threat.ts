@@ -15,7 +15,7 @@ const key = (p: Pos) => `${p.x},${p.y}`;
 /** Damaging abilities the unit will have off cooldown when its next turn starts. */
 export function readyAttacks(u: Unit): Ability[] {
   return u.abilities.map((id) => ABILITIES[id]!).filter((ab) => !!ab.damage && !u.cooldowns[ab.id] && actionCost(ab) <= u.maxAp
-    && manaCost(ab) <= Math.min(u.maxMana, u.mana + RULES.mana.regen));
+    && manaCost(ab) <= Math.min(u.maxMana, u.mana + RULES.mana.regen + (u.regen ?? 0)));
 }
 
 /** Tiles the unit can stand on next turn, its own tile included: the MP its next turn starts with (none if it is
