@@ -275,6 +275,7 @@ function showMap() {
   label("mapSound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), t(lang, "soundHint"));
   label("mapLang", "lang", lang === "es" ? "English" : "Español", t(lang, "langHint"));
   label("mapBtn", "map", t(lang, "routeMap"), t(lang, "mapKeys"));
+  label("travelMore", "menu", t(lang, "more"), t(lang, "moreRunHint"));
   document.documentElement.lang = lang;
   ensureDepart();
   // A finished run shows the route it took, under the epilogue.
@@ -664,20 +665,42 @@ function aimView(): { marks: Map<string, Mark>; badges: Map<string, ReachBadge>;
     that explains itself is marked data-h and registers how to say it. */
 const helpers = new WeakMap<Element, () => string>();
 let helpHover: Element | null = null;
+/** How long a finger holds an item before its help shows. */
+const HOLD_MS = 380;
+/** True while a finger holds an item to read its help (a tap never shows it). */
+let held = false;
 function explains(el: HTMLElement, say: () => string) { el.dataset.h = "1"; helpers.set(el, say); el.removeAttribute("title"); }
 const plainHelp = (title: string, body: string, ic?: IconId) => `<div class="head">${ic ? icon(ic, "big") : ""}<span>${title}</span></div><p>${body}</p>`;
 
 function showHelp() {
   const box = $("help");
   // The item hovered may have been rebuilt by a refresh: find the one under the pointer now.
-  if (helpHover && !document.contains(helpHover)) helpHover = [...document.querySelectorAll("[data-h]:hover")].pop() ?? null;
+  if (helpHover && !document.contains(helpHover)) helpHover = held ? null : [...document.querySelectorAll("[data-h]:hover")].pop() ?? null;
   const say = helpHover && helpers.get(helpHover);
-  const html = say ? say() : !onMap && selected && heroTurn() ? abilityHelp(selected, activeUnit(state)) : "";
-  if (!html || mapOpen || (onMap && !say)) { box.style.display = "none"; return; }
+  const html = say ? say() : "";
+  if (!html || mapOpen) { box.style.display = "none"; return; }
   box.innerHTML = html;
   box.style.display = "block";
-  const topBar = onMap ? $("travelTop") : $("top");
-  box.style.top = `${topBar.getBoundingClientRect().bottom + 4}px`;
+  placeBeside(box, helpHover!);
+}
+
+/** Puts a popup right next to the item it explains, like a spell bar's tooltip: above it when there is room, else
+    beside the window the item sits in, never off screen. A small caret points at the item. */
+function placeBeside(box: HTMLElement, el: Element) {
+  const r = el.getBoundingClientRect();
+  const win = (el.closest(".win") ?? el).getBoundingClientRect();
+  const w = box.offsetWidth, h = box.offsetHeight, gap = 8, edge = 6;
+  const clampX = (x: number) => Math.max(edge, Math.min(innerWidth - w - edge, x));
+  const clampY = (y: number) => Math.max(edge, Math.min(innerHeight - h - edge, y));
+  let x: number, y: number, side: string;
+  if (win.top - gap - h >= edge) { x = clampX(r.left + r.width / 2 - w / 2); y = win.top - gap - h; side = "below"; }
+  else if (innerHeight - win.bottom - gap - h >= edge) { x = clampX(r.left + r.width / 2 - w / 2); y = win.bottom + gap; side = "above"; }
+  else if (win.left - gap - w >= edge) { x = win.left - gap - w; y = clampY(r.top + r.height / 2 - h / 2); side = "right"; }
+  else { x = Math.min(innerWidth - w - edge, win.right + gap); y = clampY(r.top + r.height / 2 - h / 2); side = "left"; }
+  box.style.left = `${x}px`; box.style.top = `${y}px`;
+  box.dataset.caret = side;
+  // Where along its edge the caret sits: at the item's centre.
+  box.style.setProperty("--caret", side === "below" || side === "above" ? `${Math.max(12, Math.min(w - 12, r.left + r.width / 2 - x))}px` : `${Math.max(12, Math.min(h - 12, r.top + r.height / 2 - y))}px`);
 }
 
 /** Why an ability can't be used, in words. */
@@ -763,7 +786,10 @@ function refresh() {
     const chip = document.createElement("button");
     chip.className = `chip ${v.team}${i === 0 ? " now" : ""}`;
     const face = portrait(images, v.look);
-    chip.innerHTML = `${face ? `<img src="${face}" alt="">` : ""}<span>${v.life === "downed" ? `${v.name} ✚` : yielding(v) ? `🏳 ${v.name}` : v.name}</span>`;
+    const mark = v.life === "downed" ? "✚" : yielding(v) ? "🏳" : "";
+    chip.innerHTML = `${face ? `<img src="${face}" alt="">` : `<span>${v.name.slice(0, 2)}</span>`}${mark ? `<span class="mark">${mark}</span>` : ""}`;
+    chip.setAttribute("aria-label", `${i === 0 ? `${t(lang, "turnOf", { name: v.name })}` : v.name}${mark ? ` ${mark}` : ""}`);
+    explains(chip, () => plainHelp(v.name, `${t(lang, "hp")} ${v.hp}/${v.maxHp}${v.life === "downed" ? " ✚" : ""}`));
     chip.onclick = () => {
       // Find the unit: pan to it and make it pulse; for a foe, also show its reach.
       focus = { id: v.id, until: performance.now() + 1800 };
@@ -798,6 +824,7 @@ function refresh() {
     const ab = ABILITIES[id]!;
     const b = document.createElement("button");
     b.className = `cmd${ab.quick ? " sub" : ""}${selected === id ? " on" : ""}`;
+    b.style.setProperty("--el", ELEMENTS[ab.element].col);
     const why = abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
@@ -821,9 +848,9 @@ function refresh() {
   const armed = performance.now() < rewindArmed;
   dress("rewind", "rewind", armed ? t(lang, "rewindAgain") : `${t(lang, "rewind")} (${left})`, () => plainHelp(t(lang, "rewind"), t(lang, "rewindHint"), "rewind"));
   rw.classList.toggle("armed", armed);
-  dress("danger", "danger", t(lang, "danger"), () => plainHelp(t(lang, "danger"), `${t(lang, "dangerHint")} (Y)`, "danger"), true);
+  dress("danger", "danger", t(lang, "danger"), () => plainHelp(t(lang, "danger"), `${t(lang, "dangerHint")} (Y)`, "danger"));
   $("danger").classList.toggle("on", dangerAll);
-  dress("flat", "flat", t(lang, "flat"), () => plainHelp(t(lang, "flat"), t(lang, "flatHint"), "flat"), true);
+  dress("flat", "flat", t(lang, "flat"), () => plainHelp(t(lang, "flat"), t(lang, "flatHint"), "flat"));
   $("flat").classList.toggle("on", isFlat());
   dress("end", "end", t(lang, "endTurn"), () => plainHelp(t(lang, "endTurn"), t(lang, "endHint"), "end"));
   dress("wait", "wait", t(lang, "wait"), () => plainHelp(t(lang, "wait"), t(lang, "waitHint"), "wait"));
@@ -835,18 +862,19 @@ function refresh() {
   for (const [id, dir, key, ic] of [["rotateL", "rotateLeft", "Q", "rotL"], ["rotateR", "rotateRight", "E", "rotR"]] as const) {
     dress(id, ic, t(lang, dir), () => plainHelp(t(lang, dir), `${t(lang, dir)} (${key}, ${key === "Q" ? "LB" : "RB"})`, ic), true);
   }
-  dress("zoomIn", "zoomIn", t(lang, "zoomIn"), () => plainHelp(t(lang, "zoomIn"), t(lang, "zoomIn"), "zoomIn"), true);
-  dress("zoomOut", "zoomOut", t(lang, "zoomOut"), () => plainHelp(t(lang, "zoomOut"), t(lang, "zoomOut"), "zoomOut"), true);
-  dress("sound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), () => plainHelp(t(lang, "sound"), t(lang, "soundHint"), "sound"), true);
-  dress("lang", "lang", lang === "es" ? "English" : "Español", () => plainHelp(lang === "es" ? "English" : "Español", t(lang, "langHint"), "lang"), true);
+  dress("zoomIn", "zoomIn", t(lang, "zoomIn"), () => plainHelp(t(lang, "zoomIn"), t(lang, "zoomIn"), "zoomIn"));
+  dress("zoomOut", "zoomOut", t(lang, "zoomOut"), () => plainHelp(t(lang, "zoomOut"), t(lang, "zoomOut"), "zoomOut"));
+  dress("sound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), () => plainHelp(t(lang, "sound"), t(lang, "soundHint"), "sound"));
+  dress("lang", "lang", lang === "es" ? "English" : "Español", () => plainHelp(lang === "es" ? "English" : "Español", t(lang, "langHint"), "lang"));
+  dress("toolsBtn", "menu", t(lang, "more"), () => plainHelp(t(lang, "more"), t(lang, "moreHint"), "menu"), true);
   const confirm = $<HTMLButtonElement>("confirm");
   confirm.style.display = mine && pending ? "" : "none";
   confirm.innerHTML = `${icon("confirm")}<span>${selected ? abilityName(lang, selected) : t(lang, "moveHere")}</span>`;
   $("cancel").style.display = mine && (pending || selected) ? "" : "none";
   $("cancel").innerHTML = `${icon("cancel")}<span>${t(lang, "cancel")}</span>`;
   const bottomH = $("bottom").getBoundingClientRect().height;
-  $("hint").style.bottom = `${innerWidth > 720 ? 10 : bottomH + 2}px`;
-  $("act").style.bottom = `${innerWidth > 720 ? 36 : bottomH + 24}px`;
+  $("hint").style.bottom = `${roomy() ? 10 : bottomH + 2}px`;
+  $("act").style.bottom = `${roomy() ? 36 : bottomH + 24}px`;
   $("hint").textContent = !mine ? t(lang, u.team === "foes" ? "foeTurn" : "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
   const lost = state.winner === "foes" || state.units.some((x) => x.id === HERO.id && x.life !== "up");
   const boss = journey.battle && journey.map.nodes[journey.battle.node]!.kind === "boss";
@@ -1627,6 +1655,9 @@ function pollPads(now: number) {
 
 /* ---------- view: fit, zoom, pan, rotate ---------- */
 
+/** A screen big enough for the menus to sit in the corners beside the map (not a phone either way up). */
+const roomy = () => innerWidth > 720 && innerHeight > 560;
+
 function layout() {
   const dpr = window.devicePixelRatio || 1;
   // Size the drawing buffer to the box the canvas really fills. Mobile browsers can make 100vh taller than the
@@ -1635,7 +1666,7 @@ function layout() {
   canvas.width = Math.round(box.width * dpr); canvas.height = Math.round(box.height * dpr);
   // On a wide screen the menus sit in the bottom corners, where the diamond-shaped map leaves room, so the map may
   // use the height down to the hint line; on a phone the menu spans the width and the map stays above it.
-  const wide = innerWidth > 720;
+  const wide = roomy();
   const top = $("top").getBoundingClientRect().height, bottom = wide ? 34 : $("bottom").getBoundingClientRect().height;
   const size = mapPixelSize(state.map);
   const availW = innerWidth - 16, availH = innerHeight - top - bottom - 8;
@@ -1837,10 +1868,40 @@ async function start() {
     }
   }).observe(document.body, { childList: true, subtree: true, characterData: true });
   // The help window follows the pointer, the keyboard focus and the controller's focus.
-  document.addEventListener("pointerover", (ev) => { const el = (ev.target as Element).closest?.("[data-h]") ?? null; if (el !== helpHover) { helpHover = el; showHelp(); } });
-  document.addEventListener("pointerout", (ev) => { if (!(ev.relatedTarget as Element | null)?.closest?.("[data-h]")) { helpHover = null; showHelp(); } });
-  document.addEventListener("focusin", (ev) => { const el = (ev.target as Element).closest?.("[data-h]"); if (el) { helpHover = el; showHelp(); } });
-  document.addEventListener("focusout", () => { helpHover = null; showHelp(); });
+  // Help: a mouse shows it on hover; a finger has to hold the item (a tap just uses it); the keyboard and the
+  // controller show it for the item in focus.
+  document.addEventListener("pointerover", (ev) => {
+    if (ev.pointerType !== "mouse") return;
+    const el = (ev.target as Element).closest?.("[data-h]") ?? null;
+    if (el !== helpHover) { helpHover = el; showHelp(); }
+  });
+  document.addEventListener("pointerout", (ev) => { if (ev.pointerType === "mouse" && !(ev.relatedTarget as Element | null)?.closest?.("[data-h]")) { helpHover = null; showHelp(); } });
+  let holdTimer = 0, holdFrom = { x: 0, y: 0 }, swallowClick = false;
+  const letGo = () => { clearTimeout(holdTimer); holdTimer = 0; if (held) { held = false; helpHover = null; showHelp(); } };
+  document.addEventListener("pointerdown", (ev) => {
+    if (ev.pointerType === "mouse") return;
+    const el = (ev.target as Element).closest?.("[data-h]");
+    if (!el) return;
+    holdFrom = { x: ev.clientX, y: ev.clientY };
+    clearTimeout(holdTimer);
+    holdTimer = window.setTimeout(() => { held = true; swallowClick = true; helpHover = el; showHelp(); navigator.vibrate?.(10); }, HOLD_MS);
+  });
+  document.addEventListener("pointermove", (ev) => { if (holdTimer && !held && Math.hypot(ev.clientX - holdFrom.x, ev.clientY - holdFrom.y) > 10) { clearTimeout(holdTimer); holdTimer = 0; } });
+  document.addEventListener("pointerup", letGo);
+  document.addEventListener("pointercancel", letGo);
+  // Letting go after reading the help does not also press the button.
+  document.addEventListener("click", (ev) => { if (swallowClick) { swallowClick = false; ev.stopPropagation(); ev.preventDefault(); } }, true);
+  document.addEventListener("contextmenu", (ev) => { if ((ev.target as Element).closest?.("[data-h]")) ev.preventDefault(); });
+  document.addEventListener("focusin", (ev) => { const el = (ev.target as Element).closest?.("[data-h]"); if (el && el.matches(":focus-visible")) { helpHover = el; showHelp(); } });
+  document.addEventListener("focusout", () => { if (!held) { helpHover = null; showHelp(); } });
+  // Fold-out menus (the ☰ buttons): open on press, close on a press anywhere else.
+  for (const fold of document.querySelectorAll<HTMLElement>(".fold")) {
+    const btn = fold.querySelector<HTMLButtonElement>(".fold-btn")!;
+    btn.addEventListener("click", () => { const open = !fold.classList.contains("open"); fold.classList.toggle("open", open); btn.setAttribute("aria-expanded", String(open)); if (open) fold.querySelector<HTMLButtonElement>(".fold-list button")?.focus({ preventScroll: true }); });
+  }
+  document.addEventListener("pointerdown", (ev) => {
+    for (const fold of document.querySelectorAll<HTMLElement>(".fold.open")) if (!fold.contains(ev.target as Node)) { fold.classList.remove("open"); fold.querySelector(".fold-btn")?.setAttribute("aria-expanded", "false"); }
+  }, true);
   setFlat(safeGet(VIEW_KEY) === "flat");
   holdBack = safeGet(HOLD_KEY) === "1";
   // Until a battle starts (the map screen comes first), the battle screen holds the test fight, never shown.
