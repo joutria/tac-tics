@@ -112,6 +112,20 @@ npm run analyze -- playlog.json sim.json            # sum up play logs (exported
 npm run build      # production build in dist/
 ```
 
+## Phone app (Android)
+
+The Android app is a [Capacitor](https://capacitorjs.com) shell (`android/`, `capacitor.config.json`) that opens the
+live game on GitHub Pages. Every start online loads the newest build; the game's service worker (written by
+`vite.config.ts` as `dist/sw.js`) keeps every file of the last build on the phone, so it also plays offline. The game
+says "Game updated" when the build changed, and checks again when it comes back from the background after 10 minutes
+(`src/app/update.ts`). Saves stay in the app between updates.
+
+- Download: the `tac-tics.apk` on the [app-latest release](https://github.com/joutria/tac-tics/releases/tag/app-latest),
+  built by `.github/workflows/android.yml` when the app shell changes. Game changes need no new APK.
+- Build it yourself: `npx cap sync android`, then `cd android && ./gradlew assembleDebug` (needs JDK 21 and the
+  Android SDK). Icons and splash screens come from the hero's sprite: `python3 -I tools/app-icon.py`.
+- First start needs a connection (offline it shows `app-shell/offline.html`).
+
 ## How the code is laid out
 
 | Path | What it holds |
