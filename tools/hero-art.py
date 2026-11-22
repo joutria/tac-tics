@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Builds the party's humanoid sprite sheets from the Ninja Adventure characters (Pixel-boy and AAA, CC0), the same
-pack the creatures, tiles and leaves come from, so the party matches the world. The characters are taken from the CC0
-Superpowers character pack, which redistributes them: https://opengameart.org/content/superpowers-assets-characters
-(see CREDITS.md).
+"""Builds the party's humanoid sprite sheets and face portraits from "24x32 characters with faces (big pack)" by
+Svetlana Kushnariova, CC-BY 3.0, https://opengameart.org/content/24x32-characters-with-faces-big-pack (credited in
+CREDITS.md and on the credits screen, as the licence asks).
 
-  python3 tools/hero-art.py [superpowers-asset-packs-characters.zip]
+  python3 tools/hero-art.py [24x32-characters-big-pack-by-Svetlana-Kushnariova.zip]
 
-Downloads the zip (or reads the file given as the first argument) and writes public/art/heroes/<look>.png for each
-look in PICKS, in the same layout as the creature sheets (src/render/iso.ts FACING_FRAME): ten 64x64 cells, two
-frames facing the viewer (S), two facing away (N), two facing right (E; W is drawn flipped), the attack pose in
-cell 6, and the downed pose in cell 9. Each source sheet is 4 columns (down, up, left, right) by 7 rows of 16x16
-frames: rows 0-3 walk, row 4 attack. The art is scaled 3x into the cell with its feet where the creatures' are.
+Downloads the pack's zip (or reads the file given as the first argument) and writes, for each look in PICKS:
+- public/art/heroes/<look>.png, in the same layout as the creature sheets (src/render/iso.ts FACING_FRAME): ten
+  64x64 cells, two frames facing the viewer (S), two facing away (N), two facing right (E; W is drawn flipped) and the
+  downed pose in cell 9. Each source sheet holds 3 columns by 4 rows (up, right, down, left) of 24x32 walk frames on a
+  teal backdrop, with the character's face portrait to the right. The art is scaled 2x with its feet where the
+  creatures' are.
+- public/art/heroes/<look>-face.png, the face portrait, cut out of the same sheet.
 
-The downed pose is the standing frame laid on its side, done here by script. To give someone another of the pack's
-25 characters, change their number in PICKS and run this again; the looks loaded from public/art/heroes/ are listed
-in HERO_LOOKS in src/data/units.ts."""
+Changes made here by script: the teal backdrop becomes transparent, and the downed pose is the standing frame laid on
+its side. To dress someone as another of the pack's characters, change PICKS and run this again; the looks loaded
+from public/art/heroes/ are listed in HERO_LOOKS in src/data/units.ts."""
 import io
 import os
 import sys
@@ -24,34 +25,54 @@ from PIL import Image
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 OUT = os.path.join(ROOT, "public", "art", "heroes")
-URL = "https://opengameart.org/sites/default/files/superpowers-asset-packs-characters.zip"
-DIR = "characters/ninja-adventure/characters/"
-F = 16          # source frame size
-K = 3           # scale, as for the creature sheets
-FEET = 60       # cell row the feet stand on, as for the creature sheets
-DOWN, UP, LEFT, RIGHT = range(4)
+URL = "https://opengameart.org/sites/default/files/24x32-characters-big-pack-by-Svetlana-Kushnariova.zip"
+FW, FH = 24, 32
+K = 2
+FEET = 61
+KEY = (0, 117, 117)
+UP, RIGHT, DOWN, LEFT = range(4)
 
-# look -> the pack's character number. Each one suits who they are and their element.
+# look -> the pack's file. Each one suits who they are and their element.
 PICKS = {
-    "lumo": 6,       # the hero (light): red-haired young swordsman
-    "remolin": 19,   # Remanso (water, the healer): blue and white hood
-    "guijo": 15,     # Guijo (stone, carries the wounded): grey-helmed knight
-    "centella": 24,  # Centella (bolt, the fast hunter): crimson ninja
-    "moheda": 16,    # Moheda (mush, heals with evidence): red cap with white spots, like a toadstool
+    "lumo": "Heroes/Fighter-M-01",    # the hero (light): young swordsman
+    "remolin": "Heroes/Healer-M-01",  # Remanso (water, the healer): healer in blue
+    "guijo": "Heroes/Fighter-M-02",   # Guijo (stone, carries the wounded): sturdy fighter
+    "centella": "Heroes/Ranger-F-01", # Centella (bolt, the fast hunter): ranger
+    "moheda": "Heroes/Mage-F-01",     # Moheda (mush, heals with evidence): mage
 }
+
+
+def clear(im):
+    im = im.convert("RGBA")
+    px = im.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            if px[x, y][:3] == KEY:
+                px[x, y] = (0, 0, 0, 0)
+    return im
 
 
 def load(src):
     data = open(src, "rb").read() if src else urllib.request.urlopen(URL).read()
     out = {}
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        for n in PICKS.values():
-            out[n] = Image.open(io.BytesIO(z.read(f"{DIR}{n}.png"))).convert("RGBA")
+        names = z.namelist()
+        for look, f in PICKS.items():
+            n = next(n for n in names if n.endswith(f + ".png"))
+            out[look] = Image.open(io.BytesIO(z.read(n))).convert("RGBA")
     return out
 
 
 def frame(sheet, row, col):
-    return sheet.crop((col * F, row * F, col * F + F, row * F + F))
+    return clear(sheet.crop((col * FW, row * FH, col * FW + FW, row * FH + FH)))
+
+
+def face(sheet):
+    """The portrait: the backdrop-coloured box right of the walk frames."""
+    px = sheet.load()
+    pts = [(x, y) for y in range(sheet.height) for x in range(3 * FW, sheet.width) if px[x, y][:3] == KEY]
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return sheet.crop((min(xs), min(ys), max(xs) + 1, max(ys) + 1)).convert("RGBA")
 
 
 def build(sheet):
@@ -62,14 +83,14 @@ def build(sheet):
         bb = big.getbbox()
         out.alpha_composite(big, (cell * 64 + (64 - big.width) // 2, FEET - bb[3]))
 
-    put(frame(sheet, 0, DOWN), 0)
-    put(frame(sheet, 1, DOWN), 1)
-    put(frame(sheet, 0, UP), 2)
-    put(frame(sheet, 1, UP), 3)
-    put(frame(sheet, 0, RIGHT), 4)
-    put(frame(sheet, 1, RIGHT), 5)
-    put(frame(sheet, 4, DOWN), 6)
-    lying = frame(sheet, 0, DOWN).rotate(90, expand=True)
+    # Stepping in place: the two stride frames (columns 0 and 2) of each walk row.
+    put(frame(sheet, DOWN, 0), 0)
+    put(frame(sheet, DOWN, 2), 1)
+    put(frame(sheet, UP, 0), 2)
+    put(frame(sheet, UP, 2), 3)
+    put(frame(sheet, RIGHT, 0), 4)
+    put(frame(sheet, RIGHT, 2), 5)
+    lying = frame(sheet, DOWN, 1).rotate(90, expand=True)
     put(lying.crop(lying.getbbox()), 9)
     return out
 
@@ -77,9 +98,10 @@ def build(sheet):
 def main():
     sheets = load(sys.argv[1] if len(sys.argv) > 1 else None)
     os.makedirs(OUT, exist_ok=True)
-    for look, n in PICKS.items():
-        build(sheets[n]).save(os.path.join(OUT, f"{look}.png"))
-        print("wrote", f"public/art/heroes/{look}.png")
+    for look, sheet in sheets.items():
+        build(sheet).save(os.path.join(OUT, f"{look}.png"))
+        face(sheet).save(os.path.join(OUT, f"{look}-face.png"))
+        print("wrote", f"public/art/heroes/{look}.png and {look}-face.png")
 
 
 if __name__ == "__main__":
