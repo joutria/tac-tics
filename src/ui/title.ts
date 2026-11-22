@@ -20,7 +20,7 @@ type Screen = "menu" | "options" | "credits" | "sure";
 /** Who made what: the game, then every third-party pack (CREDITS.md has the full table). */
 const CREDITS: { what: string; who: string; licence: string }[] = [
   { what: "Ninja Adventure", who: "Pixel-boy & AAA", licence: "CC0" },
-  { what: "24x32 characters with faces (party)", who: "Svetlana Kushnariova · lana-chan@yandex.ru", licence: "CC-BY 3.0" },
+  { what: "24x32 characters (the party)", who: "Svetlana Kushnariova · lana-chan@yandex.ru", licence: "CC-BY 3.0" },
   { what: "Golden UI", who: "Buch", licence: "CC0" },
   { what: "496 pixel art icons", who: "Henrique Lazarini (7Soul1)", licence: "CC0" },
   { what: "Chromatic Campfires", who: "Idylwild", licence: "CC0" },
