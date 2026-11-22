@@ -13,7 +13,7 @@ import { hasLineOfSight } from "../src/engine/sight";
 import { abilityReaches, dangerZone, nextTurnSpots } from "../src/engine/threat";
 import { activeUnit, AMBUSH_OPENER_AP, applyCommand, BattleSetup, BattleState, Command, createBattle, delayFor, roundOf, UnitSpec, unitAt, unitById, upcomingTurns } from "../src/engine/state";
 import { activeRivals, afterBattle, pickCounter, readStyle, rivalSpec, rivalTaunt, RESIST_STEP } from "../src/run/rivals";
-import { BLAST_DAMAGE, IMPACT, REGROW_TICKS } from "../src/engine/terrain";
+import { BLAST_DAMAGE, IMPACT, REGROW_TICKS, ROCK } from "../src/engine/terrain";
 import { ESCAPE_FROM_ROUND, FLEE_TAKEN, RETREAT_TAKEN, turnMp, wavering } from "../src/engine/escape";
 
 const setup: BattleSetup = { seed: "test-seed", map: MEADOW, units: TEST_UNITS };
@@ -71,7 +71,7 @@ describe("movement", () => {
 });
 
 describe("line of sight", () => {
-  const m = parseMap("los", ["g0 g0 r0 g0 g0", "g2 g0 g0 g0 g0"]);
+  const m = parseMap("los", ["g0 g0 r0m g0 g0", "g2 g0 g0 g0 g0"]);
   it("is blocked by a rock on flat ground and clear from higher ground", () => {
     expect(hasLineOfSight(m, { x: 0, y: 0 }, { x: 4, y: 0 })).toBe(false);
     expect(hasLineOfSight(m, { x: 0, y: 1 }, { x: 4, y: 0 })).toBe(true);
@@ -628,9 +628,12 @@ describe("interactive terrain", () => {
   });
   it("ice makes water walkable until it thaws, and fire melts it", () => {
     let s = field(["g0 w0 w0 g0 g0 g0"], [hero({ x: 0, y: 0 }), foe("f", { x: 5, y: 0 })]);
-    expect(applyCommand(s, { t: "move", unit: "h", to: { x: 1, y: 0 } }).ok).toBe(false);
+    const mp = unitById(s, "h").mp;
+    const swim = applyCommand(s, { t: "move", unit: "h", to: { x: 1, y: 0 } });
+    expect(swim.ok && unitById(swim.state, "h").mp).toBe(mp - 2); // swimming in costs an extra MP
     s = cast(cast(s, "xIce", { x: 1, y: 0 }), "xIce", { x: 2, y: 0 });
-    expect(applyCommand(s, { t: "move", unit: "h", to: { x: 1, y: 0 } }).ok).toBe(true);
+    const walk = applyCommand(s, { t: "move", unit: "h", to: { x: 1, y: 0 } });
+    expect(walk.ok && unitById(walk.state, "h").mp).toBe(mp - 1);
     s = cast(s, "xFire", { x: 2, y: 0 });
     expect(tile(s, 2, 0).terrain).toBe("water");
     while (s.clock < 500) s = play(s, [{ t: "endTurn", unit: s.active }]);
@@ -734,11 +737,12 @@ describe("what a push slams into", () => {
     ...extra,
   ] });
   const shove = (s: BattleState) => play(s, [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
-  it("rock and trees hit harder than the map edge, water softer, and a tall wall harder per level", () => {
-    expect(unitById(shove(setup(["g0 g0 r0"])), "f").hp).toBe(40 - 4);  // 3 x 1.5
+  it("rock and trees hit harder than the map edge, and a tall wall harder per level; into water a unit swims", () => {
+    expect(unitById(shove(setup(["g0 g0 r0m"])), "f").hp).toBe(40 - 4);  // 3 x 1.5
     expect(unitById(shove(setup(["g0 g0 t0"])), "f").hp).toBe(40 - 4);
     expect(unitById(shove(setup(["g0 g0"])), "f").hp).toBe(40 - 3);     // edge
-    expect(unitById(shove(setup(["g0 g0 w0"])), "f").hp).toBe(40 - 1);  // 3 x 0.5
+    const wet = shove(setup(["g0 g0 w0"]));
+    expect(unitById(wet, "f")).toMatchObject({ hp: 40, pos: { x: 2, y: 0 } }); // splashes in, no slam
     expect(unitById(shove(setup(["g0 g0 g3"])), "f").hp).toBe(40 - 5);  // 3 x 1.75
   });
   it("a crate takes the slam too, and a barrel goes off", () => {
@@ -794,7 +798,7 @@ describe("quick actions", () => {
     expect(m.tiles[1]).toMatchObject({ terrain: "dirt", h: 1, prop: "rock" });
     expect(() => parseMap("r", ["g0 r0B"])).toThrow();
     expect(() => parseMap("o", ["g0O"])).toThrow(); // loose boulders are gone
-    const s = battle(["g0 r0 g0 g0 g0"], [hero()]);
+    const s = battle(["g0 r0m g0 g0 g0"], [hero()]);
     const look = placeLook({ x: 1, y: 0 });
     const a = play(s, [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
     expect(a.map.tiles[1]).toMatchObject({ terrain: "dirt" });
@@ -825,12 +829,12 @@ describe("quick actions", () => {
     expect(c.map.tiles[1]!.prop).toBe("crate");
     expect(c.map.tiles[1]!.propHp).toBe(12 - IMPACT.crate.base);
     // A rock keeps rolling and hits harder for every tile it rolled.
-    const b = play(battle(["g0 r0 g0 g0 g0 g0"], [hero(), foeAt(5)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    const b = play(battle(["g0 r0m g0 g0 g0 g0"], [hero(), foeAt(5)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
     expect(b.map.tiles[4]!.prop).toBe("rock");
-    expect(unitById(b, "f").hp).toBe(40 - (IMPACT.rock.base + 3 * IMPACT.rock.perTile));
+    expect(unitById(b, "f").hp).toBe(40 - (ROCK.m.base + 3 * ROCK.m.perTile));
     // Rolling down a ledge adds the drop.
-    const d = play(battle(["g2 r2 g0 g0"], [hero(), foeAt(3)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
-    expect(unitById(d, "f").hp).toBe(40 - (IMPACT.rock.base + IMPACT.rock.perTile + 2 * IMPACT.rock.perLevel));
+    const d = play(battle(["g2 r2m g0 g0"], [hero(), foeAt(3)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(unitById(d, "f").hp).toBe(40 - (ROCK.m.base + ROCK.m.perTile + 2 * ROCK.m.perLevel));
     // A barrel rolled into a foe goes off next to it.
     const r = play(battle(["g0 g0B g0 g0"], [hero(), foeAt(2)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
     expect(r.map.tiles[1]!.prop).toBeUndefined();
@@ -842,9 +846,9 @@ describe("quick actions", () => {
     expect(sunk.map.tiles.some((t) => t.prop)).toBe(false);
   });
   it("the preview shows who a pushed object hits, and Hurl moves objects too", () => {
-    const s = battle(["g0 r0 g0 g0"], [hero({ quick: "hurl" }), unit({ id: "f", team: "foes", pos: { x: 3, y: 0 } })]);
+    const s = battle(["g0 r0m g0 g0"], [hero({ quick: "hurl" }), unit({ id: "f", team: "foes", pos: { x: 3, y: 0 } })]);
     const pv = previewEffects(s, unitById(s, "h"), ABILITIES.shove!, { x: 1, y: 0 });
-    expect(pv.splashes).toEqual([{ unit: "f", damage: IMPACT.rock.base + IMPACT.rock.perTile }]);
+    expect(pv.splashes).toEqual([{ unit: "f", damage: ROCK.m.base + ROCK.m.perTile }]);
     expect(pv.moves).toEqual([{ from: { x: 1, y: 0 }, to: { x: 2, y: 0 }, bump: 0, fall: 0, fell: 0 }]);
     expect(castProblem(s, unitById(s, "h"), "hurl", { x: 1, y: 0 })).toBeNull();
     expect(castProblem(s, unitById(s, "h"), "throw", { x: 1, y: 0 })).toBe("needs a crate or barrel");

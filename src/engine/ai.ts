@@ -4,6 +4,7 @@
    counting only abilities that will be off cooldown (so foes strike while your big abilities are recharging),
    with line of sight and height (so they hide behind obstacles and look for high ground). It also reads how the
    players have been fighting this battle and adapts. It uses no randomness, so saves and co-op replay it exactly. */
+import { inWater, nativeSwimmer, swimProblem } from "./swim";
 import { ABILITIES, type Ability } from "../data/abilities";
 import { abilityAvailable, areaTiles, damagePreview, directionBonus, guardAbility, hiddenFrom, maxRange, previewEffects, pushOutcome, pushTiles, stuck, throwOutcome, unitAbilities } from "./combat";
 import { bodyGap, cellsOf, coversPos, manhattan, NEIGHBOURS, nearestCell, Pos, samePos, sightBlock, tileAt } from "./grid";
@@ -97,10 +98,11 @@ function offenseAt(s: BattleState, u: Unit, spot: Pos): number {
   for (const id of u.abilities) {
     const ab = ABILITIES[id]!;
     if (!ab.damage || (u.cooldowns[id] ?? 0) > 1) continue;
+    const wet = !!swimProblem(s.map, u, ab, spot);
     for (const o of s.units) {
       if (o.life !== "up" || !isFoe(u, o)) continue;
       const dmg = avg(damagePreview(s, u, o, ab, spot));
-      if (reachesBody(s, ab, spot, o.pos, sizeOf(o), [u.id], sizeOf(u))) best = Math.max(best, dmg);
+      if (!wet && reachesBody(s, ab, spot, o.pos, sizeOf(o), [u.id], sizeOf(u))) best = Math.max(best, dmg);
       else if (bodyGap(spot, sizeOf(u), o.pos, sizeOf(o)) <= u.maxMp + ab.range[1]) best = Math.max(best, dmg * 0.6);
     }
   }
@@ -142,6 +144,8 @@ function positionScore(s: BattleState, u: Unit, spot: Pos, enemyReach: Map<strin
     + (ground?.surface === "sap" ? (u.team === "heroes" ? 6 : -4) : 0)
     + (ground?.surface === "oil" ? 2 : 0)
     + (NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: spot.x + d.x, y: spot.y + d.y }))) ? 4 : 0)
+    // Swimming: no footing, fewer moves, and the water may carry a bolt. Water creatures do not mind.
+    + (inWater(s.map, u, spot) && !nativeSwimmer(u) ? 3 + (charged(s, ground) ? 6 : 0) : 0)
     + guardDanger(s, u, spot);
   return -threat * caution + offense - spacing + height + cover + flank - nearest * late - hazard;
 }
@@ -334,6 +338,7 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
     const ab = ABILITIES[id]!;
     const targets = candidateTargets(s, ab);
     for (const sp of spots) {
+      if (swimProblem(s.map, u, ab, sp.p)) continue;
       for (const t of targets) {
         if (!reaches(s, ab, sp.p, t, [u.id], sizeOf(u))) continue;
         const occupant = unitAt(s, t);
@@ -377,7 +382,7 @@ function escapeTurn(start: BattleState, run: (c: Command) => boolean, now: () =>
 }
 
 function guardWorth(s: BattleState, me: Unit): boolean {
-  if (!guardAbility(me)) return false;
+  if (!guardAbility(me) || (inWater(s.map, me) && !nativeSwimmer(me))) return false;
   return s.units.some((o) => o.life === "up" && isFoe(me, o) && unitGap(o, me) > 1 && unitGap(o, me) <= o.maxMp + 1);
 }
 

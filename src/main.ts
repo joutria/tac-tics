@@ -1,5 +1,6 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
+import { inWater, nativeSwimmer, swimProblem } from "./engine/swim";
 import { startUpdates } from "./app/update";
 import { AUDIO_KEY, audioSettings, battleSounds, initAudio, playMusic, readAudioSettings, setAudio, sfx } from "./audio/sound";
 import "@fontsource/pixelify-sans/400.css";
@@ -12,7 +13,7 @@ import { HERO } from "./data/region";
 import { TEST_UNITS } from "./data/units";
 import { planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, comboProblem, guardAbility, CRIT_MULT, HEIGHT_CAP, HEIGHT_PER_LEVEL, SIDE_BONUS, MAX_REVIVES, damagePreview, directionBonus, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
-import { manhattan, Pos, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
+import { manhattan, Pos, rockSizeOf, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
 import { heightShapesReach, reachAt, reachBound, type Reach } from "./engine/reach";
 import { dangerZone } from "./engine/threat";
@@ -651,6 +652,7 @@ function explain(why: string): string {
     ["needs an empty tile", "err.empty"], ["needs a yielding foe", "err.yielding"], ["not enough AP", "err.ap"], ["on cooldown", "err.cooldown"], ["already used", "err.used"],
     ["the combo partner is not standing", "err.comboDown"], ["the combo partner is too far", "err.comboFar"], ["needs the combo partner", "err.comboTarget"],
   ];
+  if (why.endsWith("while swimming")) return t(lang, "swimming");
   const hit = map.find(([k]) => why.startsWith(k));
   return hit ? t(lang, hit[1]) : why;
 }
@@ -774,7 +776,7 @@ function abilityHelp(id: string, u: Unit | null): string {
   if (ab.cooldown) chip("cooldown", t(lang, "h.cd", { n: ab.cooldown }));
   if (ab.perTurn > 1 && ab.perTurn < 4) chip(null, t(lang, "h.perTurn", { n: ab.perTurn }));
   if (ab.quick) chip("quick", t(lang, "h.quick"));
-  const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
+  const why = u && u.team === "heroes" ? abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? swimProblem(state.map, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null) : null;
   // How its reach works: height (ranged only), the blind spot next to the caster, and what cuts the line of sight.
   const rules: string[] = [];
   if (ab.range[1] > 0 && !ab.quick) rules.push(t(lang, heightShapesReach(ab) ? "h.heightRule" : "h.meleeRule"));
@@ -875,7 +877,7 @@ function refresh() {
     const b = document.createElement("button");
     b.className = `cmd${ab.quick ? " sub" : ""}${selected === id ? " on" : ""}`;
     b.style.setProperty("--el", ELEMENTS[ab.element].col);
-    const why = abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
+    const why = abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? swimProblem(state.map, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
     b.disabled = !mine || !!why;
     const cd = u.cooldowns[id];
     b.innerHTML = `${icon(abilityIcon(id, ab.element))}<span class="nm">${abilityName(lang, id)}</span>`
@@ -887,10 +889,11 @@ function refresh() {
   }
   $<HTMLButtonElement>("end").disabled = !mine;
   $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited || !!u.usedThisTurn.quick;
-  const guardWith = mine && u.escape === "none" ? guardAbility(u) : null;
+  const wet = inWater(state.map, u) && !nativeSwimmer(u);
+  const guardWith = mine && u.escape === "none" && !wet ? guardAbility(u) : null;
   const gb = $<HTMLButtonElement>("guard");
   gb.disabled = !guardWith;
-  dress("guard", "shield", t(lang, "guard"), () => plainHelp(t(lang, "guard"), guardWith ? t(lang, "guardHint", { ab: abilityName(lang, guardWith) }) : t(lang, "guardNo"), "shield"));
+  dress("guard", "shield", t(lang, "guard"), () => plainHelp(t(lang, "guard"), guardWith ? t(lang, "guardHint", { ab: abilityName(lang, guardWith) }) : t(lang, wet ? "swimming" : "guardNo"), "shield"));
   $<HTMLButtonElement>("undo").disabled = !canUndo();
   const rw = $<HTMLButtonElement>("rewind");
   const left = rulesOf(journey).rewinds - (save.rewindsUsed ?? 0);
@@ -1150,7 +1153,7 @@ function tileInfo(at: Pos): string[] {
   const out: string[] = [];
   if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
-  if (tile.prop === "rock") out.push(`<b>${t(lang, "rockName")}</b> · ${t(lang, "rockInfo")}`);
+  if (tile.prop === "rock") out.push(`<b>${t(lang, "rockName")}</b> · ${t(lang, ({ s: "rockS", m: "rockM", l: "rockL" } as const)[rockSizeOf(tile)])} ${t(lang, "rockInfo")}`);
   if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, tile.prop || tile.terrain === "tree" ? "burningObjInfo" : "fireInfo")}`);
   if (tile.scorchedAt !== undefined) out.push(t(lang, "scorchedInfo"));
   if (tile.terrain === "ice") out.push(`❄ ${t(lang, "iceInfo")}`);

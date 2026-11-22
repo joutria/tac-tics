@@ -14,7 +14,8 @@
    - Crates block movement and sight. Enough damage breaks them, and pushing abilities slide them.
    - Pushed objects hurt (slideOutcome): a crate or a rock that runs into a unit hits it (IMPACT, more for every
      tile rolled and level dropped), a barrel that runs into a unit or rolls off a ledge goes off. Rocks cannot
-     be broken and roll up to ROCK_ROLL tiles from any push, flattening crates on the way.
+     be broken and roll from any push: small ones up to 6 tiles, medium 4, big 2 (ROCK); the bigger the rock, the
+     harder it hits, and medium and big ones flatten crates on the way.
 
    Surfaces (Baldur's Gate research, "Surface reactions"):
    - Oil costs 1 extra MP to walk out of. Fire on it makes the whole puddle flare up: OIL_BLAST damage and a Burn
@@ -23,12 +24,15 @@
      to bare dirt; Light cleanses it. A Sap source grows the Sap by one tile a round, up to SAP_REACH tiles away.
    - Water a bolt goes through stays charged for 2 rounds: anyone who starts a turn next to it may be stunned.
      Water or Light calms it, ice freezes it, fire turns it to steam.
-   - Fire on water makes steam, which blocks sight for a round. */
+   - Fire on water makes steam, which blocks sight for a round.
+   - Swimmers (src/engine/swim.ts): bolts chain to them, charged water shocks them more often, ice freezes them in,
+     and the water puts out their Burn. */
 import type { Ability } from "../data/abilities";
-import { NEIGHBOURS, TERRAIN, cellsOf, coversPos, grassy, manhattan, placeLook, standable, tileAt, type Pos, type Tile } from "./grid";
+import { NEIGHBOURS, TERRAIN, cellsOf, coversPos, grassy, manhattan, placeLook, rockSizeOf, standable, tileAt, type Pos, type RockSize, type Tile } from "./grid";
 import { rngNext } from "./rng";
 import { absorb, addStatus } from "./status";
 import type { BattleState, Unit } from "./state";
+import { inWater, nativeSwimmer, SWIM_SHOCK_CHANCE } from "./swim";
 
 export const FIRE_TICKS = 200;
 export const ICE_TICKS = 300;
@@ -168,6 +172,9 @@ export function touchTile(s: BattleState, ab: Ability, from: Pos, p: Pos, fx: Te
   if (ab.element === "bolt" && ab.damage && t.terrain === "water" && !charged(s, t)) { t.chargedUntil = s.clock + CHARGE_TICKS; fx.push({ fx: "charge", at: p }); }
   if (ab.element === "ice" && t.terrain === "water") {
     t.terrain = "ice"; t.thawAt = s.clock + ICE_TICKS; delete t.chargedUntil; delete t.steamUntil; fx.push({ fx: "freeze", at: p });
+    // A swimmer there is frozen in: it cannot move on its next turn (the ice waits for it to leave before thawing).
+    const swimmer = unitOn(s, p);
+    if (swimmer && swimmer.life === "up" && !nativeSwimmer(swimmer)) swimmer.rooted = true;
   }
 }
 
@@ -195,14 +202,21 @@ export function explode(s: BattleState, at: Pos, fx: TerrainFx[], hits: TerrainH
   }
 }
 
-/** How hard a pushed object hits a unit in its way: a base, plus some for every tile it rolled and every level it
-    dropped on the way, times (1 + the pusher's Strength / 100). Barrels go off instead (BLAST_DAMAGE). */
+/** How hard a pushed crate hits a unit in its way: a base, plus some for every tile it rolled and every level it
+    dropped on the way, times (1 + the pusher's Strength / 100). Rocks hit by their size (ROCK); barrels go off
+    instead (BLAST_DAMAGE). */
 export const IMPACT = {
   crate: { base: 6, perTile: 1, perLevel: 2 },
-  rock: { base: 9, perTile: 2, perLevel: 3 },
 } as const;
-/** A pushed rock keeps rolling this far at most, whatever pushed it. */
-export const ROCK_ROLL = 5;
+/** Rocks by size: how far a push sends one rolling (whatever pushed it), how hard it hits a unit in its way, and
+    whether it flattens a crate and rolls on (a smaller one stops against it). */
+export const ROCK: Record<RockSize, { roll: number; base: number; perTile: number; perLevel: number; crushes: boolean }> = {
+  s: { roll: 6, base: 5, perTile: 1, perLevel: 2, crushes: false },
+  m: { roll: 4, base: 9, perTile: 2, perLevel: 3, crushes: true },
+  l: { roll: 2, base: 13, perTile: 3, perLevel: 4, crushes: true },
+};
+/** The furthest any rock rolls. */
+export const ROCK_ROLL = ROCK.s.roll;
 
 /** Where a pushed object would go and what it would hit, without changing anything. Straight away from `from`, down
     any drop but never up a step. A crate or a barrel moves as far as the push; a rock keeps rolling (ROCK_ROLL).
@@ -214,7 +228,8 @@ export function slideOutcome(s: BattleState, from: Pos, at: Pos, tiles: number, 
   const out: { kind: typeof kind; to: Pos; rolled: number; dropped: number; unit?: string; damage: number; sinks: boolean; barrel?: Pos; crushes?: Pos } =
     { kind, to: at, rolled: 0, dropped: 0, damage: 0, sinks: false };
   if (!step.x && !step.y) return out;
-  const reach = kind === "rock" ? ROCK_ROLL : tiles;
+  const size = rockSizeOf(t0), rock = ROCK[size];
+  const reach = kind === "rock" ? rock.roll : tiles;
   let cur = at;
   for (let i = 0; i < reach; i++) {
     const n = { x: cur.x + step.x, y: cur.y + step.y };
@@ -224,14 +239,14 @@ export function slideOutcome(s: BattleState, from: Pos, at: Pos, tiles: number, 
     if (v) {
       out.unit = v.id;
       if (kind !== "barrel") {
-        const f = IMPACT[kind];
+        const f = kind === "rock" ? rock : IMPACT.crate;
         out.damage = Math.max(1, Math.floor((f.base + f.perTile * out.rolled + f.perLevel * (out.dropped + here.h - next.h)) * (1 + Math.max(0, str) / 100)));
       }
       break;
     }
     if (next.prop === "barrel" && kind !== "barrel") { out.barrel = n; break; }
     // A rock flattens a crate in its way and rolls on.
-    if (next.prop === "crate" && kind === "rock") { out.crushes = n; break; }
+    if (next.prop === "crate" && kind === "rock" && rock.crushes) { out.crushes = n; break; }
     if (next.prop || !TERRAIN[next.terrain].walkable && next.terrain !== "water") break;
     out.dropped += here.h - next.h; out.rolled += 1; cur = n;
     if (next.terrain === "water") { out.sinks = true; break; }
@@ -254,12 +269,13 @@ export function giveFire(t: Tile, until: number | undefined) {
     and may break; a barrel goes off where it stops if it hit a unit or fell a level or more. */
 function slideProp(s: BattleState, from: Pos, at: Pos, tiles: number, fx: TerrainFx[], hits: TerrainHit[], hurt: Hurt, str: number) {
   const o = slideOutcome(s, from, at, tiles, str);
-  const src = tileAt(s.map, at)!, hp = src.propHp, fire = takeFire(s, src), look = src.look ?? placeLook(at);
-  delete src.prop; delete src.propHp; delete src.look;
+  const src = tileAt(s.map, at)!, hp = src.propHp, fire = takeFire(s, src), look = src.look ?? placeLook(at), size = src.rockSize;
+  delete src.prop; delete src.propHp; delete src.look; delete src.rockSize;
   if (o.rolled) fx.push({ fx: "slide", at, to: o.to });
   const end = tileAt(s.map, o.to)!;
   if (o.sinks) { fx.push({ fx: "sink", at: o.to }); return; }
   end.prop = o.kind; end.propHp = hp; end.look = look; giveFire(end, fire);
+  if (size) end.rockSize = size;
   if (o.barrel) explode(s, o.barrel, fx, hits, hurt);
   if (o.crushes) { const c = tileAt(s.map, o.crushes)!; delete c.prop; delete c.propHp; fx.push({ fx: "break", at: o.crushes }); }
   if (o.kind === "barrel") {
@@ -297,7 +313,8 @@ export function chainBolt(s: BattleState, caster: Unit, struck: { unit: string; 
     const share = Math.floor(first.damage * CHAIN_SHARE);
     for (const o of s.units) {
       if (done.has(o.id) || o.life !== "up") continue;
-      if (!water.some((w) => under(o).some((c) => Math.abs(w.x - c.x) + Math.abs(w.y - c.y) === 1))) continue;
+        // Next to the water, or swimming in it.
+      if (!water.some((w) => under(o).some((c) => Math.abs(w.x - c.x) + Math.abs(w.y - c.y) <= 1))) continue;
       done.add(o.id);
       const h: TerrainHit = { source: "chain", unit: o.id, damage: 0, downed: false, died: false, burned: false };
       h.damage = absorb(o, share);
@@ -309,10 +326,10 @@ export function chainBolt(s: BattleState, caster: Unit, struck: { unit: string; 
   }
 }
 
-/** Every water tile connected to the water next to `p`. */
+/** Every water tile connected to the water next to `p` (or to `p` itself, for a swimmer). */
 function waterBody(s: BattleState, p: Pos): Pos[] {
   const seen = new Set<string>(), out: Pos[] = [];
-  const stack = NEIGHBOURS.map((d) => ({ x: p.x + d.x, y: p.y + d.y })).filter((q) => tileAt(s.map, q)?.terrain === "water");
+  const stack = [p, ...NEIGHBOURS.map((d) => ({ x: p.x + d.x, y: p.y + d.y }))].filter((q) => tileAt(s.map, q)?.terrain === "water");
   while (stack.length) {
     const q = stack.pop()!, k = `${q.x},${q.y}`;
     if (seen.has(k)) continue;
@@ -364,11 +381,20 @@ function growSap(s: BattleState) {
   }
 }
 
-/** Starting a turn next to charged water: a SHOCK_CHANCE roll to be stunned. True when it stuns. */
+/** Starting a turn next to charged water: a SHOCK_CHANCE roll to be stunned (in it: SWIM_SHOCK_CHANCE). True when it stuns. */
 export function shockNear(s: BattleState, u: Unit): boolean {
-  if (u.life !== "up" || !under(u).some((c) => NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: c.x + d.x, y: c.y + d.y }))))) return false;
+  if (u.life !== "up") return false;
+  const inside = under(u).some((c) => charged(s, tileAt(s.map, c)));
+  if (!inside && !under(u).some((c) => NEIGHBOURS.some((d) => charged(s, tileAt(s.map, { x: c.x + d.x, y: c.y + d.y }))))) return false;
   const [roll, rng] = rngNext(s.rng); s.rng = rng;
-  return roll < SHOCK_CHANCE && addStatus(u, { id: "stun", turns: 1, power: 0 });
+  return roll < (inside ? SWIM_SHOCK_CHANCE : SHOCK_CHANCE) && addStatus(u, { id: "stun", turns: 1, power: 0 });
+}
+
+/** Swimming puts out a Burn. True when it did. */
+export function soak(s: BattleState, u: Unit): boolean {
+  if (u.life !== "up" || !inWater(s.map, u) || !u.statuses.some((x) => x.id === "burn")) return false;
+  u.statuses = u.statuses.filter((x) => x.id !== "burn");
+  return true;
 }
 
 /** Standing in Sap: Poison for the party, Regen for foes. Returns what it gave, if it took. */
