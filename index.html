@@ -223,6 +223,13 @@
   #toast { z-index: 7; } #overlay { z-index: 4; }
   #resultNote { color: #ffc85a; margin: 0 16px; text-align: center; text-shadow: 1px 1px 0 #000; }
   #resultNote:empty { display: none; }
+  /* Before a fight: placing the party. The command menus wait; one window says what to do, with the button to start. */
+  #deployBar { position: fixed; left: 50%; transform: translateX(-50%); bottom: max(10px, env(safe-area-inset-bottom)); display: none; align-items: center; gap: 12px;
+    padding: 8px 10px 8px 14px; width: max-content; max-width: calc(100vw - 16px); z-index: 3; }
+  #deployBar div { display: flex; flex-direction: column; gap: 2px; } #deployBar b { color: var(--accent); font-size: 16px; } #deployBar span { font-size: 13px; color: var(--quiet); }
+  #deployBar button { min-height: 44px; padding: 8px 18px; font-size: 17px; flex: none; }
+  body.deploying #deployBar { display: flex; }
+  body.deploying #menu, body.deploying #system, body.deploying #hint, body.deploying #act { display: none; }
   /* Run menus (difficulty, camp, rewards, shop, gear): one window holding a list, the hand on the item in focus, like
      a console RPG's menu, instead of a stack of separate buttons. */
   #runPanel .cards { background: var(--panel); border: 2px solid var(--frame); border-radius: 8px; padding: 4px;
@@ -310,6 +317,7 @@
   <span id="hint"></span>
   <div id="help" class="win" role="status" aria-live="polite"></div>
   <div id="callout" class="win" aria-live="polite"></div>
+  <div id="deployBar" class="win"><div><b id="deployTitle"></b><span id="deployHint"></span></div><button id="deployGo" class="go"></button></div>
   <div id="act"><button id="cancel"></button><button id="confirm" class="go"></button></div>
   <div id="tip" class="win"></div>
   <div id="soundPanel" class="win" role="dialog" aria-modal="false"></div>
