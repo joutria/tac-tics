@@ -1,6 +1,6 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
-import { BUILD, startUpdates } from "./app/update";
+import { startUpdates } from "./app/update";
 import { AUDIO_KEY, audioSettings, battleSounds, initAudio, playMusic, readAudioSettings, setAudio, sfx } from "./audio/sound";
 import "@fontsource/pixelify-sans/400.css";
 import "@fontsource/pixelify-sans/600.css";
@@ -32,6 +32,7 @@ import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, nodeLabel, renderRunMap } from "./ui/runmap";
 import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, type IconId } from "./ui/icons";
+import { BUILD } from "./app/update";
 import { hideTitle, showTitle, titleBack, titleButtons, titleOpen, type TitleOptions } from "./ui/title";
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
