@@ -1,5 +1,6 @@
 /* M1 battle screen: the hero against three foes on the meadow. You play the hero; the enemy AI plays the foes.
    Each command is saved as it happens, so reloading the page resumes the battle exactly where it was. */
+import { AUDIO_KEY, audioSettings, battleSounds, initAudio, playMusic, readAudioSettings, setAudio, sfx } from "./audio/sound";
 import "@fontsource/pixelify-sans/400.css";
 import "@fontsource/pixelify-sans/600.css";
 import { ABILITIES, type Ability } from "./data/abilities";
@@ -147,6 +148,7 @@ function closeLegacy() {
 }
 
 function pickDifficulty(d: Difficulty, tier = 0) {
+  sfx("select");
   const legacy = loadLegacy();
   journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy), { returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy), tier });
   choosingDifficulty = false;
@@ -178,7 +180,7 @@ function renderCamp(panel: HTMLElement) {
     const b = card(open, !!k.needs && fresh.has(k.needs), k.name[lang], k.desc[lang], k.needs ? MILESTONE_HINT[k.needs][lang] : "");
     if (k.id === kit.id) { b.classList.add("worn"); b.setAttribute("aria-pressed", "true"); }
     b.dataset.kit = k.id;
-    b.onclick = () => { saveLegacy((l) => { l.kit = k.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-kit="${k.id}"]`)?.focus(); };
+    b.onclick = () => { sfx("equip"); saveLegacy((l) => { l.kit = k.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-kit="${k.id}"]`)?.focus(); };
     kits.append(b);
   }
   const lore = el("div", "cards");
@@ -186,7 +188,7 @@ function renderCamp(panel: HTMLElement) {
     const open = hasMilestone(legacy, page.needs);
     const b = card(open, fresh.has(page.needs), page.title[lang], campPage === page.id ? page.text[lang] : "…", MILESTONE_HINT[page.needs][lang]);
     b.setAttribute("aria-expanded", String(campPage === page.id));
-    b.onclick = () => { campPage = campPage === page.id ? null : page.id; showMap(); document.querySelector<HTMLButtonElement>(`[data-lore="${page.id}"]`)?.focus(); };
+    b.onclick = () => { sfx("page"); campPage = campPage === page.id ? null : page.id; showMap(); document.querySelector<HTMLButtonElement>(`[data-lore="${page.id}"]`)?.focus(); };
     b.dataset.lore = page.id;
     lore.append(b);
   }
@@ -199,7 +201,7 @@ function renderCamp(panel: HTMLElement) {
     const b = card(true, false, p.name[lang], p.desc[lang], "");
     if (p.id === worn) { b.classList.add("worn"); b.setAttribute("aria-pressed", "true"); }
     b.dataset.keep = p.id;
-    b.onclick = () => { saveLegacy((l) => { l.keepsake = p.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-keep="${p.id}"]`)?.focus(); };
+    b.onclick = () => { sfx("equip"); saveLegacy((l) => { l.keepsake = p.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-keep="${p.id}"]`)?.focus(); };
     keeps.append(b);
   }
   if (!keeps.childElementCount) keeps.append(el("p", "spoils", t(lang, "campNoKeepsake")));
@@ -239,6 +241,7 @@ function renderDifficulty(panel: HTMLElement) {
 
 function showMap() {
   onMap = true; busy = false;
+  playMusic(choosingDifficulty || journey.over ? "camp" : "map");
   journey.battle = undefined;
   if (!choosingDifficulty) persist();
   resetView();
@@ -249,11 +252,11 @@ function showMap() {
   const safely = (f: () => RunState) => { try { update(f()); } catch (e) { toast(t(lang, "tooPoor")); console.warn(e); } };
   renderRunMap(document.body, journey, lang, {
     pick: pickNode,
-    choose: (i) => { const before = journey; update(choose(journey, i)); record(logChoice(PLAYER, before, i)); },
-    buy: (id) => { const before = journey; safely(() => buy(journey, id)); if (journey !== before) record(logBuy(PLAYER, before, id)); },
+    choose: (i) => { const before = journey; sfx("select"); update(choose(journey, i)); record(logChoice(PLAYER, before, i)); },
+    buy: (id) => { const before = journey; safely(() => buy(journey, id)); if (journey !== before) { sfx("buy"); record(logBuy(PLAYER, before, id)); } },
     heal: () => { const before = journey; safely(() => shopHeal(journey)); if (journey !== before) record(logShopHeal(PLAYER, before)); },
     leave: () => { record(logShopLeave(PLAYER, journey)); update(leaveShop(journey)); },
-    wear: (id) => { journey = wear(journey, id); record(logWear(PLAYER, journey, id)); showMap(); },
+    wear: (id) => { sfx("equip"); journey = wear(journey, id); record(logWear(PLAYER, journey, id)); showMap(); },
     // Keeps keyboard and controller focus on the card just swapped.
     twin: (base, on) => { try { update(wearTwin(journey, base, on)); document.querySelector<HTMLButtonElement>(`[data-twin="${base}"]`)?.focus(); } catch (e) { console.warn(e); } },
     newRun: () => startRun(),
@@ -267,6 +270,7 @@ function showMap() {
   label("statsBtn", "stats", t(lang, "stats"), t(lang, "statsHint"));
   label("newRun", null, t(lang, "newRun"), t(lang, "newRunHint"));
   label("gearBtn", "gear", t(lang, "gear"), t(lang, "gearHint"));
+  label("mapSound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), t(lang, "soundHint"));
   label("mapLang", "lang", lang === "es" ? "English" : "Español", t(lang, "langHint"));
   label("mapBtn", "map", t(lang, "routeMap"), t(lang, "mapKeys"));
   document.documentElement.lang = lang;
@@ -294,6 +298,7 @@ function pickNode(id: number) {
   if (!nextNodes(journey).some((n) => n.id === id)) return;
   const kind = journey.map.nodes[id]!.kind;
   const before = journey.heroHp;
+  sfx("select");
   record(logNode(PLAYER, journey, id, nextNodes(journey).map((n) => n.id)));
   journey = enterNode(journey, id, lang);
   openMap(false);
@@ -302,7 +307,7 @@ function pickNode(id: number) {
   $("skipBtn").style.display = "";
   // Walk there first; a fight starts when the party reaches the foes, a stop opens when they reach it.
   approach(id, () => {
-    if (!journey.battle) { if (kind === "rest") toast(t(lang, "rested", { n: journey.heroHp - before })); showMap(); return; }
+    if (!journey.battle) { if (kind === "rest") { toast(t(lang, "rested", { n: journey.heroHp - before })); sfx("rest"); } else sfx("door"); showMap(); return; }
     startBattle(kind === "rival" || kind === "boss");
   });
 }
@@ -314,6 +319,7 @@ function startBattle(announce: boolean) {
   $("travel").style.display = "none";
   for (const id of ["top", "bottom", "act"]) $(id).style.visibility = "";
   save = journey.battle!;
+  playMusic(journey.map.nodes[journey.battle!.node]?.kind === "boss" ? "boss" : "battle");
   // Each battle opens centred on its arena (the travel screen never pans the battle view).
   panX = 0; panY = 0;
   battleStartedAt = save.commands.length ? 0 : Date.now();
@@ -345,6 +351,7 @@ function afterBattleButton() {
   closeLegacy();
   if (journey.region !== region) { toast(t(lang, "newRegion", { name: regionOf(journey).name[lang] }), 3200); showMap(); return; }
   const sp = journey.spoils;
+  if (sp?.levels) sfx("levelUp"); else if (sp?.coins) sfx("coin");
   if (sp && !journey.offers.length) toast(t(lang, "spoils", { c: sp.coins, x: sp.xp }) + (sp.shards ? t(lang, "spoilsShards", { s: sp.shards }) : "") + (sp.levels ? t(lang, "levelUp", { n: journey.hero.level }) : "")
     + (alignShiftText(sp.align, lang) ? ` · ${alignShiftText(sp.align, lang)}` : ""), 2600);
   showMap();
@@ -371,7 +378,7 @@ function persist() {
 }
 
 function run(cmd: Command): boolean {
-  const before = state.active;
+  const before = state.active, hadWinner = !!state.winner;
   const was = new Map(state.units.map((u) => [u.id, { ...u.pos }]));
   const r = applyCommand(state, cmd);
   if (!r.ok) { toast(r.error); return false; }
@@ -384,6 +391,11 @@ function run(cmd: Command): boolean {
   }
   persist();
   showEvents(r.events, was);
+  battleSounds(r.events);
+  if (!hadWinner && state.winner) {
+    const lost = state.winner === "foes" || state.units.some((x) => x.id === HERO.id && x.life !== "up");
+    playMusic(null); sfx(lost ? "defeat" : "victory", 300);
+  }
   return true;
 }
 
@@ -823,6 +835,7 @@ function refresh() {
   }
   dress("zoomIn", "zoomIn", t(lang, "zoomIn"), () => plainHelp(t(lang, "zoomIn"), t(lang, "zoomIn"), "zoomIn"), true);
   dress("zoomOut", "zoomOut", t(lang, "zoomOut"), () => plainHelp(t(lang, "zoomOut"), t(lang, "zoomOut"), "zoomOut"), true);
+  dress("sound", audioSettings().muted ? "muted" : "sound", t(lang, "sound"), () => plainHelp(t(lang, "sound"), t(lang, "soundHint"), "sound"), true);
   dress("lang", "lang", lang === "es" ? "English" : "Español", () => plainHelp(lang === "es" ? "English" : "Español", t(lang, "langHint"), "lang"), true);
   const confirm = $<HTMLButtonElement>("confirm");
   confirm.style.display = mine && pending ? "" : "none";
@@ -1099,7 +1112,37 @@ function callout(unit: string, ability: string) {
 }
 
 let toastTimer = 0;
+/** The sound settings: music and effects volume, and mute. Saved on the device as they change. */
+function toggleSoundPanel(open = $("soundPanel").style.display !== "flex") {
+  const panel = $("soundPanel");
+  panel.style.display = open ? "flex" : "none";
+  if (!open) return;
+  const s = audioSettings();
+  const save = (next: Partial<typeof s>) => {
+    setAudio(next); safeSet(AUDIO_KEY, JSON.stringify(audioSettings()));
+    const ic = audioSettings().muted ? "muted" : "sound";
+    for (const id of ["sound", "mapSound"]) { const img = $(id).querySelector("img"); if (img) img.outerHTML = icon(ic); }
+  };
+  const slider = (key: "music" | "sfx", text: string) => {
+    const l = document.createElement("label"); l.textContent = text;
+    const r = document.createElement("input"); r.type = "range"; r.min = "0"; r.max = "100"; r.value = String(Math.round(s[key] * 100));
+    r.setAttribute("aria-label", text);
+    r.oninput = () => save({ [key]: Number(r.value) / 100 });
+    if (key === "sfx") r.onchange = () => sfx("hurt");
+    l.append(r); return l;
+  };
+  const mute = document.createElement("label"); mute.className = "check";
+  const box = document.createElement("input"); box.type = "checkbox"; box.checked = s.muted;
+  box.onchange = () => save({ muted: box.checked });
+  mute.append(box, t(lang, "soundMute"));
+  const title = document.createElement("h3"); title.textContent = t(lang, "sound");
+  const close = document.createElement("button"); close.textContent = t(lang, "close"); close.onclick = () => toggleSoundPanel(false);
+  panel.replaceChildren(title, slider("music", t(lang, "soundMusic")), slider("sfx", t(lang, "soundSfx")), mute, close);
+  panel.querySelector<HTMLInputElement>("input")?.focus();
+}
+
 function toast(msg: string, ms = 1600) {
+  if (msg === t(lang, "tooPoor")) sfx("error");
   const el = $("toast"); el.textContent = msg; el.classList.add("show");
   clearTimeout(toastTimer); toastTimer = window.setTimeout(() => el.classList.remove("show"), ms);
 }
@@ -1775,6 +1818,7 @@ async function start() {
   const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
   Object.assign(srcs, fxSources(base));
+  initAudio(base, readAudioSettings(safeGet(AUDIO_KEY)));
   images = await loadImages(srcs);
   // Pixel icons everywhere: the menu hand, and every emoji any text still carries becomes a pixel icon as it lands.
   document.documentElement.style.setProperty("--pointer", `url(${iconUrl("pointer")})`);
@@ -1873,6 +1917,8 @@ async function start() {
   $("statsBtn").addEventListener("click", () => { if (choosingDifficulty || journey.offers.length) return; statsOpen = !statsOpen; gearOpen = false; showMap(); });
   $("newRun").addEventListener("click", () => { if (journey.over || confirmNewRun()) startRun(); });
   $("mapLang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); showMap(); });
+  $("sound").addEventListener("click", () => toggleSoundPanel());
+  $("mapSound").addEventListener("click", () => toggleSoundPanel());
   $("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; safeSet(LANG_KEY, lang); refresh(); });
   $("mapBtn").addEventListener("click", () => openMap(true));
   $("closeMap").addEventListener("click", () => openMap(false));
@@ -1880,6 +1926,8 @@ async function start() {
   addEventListener("keydown", (ev) => {
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const k = ev.key.toLowerCase();
+    // The sound panel keeps its keys: arrows move its sliders, Escape closes it.
+    if ($("soundPanel").style.display === "flex") { if (k === "escape") toggleSoundPanel(false); return; }
     if (k === "escape") { if (mapOpen) openMap(false); else input("back"); return; }
     if (k === "m") { if (!ev.repeat) input("map"); return; }
     const arrows: Record<string, Input> = { arrowup: "up", arrowdown: "down", arrowleft: "left", arrowright: "right" };
