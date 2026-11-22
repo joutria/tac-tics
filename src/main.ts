@@ -25,7 +25,7 @@ import { aheadOf, choices } from "./run/map";
 import { memberSpec } from "./run/party";
 import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
-import { DIFFICULTY, REGIONS, type Difficulty } from "./data/region";
+import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, nodeLabel, renderRunMap } from "./ui/runmap";
 import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, type IconId } from "./ui/icons";
 import { record, renderStats } from "./ui/stats";
@@ -146,9 +146,9 @@ function closeLegacy() {
   safeSet(LEGACY_KEY, JSON.stringify(closeRun(loadLegacy(), journey)));
 }
 
-function pickDifficulty(d: Difficulty) {
+function pickDifficulty(d: Difficulty, tier = 0) {
   const legacy = loadLegacy();
-  journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy), { returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy) });
+  journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy), { returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy), tier });
   choosingDifficulty = false;
   record(logRunStart(PLAYER, journey));
   showMap();
@@ -220,7 +220,21 @@ function renderDifficulty(panel: HTMLElement) {
     b.append(name, desc); b.onclick = () => pickDifficulty(d);
     list.append(b);
   }
-  panel.replaceChildren(title, list);
+  // Sap tiers opened by winning on Hard: each adds its twist to the ones below it.
+  const open = Math.min(SAP_TIERS.length, loadLegacy().tiers ?? 0);
+  for (let i = 1; i <= open; i++) {
+    const tier = SAP_TIERS[i - 1]!;
+    const b = document.createElement("button"); b.className = "card";
+    const name = document.createElement("b"); name.textContent = `${t(lang, "diff.hard")} · ${tier.name[lang]}`;
+    const desc = document.createElement("span"); desc.textContent = tier.twist[lang];
+    b.append(name, desc);
+    if (i > 1) { const more = document.createElement("small"); more.textContent = t(lang, "tierKeeps", { n: SAP_TIERS[i - 2]!.name[lang] }); b.append(more); }
+    b.onclick = () => pickDifficulty("hard", i);
+    list.append(b);
+  }
+  const hint = document.createElement("p"); hint.className = "spoils";
+  hint.textContent = open < SAP_TIERS.length ? t(lang, "tierHint", { n: open ? SAP_TIERS[open - 1]!.name[lang] : t(lang, "diff.hard") }) : "";
+  panel.replaceChildren(title, list, hint);
 }
 
 function showMap() {

@@ -5,7 +5,8 @@
    yielding foe it can (in the fight and after the win) instead of finishing them, to compare the two.
    Add `--party <temper>` to have the party play boldly (see ai.ts TEMPERS). Add `--legacy` to carry each run's
    nemesis into the next (src/run/legacy.ts), as a player's runs do. Add `--kit <id>` to set out with that camp
-   kit (src/data/camp.ts) every run, opened or not, to see what it changes. */
+   kit (src/data/camp.ts) every run, opened or not, to see what it changes. Add `--tier <n>` with hard to play at
+   that Sap tier (src/data/region.ts SAP_TIERS). */
 import { PaceStats } from "./battle-stats";
 import { writeFileSync } from "node:fs";
 import { planTurn } from "../src/engine/ai";
@@ -30,6 +31,8 @@ const partyAt = args.indexOf("--party");
 const partyTemper = partyAt >= 0 ? (args.splice(partyAt, 2)[1] as Temper) : undefined;
 const legacyAt = args.indexOf("--legacy");
 const useLegacy = legacyAt >= 0 && !!args.splice(legacyAt, 1).length;
+const tierAt = args.indexOf("--tier");
+const tier = tierAt >= 0 ? Number(args.splice(tierAt, 2)[1]) : 0;
 const kitAt = args.indexOf("--kit");
 const kitId = kitAt >= 0 ? args.splice(kitAt, 2)[1] : undefined;
 const kit = kitId ? KITS.find((k) => k.id === kitId) : undefined;
@@ -48,7 +51,7 @@ const alignments = new Map<string, number>();
 const started = Date.now();
 const pace = new PaceStats();
 for (let i = 1; i <= runs; i++) {
-  let run = newRun(`sim-${i}`, difficulty, useLegacy ? carriedNemesis(legacy) : undefined, kit, useLegacy ? { returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy) } : {});
+  let run = newRun(`sim-${i}`, difficulty, useLegacy ? carriedNemesis(legacy) : undefined, kit, { ...(useLegacy ? { returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy) } : {}), tier });
   const hadNemesis = run.rivals.some((r) => r.nemesis);
   const back = run.rivals.find((r) => r.returned);
   if (back) returnRuns++;
@@ -102,7 +105,7 @@ for (let i = 1; i <= runs; i++) {
   { const k = alignmentOf(alignOf(run)); alignments.set(k, (alignments.get(k) ?? 0) + 1); }
   for (const m of run.party) { const k = `${m.id} ${endingOf(m)}`; endings.set(k, (endings.get(k) ?? 0) + 1); }
 }
-console.log(`${runs} ${difficulty}${mercy ? " mercy" : ""}${kit ? ` ${kit.id} kit` : ""} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+console.log(`${runs} ${difficulty}${mercy ? " mercy" : ""}${tier ? ` tier ${tier}` : ""}${kit ? ` ${kit.id} kit` : ""} runs in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 console.log(`runs won ${won} (${((100 * won) / runs).toFixed(0)}%), average nodes cleared ${(nodes / runs).toFixed(1)}`);
 console.log(`first region cleared ${cleared1} (${((100 * cleared1) / runs).toFixed(0)}%)`);
 console.log(`runs lost by layer (region 2 adds 10): ${[...deaths.entries()].sort((a, b) => a[0] - b[0]).map(([l, n]) => `${l}:${n}`).join(" ")}`);

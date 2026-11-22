@@ -15,7 +15,7 @@ import { ALIGN, ALIGNMENTS, type Align, type Meter } from "../data/alignment";
 import { TWINS } from "../data/twins";
 import { alignOf, alignmentOf, heroEnding, lockWarning, twinBar } from "../run/alignment";
 import { heroSpec } from "../run/hero";
-import { HERO } from "../data/region";
+import { HERO, SAP_TIERS } from "../data/region";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛", floodgate: "💧" };
 
@@ -277,7 +277,7 @@ export function renderRunMap(root: HTMLElement, run: RunState, lang: Lang, act: 
   renderPanel(root.querySelector<HTMLElement>("#runPanel")!, run, lang, act, gearOpen, closeGear);
   const lv = run.hero.level;
   root.querySelector("#runHead")!.innerHTML =
-    `<b>${html(regionOf(run).name[lang])}</b> · ${t(lang, `diff.${run.difficulty ?? "normal"}`)} · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
+    `<b>${html(regionOf(run).name[lang])}</b> · ${t(lang, `diff.${run.difficulty ?? "normal"}`)}${run.tier ? ` ${html(SAP_TIERS[run.tier - 1]!.name[lang])}` : ""} · ${t(lang, "nodesDone", { n: run.path.length })}<br>`
     + `${t(lang, "level", { n: lv })} · ${t(lang, "xpBar", { a: run.hero.xp, b: xpToNext(lv) })} · ${t(lang, "hp")} ${run.heroHp}/${heroMaxHp(run)} · 🪙 ${run.coins} · ◆ ${run.shards}`
     + `<br>${metersHtml(run, lang)}`;
   const waiting = nextNodes(run).flatMap((n) => run.rivals.filter((r) => r.id === n.rival && !r.settled)).map((r) => rivalName(r, lang));
