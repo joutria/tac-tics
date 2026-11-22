@@ -47,6 +47,10 @@ import { fxSources, type Burst } from "./render/fx";
 import { SCENERY_IMAGES } from "./render/scenery";
 import { drawBattle, Floater, type ReachBadge, type SightLine, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
 
+/** The party's looks drawn as humanoid job sprites (public/art/heroes/, built by tools/hero-art.py); every other look
+    is a creature sheet in public/art/creatures/. */
+const HERO_LOOKS = new Set(["lumo", "remolin", "guijo", "centella", "moheda"]);
+
 /** The run save: the run, with the battle being fought inside it. */
 const RUN_KEY = "tac-tics.run.v1";
 const LANG_KEY = "tac-tics.lang";
@@ -2050,7 +2054,7 @@ async function start() {
   const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", ...SCENERY_IMAGES];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
-  for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/creatures/${u.look}.png`;
+  for (const u of looks) srcs[`unit-${u.look}`] = `${base}art/${HERO_LOOKS.has(u.look) ? "heroes" : "creatures"}/${u.look}.png`;
   Object.assign(srcs, fxSources(base));
   initAudio(base, readAudioSettings(safeGet(AUDIO_KEY)));
   // Always the newest build: offline copy, a word when it changed, a check when back from the background.
