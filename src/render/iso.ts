@@ -9,6 +9,7 @@ import { roundOf, type BattleState, type Facing, type Unit } from "../engine/sta
 import { iconCanvas, splitIcons, type IconId } from "../ui/icons";
 import { drawPuddle } from "./puddle";
 import { drawBurst, drawFallingLeaf, drawFireTile, drawFx, drawSteamTile, drawWater, loopFrame, type Burst } from "./fx";
+import { sceneryFor } from "./scenery";
 
 /** Fire that never goes out (camp fires on travel scenes) is drawn as a camp fire: stones, logs and a live flame. */
 const CAMPFIRE_AT = 1e11;
@@ -194,23 +195,6 @@ function isoCampfire(ctx: CanvasRenderingContext2D, img: Images, c: { x: number;
   ctx.globalAlpha = 1;
   if (!drawFx(ctx, img, "flame", loopFrame("flame", time, seed), cx, cy + 4, 2)) drawFlame(ctx, cx, cy + 1, 28, time, seed);
   for (const a of angles) if (Math.sin(a) >= 0) stone(a);
-  ctx.restore();
-}
-
-/** A loose boulder: a round, shaded pixel rock that can be pushed and rolls. */
-function drawBoulder(ctx: CanvasRenderingContext2D, c: { x: number; y: number }) {
-  ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(c.x, c.y + 2, 15, 6, 0, 0, Math.PI * 2); ctx.fill();
-  const x = c.x, y = c.y - 11, r = 13;
-  ctx.fillStyle = "#1b1626"; ctx.beginPath(); ctx.arc(x, y, r + 1.5, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#6f6c84"; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#8d8aa0"; ctx.beginPath(); ctx.arc(x - 2, y - 2, r - 3, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#b4b1c6"; ctx.beginPath(); ctx.arc(x - 4, y - 5, 5, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#e4e1ee"; ctx.fillRect(Math.round(x - 7), Math.round(y - 8), 3, 2);
-  ctx.fillStyle = "#555268"; ctx.beginPath(); ctx.arc(x + 3, y + 5, 5, 0, Math.PI); ctx.fill();
-  ctx.strokeStyle = "#3d3a50"; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.moveTo(x + 2, y - 9); ctx.lineTo(x + 5, y - 3); ctx.lineTo(x + 3, y + 1); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(x - 8, y + 3); ctx.lineTo(x - 4, y + 6); ctx.stroke();
   ctx.restore();
 }
 
@@ -445,7 +429,7 @@ export interface DrawOptions {
   bare?: boolean;
 }
 
-const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", tallgrass: "#5f9a3a", dirt: "#c08a58", water: "#4fb8e0", rock: "#6d7078", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
+const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", tallgrass: "#5f9a3a", dirt: "#c08a58", water: "#4fb8e0", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
 
 const FACING_FRAME = { S: { col: 0, flip: false }, N: { col: 2, flip: false }, E: { col: 4, flip: false }, W: { col: 4, flip: true } } as const;
 const SHEET_ROW: Record<string, number> = { lumo: 1 };
@@ -511,7 +495,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         // Plain colours, a little lighter per level, with the level written on raised ground.
         diamond(ctx, c.x, c.y, FLAT_COLOUR[tile.terrain] ?? "#888", "rgba(0,0,0,0.35)");
         if (tile.h) diamond(ctx, c.x, c.y, `rgba(255,255,255,${0.12 * tile.h})`, "rgba(0,0,0,0)");
-        if (tile.terrain === "rock" || tile.terrain === "tree") {
+        if (tile.prop === "rock" || tile.terrain === "tree") {
           ctx.save(); ctx.translate(c.x, c.y); ctx.scale(0.55, 0.55);
           diamond(ctx, 0, 0, tile.terrain === "tree" ? "#24401c" : "#3c3e45", "rgba(255,255,255,0.4)", 2);
           ctx.restore();
@@ -567,7 +551,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       const onFire = (tile.fireUntil ?? 0) > s.clock && (tile.fireUntil ?? 0) < CAMPFIRE_AT;
       if ((tile.fireUntil ?? 0) >= CAMPFIRE_AT) drawCampfire(ctx, img, c, opt.time, p.x * 7 + p.y);
       else if (onFire && !tile.prop && tile.terrain !== "tree") groundFire(ctx, img, c, opt.time, p);
-      if (tile.prop) drawProp(ctx, img, tile.prop, c, tile.propHp ?? 0);
+      if (tile.prop && !(flat && tile.prop === "rock")) drawProp(ctx, img, tile, c, m.id, p);
       // A burning crate: the flames and smoke go over the crate.
       if (onFire && tile.prop) { burningObject(ctx, img, c, opt.time, p.x * 3 + p.y, -14); }
       if (tile.steamUntil !== undefined) {
@@ -584,7 +568,6 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         }
         ctx.globalAlpha = 1;
       }
-      if (!flat && tile.terrain === "rock") ctx.drawImage(img["obj-rock"]!, c.x - 18, c.y - 30, 36, 36);
       if (!flat && tile.deco === "bedroll") drawBedroll(ctx, c, p.x + p.y);
       if (!flat && tile.deco === "stump") drawStump(ctx, c, p.x * 5 + p.y);
       if (!flat && tile.deco === "tent") drawTent(ctx, c, p.x * 3 + p.y);
@@ -595,7 +578,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
           return places.some((v) => v.slot.x === q.x && v.slot.y === q.y);
         });
         ctx.globalAlpha = behind ? 0.45 : 1;
-        ctx.drawImage(img["obj-tree"]!, c.x - 32, c.y - 56, 64, 64);
+        drawScenery(ctx, img, sceneryFor("tree", m.id, tile, p), c);
         ctx.globalAlpha = 1;
         // A burning tree: flames all through the crown and smoke above it.
         if (onFire) { groundFire(ctx, img, c, opt.time, p); burningObject(ctx, img, c, opt.time, p.x * 3 + p.y, -30); }
@@ -946,11 +929,22 @@ function drawUnit(
   }
 }
 
-/** Barrels and crates: pixel sprites drawn at 2x like the trees and rocks (tools/prop-art.py). The crate is an
-    isometric cube whose edges follow the tile diamond, so it looks the same at every camera angle; a damaged crate
-    is cracked. Each sprite is placed so its base sits on the tile's centre. */
-function drawProp(ctx: CanvasRenderingContext2D, img: Images, prop: Prop, c: { x: number; y: number }, hp: number) {
-  if (prop === "boulder") { drawBoulder(ctx, c); return; }
+/** A rock or a tree: its pixel picture at 2x, with its foot on the tile's centre. */
+function drawScenery(ctx: CanvasRenderingContext2D, img: Images, look: { key: string; ax: number; ay: number }, c: { x: number; y: number }) {
+  const sprite = img[look.key] ?? img[look.key.startsWith("rock") ? "obj-rock" : "obj-tree"];
+  if (!sprite) return;
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(sprite, Math.round(c.x - look.ax * 2), Math.round(c.y - look.ay * 2), sprite.width * 2, sprite.height * 2);
+  ctx.restore();
+}
+
+/** Rocks, barrels and crates: pixel sprites drawn at 2x like the trees (tools/scenery-art.py, tools/prop-art.py). The
+    crate is an isometric cube whose edges follow the tile diamond, so it looks the same at every camera angle; a
+    damaged crate is cracked. Each sprite is placed so its base sits on the tile's centre. */
+function drawProp(ctx: CanvasRenderingContext2D, img: Images, tile: Tile, c: { x: number; y: number }, mapId: string, p: Pos) {
+  const prop = tile.prop!, hp = tile.propHp ?? 0;
+  if (prop === "rock") { drawScenery(ctx, img, sceneryFor("rock", mapId, tile, p), c); return; }
   const sprite = prop === "barrel" ? img["obj-barrel"] : img[hp < PROP_HP.crate ? "obj-crate-hurt" : "obj-crate"];
   if (!sprite) return;
   ctx.save();

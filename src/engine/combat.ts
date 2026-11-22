@@ -459,8 +459,8 @@ export function fallDamage(s: BattleState, pusher: Unit, target: Unit, levels: n
 }
 
 /** What a pushed unit slams into, and how hard each kind hits (times PUSH_HIT per tile it could not travel). */
-export type Blocker = "edge" | "rock" | "tree" | "water" | "step" | "crate" | "barrel" | "boulder" | "unit";
-export const SLAM: Record<Exclude<Blocker, "step">, number> = { edge: 1, rock: 1.5, tree: 1.5, water: 0.5, crate: 1, barrel: 1, boulder: 1.5, unit: 1 };
+export type Blocker = "edge" | "rock" | "tree" | "water" | "step" | "crate" | "barrel" | "unit";
+export const SLAM: Record<Exclude<Blocker, "step">, number> = { edge: 1, rock: 1.5, tree: 1.5, water: 0.5, crate: 1, barrel: 1, unit: 1 };
 /** A step up hits harder the taller it is: +25% per level of the wall. */
 export const STEP_SLAM_PER_LEVEL = 0.25;
 /** A unit something is slammed into takes this share of the slam. */

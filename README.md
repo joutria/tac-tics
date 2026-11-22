@@ -16,11 +16,12 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 - **Reach and height.** Ranged abilities gain 1 range per level above the target and lose 1 per level below (never under 1). Rocks, trees and units block line of sight; high ground sees over them.
 - **Cooldowns and limits** per ability; the map shows the range in red and valid targets in bright red, and hovering a target previews the damage.
 - **Downed, not dead.** At 0 HP a unit is downed for 2 of its turns; an ally can **Help up** (25% HP). Hitting a downed unit kills it. A side with nobody standing loses.
-- **Enemy AI** scores every tile and ability with one turn of lookahead: it counts the damage you could deal next turn (ignoring your abilities on cooldown), hides out of your line of sight, takes high ground, shoves crates, barrels and boulders into the party when they line up, focuses wounded or downed units, and adapts if you keep fighting from range or up close.
+- **Enemy AI** scores every tile and ability with one turn of lookahead: it counts the damage you could deal next turn (ignoring your abilities on cooldown), hides out of your line of sight, takes high ground, shoves crates, barrels and rocks into the party when they line up, focuses wounded or downed units, and adapts if you keep fighting from range or up close.
 - **View:** rotate in 90 degree steps, zoom, drag to pan, and undo moves until you use an ability.
-- **Objects.** Crates, barrels and boulders sit on some maps (`C`, `B` and `O` after a tile in the map rows). Shove
-  or Hurl can push them: a crate slides, a boulder rolls up to 5 tiles and flattens crates in its way, and either one
-  hurts the unit it runs into (more for boulders, longer slides and drops; `IMPACT` in `src/engine/terrain.ts`). A
+- **Objects.** Every rock on a map (`r`), and the crates and barrels some maps have (`C` and `B` after a tile in the map
+  rows), can be pushed with Shove or Hurl: a crate slides, a rock rolls up to 5 tiles and flattens crates in its way
+  (leaving bare dirt behind), and either one hurts the unit it runs into (more for rocks, longer slides and drops;
+  `IMPACT` in `src/engine/terrain.ts`). A
   barrel explodes when it hits someone or falls a level. Water swallows whatever slides in. Hovering the target shows
   where the object stops and who it hits.
 - **Help.** Hovering or focusing any action, spell or button opens a help window with its AP, range, area, damage,
@@ -149,7 +150,7 @@ format so AI runs and real runs can be compared side by side.
 
 ## Maps
 
-Maps are text rows in `src/data/maps/`, two characters per tile: terrain (`g` grass, `d` dirt, `w` water, `r` rock, `t` tree) and height `0` to `3`. A unit can climb 1 level per step and drop 2. Rocks and trees block movement and sight; water blocks movement only. Higher ground sees over obstacles.
+Maps are text rows in `src/data/maps/`, two characters per tile: terrain (`g` grass, `d` dirt, `w` water, `r` a pushable rock on dirt, `t` tree) and height `0` to `3`. A unit can climb 1 level per step and drop 2. Rocks and trees block movement and sight; water blocks movement only. Higher ground sees over obstacles.
 
 ## Art
 

@@ -1,7 +1,7 @@
 /* The battle map as the engine sees it: a square grid where every tile has a terrain and a height.
    The isometric look is only how the renderer draws it; nothing in the engine knows about diamonds. */
 
-export type Terrain = "grass" | "tallgrass" | "dirt" | "water" | "rock" | "tree" | "ice" | "bridge";
+export type Terrain = "grass" | "tallgrass" | "dirt" | "water" | "tree" | "ice" | "bridge";
 
 export interface TerrainInfo {
   /** Units can stand here. */
@@ -18,7 +18,6 @@ export const TERRAIN: Record<Terrain, TerrainInfo> = {
   tallgrass: { walkable: true, blocksSight: false, sightHeight: 0 },
   dirt: { walkable: true, blocksSight: false, sightHeight: 0 },
   water: { walkable: false, blocksSight: false, sightHeight: 0 },
-  rock: { walkable: false, blocksSight: true, sightHeight: 1 },
   tree: { walkable: false, blocksSight: true, sightHeight: 2 },
   /** Frozen water: walkable until it thaws (src/engine/terrain.ts). */
   ice: { walkable: true, blocksSight: false, sightHeight: 0 },
@@ -27,9 +26,10 @@ export const TERRAIN: Record<Terrain, TerrainInfo> = {
 };
 
 /** Things standing on a tile that can be hit, pushed or set off (src/engine/terrain.ts). */
-export type Prop = "barrel" | "crate" | "boulder";
-/** A boulder never breaks: it only rolls when pushed. */
-export const PROP_HP: Record<Prop, number> = { barrel: 1, crate: 12, boulder: 99 };
+export type Prop = "barrel" | "crate" | "rock";
+/** A rock never breaks: it only rolls when pushed. Every rock on a map is one (Jose: push the scenery's rocks, not
+    separate boulders), standing on bare dirt that shows once it rolls away. */
+export const PROP_HP: Record<Prop, number> = { barrel: 1, crate: 12, rock: 99 };
 /** A layer on the ground of a walkable tile (src/engine/terrain.ts): oil slows and blows up in fire; Sap poisons
     the party, feeds foes, and spreads from its sources. */
 export type Surface = "oil" | "sap";
@@ -41,6 +41,9 @@ export interface Tile {
   /** An object on the tile; it blocks movement and some sight. */
   prop?: Prop;
   propHp?: number;
+  /** Which picture of its kind a rock (or a tree) shows. Unset until a rock first moves: until then the tile's
+      place picks it (sceneryLook), and a rolling rock takes it along so it keeps its looks. */
+  look?: number;
   /** Timeline time when fire on this tile goes out, or when ice made by an ability thaws. */
   fireUntil?: number;
   thawAt?: number;
@@ -92,24 +95,31 @@ export function tileAt(m: GridMap, p: Pos): Tile | undefined {
 
 export const NEIGHBOURS: readonly Pos[] = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
 
+/** The picture a rock or a tree shows, out of `count`: its own `look` once a rock has moved, else one picked by
+    where it stands, so the same map always looks the same. */
+export function sceneryLook(t: Tile, p: Pos, count: number): number {
+  return (t.look ?? placeLook(p)) % count;
+}
+export const placeLook = (p: Pos) => (((p.x + 1) * 73856093) ^ ((p.y + 1) * 19349663)) >>> 0;
+
 export const manhattan = (a: Pos, b: Pos) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 
 /**
  * Builds a map from text rows. Each tile is two characters: terrain letter + height digit.
- * g grass, h tall grass, d dirt, w water, r rock, t tree, i ice, b bridge. Optional extra characters: B barrel, C crate or O boulder
- * (an object), o oil, s Sap, S a Sap source (a surface). Example row: "g0 g0 d1 r1 g0B d0o g0S".
+ * g grass, h tall grass, d dirt, w water, r rock (a pushable rock on dirt), t tree, i ice, b bridge. Optional extra
+ * characters: B barrel or C crate (an object), o oil, s Sap, S a Sap source (a surface). Example row: "g0 g0 d1 r1 g0B d0o g0S".
  */
 export function parseMap(id: string, rows: string[]): GridMap {
-  const letters: Record<string, Terrain> = { g: "grass", h: "tallgrass", d: "dirt", w: "water", r: "rock", t: "tree", i: "ice", b: "bridge" };
-  const props: Record<string, Prop> = { B: "barrel", C: "crate", O: "boulder" };
+  const letters: Record<string, Terrain> = { g: "grass", h: "tallgrass", d: "dirt", w: "water", r: "dirt", t: "tree", i: "ice", b: "bridge" };
+  const props: Record<string, Prop> = { B: "barrel", C: "crate" };
   const parsed = rows.map((row, y) =>
     row.trim().split(/\s+/).map((cell, x) => {
       const terrain = letters[cell[0] ?? ""];
       const h = Number(cell.slice(1, 2));
       const extra = cell.slice(2);
-      const prop = [...extra].map((c) => props[c]).find(Boolean);
+      const prop = cell[0] === "r" ? "rock" : [...extra].map((c) => props[c]).find(Boolean);
       const surface: Surface | undefined = extra.includes("o") ? "oil" : /[sS]/.test(extra) ? "sap" : undefined;
-      if (!terrain || !Number.isInteger(h) || h < 0 || h > 3 || extra.length > 2 || /[^BCOosS]/.test(extra) || (surface && !TERRAIN[terrain].walkable))
+      if (!terrain || !Number.isInteger(h) || h < 0 || h > 3 || extra.length > 2 || /[^BCosS]/.test(extra) || (surface && !TERRAIN[terrain].walkable) || (cell[0] === "r" && extra))
         throw new Error(`map ${id}: bad tile "${cell}" at ${x},${y}`);
       const tile: Tile = { terrain, h };
       if (prop) { tile.prop = prop; tile.propHp = PROP_HP[prop]; }

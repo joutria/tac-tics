@@ -16,7 +16,7 @@ Tac-tics shares its world with [Evolvlings](https://github.com/joutria/Evolvling
 | [4 Chiptunes (Adventure)](https://opengameart.org/content/4-chiptunes-adventure) | The music in `public/audio/music/` (map, battle, boss, camp) | Juhani Junkala | CC0 1.0 |
 | [Pixelify Sans](https://fonts.google.com/specimen/Pixelify+Sans) (via `@fontsource/pixelify-sans`) | The interface font | Stefie Justprince | SIL Open Font License 1.1 |
 
-The interface icons in `src/ui/icons.ts`, the crate and barrel sprites (`public/art/iso/obj-crate*.png`, `obj-barrel.png`, drawn by `tools/prop-art.py`) and the pixel puddles of oil and sap (`src/render/puddle.ts`) are original to tac-tics.
+The interface icons in `src/ui/icons.ts`, the crate and barrel sprites (`public/art/iso/obj-crate*.png`, `obj-barrel.png`, drawn by `tools/prop-art.py`), the rocks and trees of each region (`public/art/iso/rock-*.png`, `tree-*.png`, drawn by `tools/scenery-art.py`) and the pixel puddles of oil and sap (`src/render/puddle.ts`) are original to tac-tics.
 
 The `public/art/fx/` sheets are rebuilt from the downloaded packs by `tools/ambience-art.py`, and `public/audio/` by `tools/audio-assets.py` (each script's header lists its files).
 

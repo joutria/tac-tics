@@ -5,7 +5,7 @@ import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
 import { planTurn } from "../src/engine/ai";
 import { castProblem, GUARD_STRIKE, HEIGHT_CAP, fallDamage, damageFactor, damagePreview, directionBonus, maxRange, previewEffects } from "../src/engine/combat";
-import { parseMap } from "../src/engine/grid";
+import { parseMap, placeLook, sceneryLook } from "../src/engine/grid";
 import { canStep, reachable } from "../src/engine/movement";
 import { rngNext, seedFrom } from "../src/engine/rng";
 import { fromJSON, replay, toJSON } from "../src/engine/save";
@@ -217,8 +217,8 @@ describe("enemy AI", () => {
     s = play(s, cmds);
     expect(unitById(s, "h").life).toBe("dead");
   });
-  it("rolls a boulder into the party when it lines up", () => {
-    const s = createBattle({ seed: 3, map: parseMap("roll", ["g0 g0 g0 g0 g0 g0", "g0 g0O g0 g0 g0 g0", "g0 g0 g0 g0 g0 g0"]), units: [
+  it("rolls a rock into the party when it lines up", () => {
+    const s = createBattle({ seed: 3, map: parseMap("roll", ["g0 g0 g0 g0 g0 g0", "g0 r0 g0 g0 g0 g0", "g0 g0 g0 g0 g0 g0"]), units: [
       unit({ id: "f", team: "foes", pos: { x: 0, y: 1 }, speed: 60, abilities: [], quick: "shove" }),
       unit({ id: "h", team: "heroes", pos: { x: 4, y: 1 }, speed: 30 }),
     ] });
@@ -789,6 +789,25 @@ describe("quick actions", () => {
     const after = play(up, [{ t: "cast", unit: "h", ability: "jump", target: { x: 1, y: 0 } }]);
     expect(unitById(after, "h").pos).toEqual({ x: 1, y: 0 });
   });
+  it("every rock on a map is a pushable rock on dirt, and keeps its picture when it rolls", () => {
+    const m = parseMap("r", ["g0 r1 g0"]);
+    expect(m.tiles[1]).toMatchObject({ terrain: "dirt", h: 1, prop: "rock" });
+    expect(() => parseMap("r", ["g0 r0B"])).toThrow();
+    expect(() => parseMap("o", ["g0O"])).toThrow(); // loose boulders are gone
+    const s = battle(["g0 r0 g0 g0 g0"], [hero()]);
+    const look = placeLook({ x: 1, y: 0 });
+    const a = play(s, [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(a.map.tiles[1]).toMatchObject({ terrain: "dirt" });
+    expect(a.map.tiles[1]!.prop).toBeUndefined();
+    expect(a.map.tiles[4]).toMatchObject({ prop: "rock", look });
+    expect(sceneryLook(a.map.tiles[4]!, { x: 4, y: 0 }, 7)).toBe(look % 7);
+  });
+  it("old saves load with their rocks and boulders as pushable rocks", () => {
+    const save = toJSON({ version: 2, setup: { seed: 1, map: { id: "old", w: 2, h: 1, tiles: [{ terrain: "rock", h: 0 }, { terrain: "grass", h: 0, prop: "boulder", propHp: 99 }] } as never, units: [] }, commands: [] });
+    const tiles = fromJSON(save).setup.map.tiles;
+    expect(tiles[0]).toMatchObject({ terrain: "dirt", prop: "rock", propHp: 99 });
+    expect(tiles[1]).toMatchObject({ terrain: "grass", prop: "rock" });
+  });
   it("Throw sends a crate into whoever is in the way, and a barrel goes off where it lands", () => {
     const s = battle(["g0 g0C g0 g0 g0"], [hero(), unit({ id: "f", team: "foes", pos: { x: 3, y: 0 } })]);
     const a = play(s, [{ t: "cast", unit: "h", ability: "throw", target: { x: 1, y: 0 } }]);
@@ -798,20 +817,20 @@ describe("quick actions", () => {
       [{ t: "cast", unit: "h", ability: "throw", target: { x: 1, y: 0 } }]);
     expect(unitById(b, "f").hp).toBe(40 - 10); // landed next to it (4 tiles at most... 3 here) and blew up
   });
-  it("Shove pushes crates, barrels and boulders into foes, and they hurt", () => {
+  it("Shove pushes crates, barrels and rocks into foes, and they hurt", () => {
     const foeAt = (x: number) => unit({ id: "f", team: "foes", pos: { x, y: 0 } });
     // A crate shoved 1 tile into a foe right behind it: the base impact; the crate takes it too.
     const c = play(battle(["g0 g0C g0 g0"], [hero(), foeAt(2)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
     expect(unitById(c, "f").hp).toBe(40 - IMPACT.crate.base);
     expect(c.map.tiles[1]!.prop).toBe("crate");
     expect(c.map.tiles[1]!.propHp).toBe(12 - IMPACT.crate.base);
-    // A boulder keeps rolling and hits harder for every tile it rolled.
-    const b = play(battle(["g0 g0O g0 g0 g0 g0"], [hero(), foeAt(5)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
-    expect(b.map.tiles[4]!.prop).toBe("boulder");
-    expect(unitById(b, "f").hp).toBe(40 - (IMPACT.boulder.base + 3 * IMPACT.boulder.perTile));
+    // A rock keeps rolling and hits harder for every tile it rolled.
+    const b = play(battle(["g0 r0 g0 g0 g0 g0"], [hero(), foeAt(5)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(b.map.tiles[4]!.prop).toBe("rock");
+    expect(unitById(b, "f").hp).toBe(40 - (IMPACT.rock.base + 3 * IMPACT.rock.perTile));
     // Rolling down a ledge adds the drop.
-    const d = play(battle(["g2 g2O g0 g0"], [hero(), foeAt(3)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
-    expect(unitById(d, "f").hp).toBe(40 - (IMPACT.boulder.base + IMPACT.boulder.perTile + 2 * IMPACT.boulder.perLevel));
+    const d = play(battle(["g2 r2 g0 g0"], [hero(), foeAt(3)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
+    expect(unitById(d, "f").hp).toBe(40 - (IMPACT.rock.base + IMPACT.rock.perTile + 2 * IMPACT.rock.perLevel));
     // A barrel rolled into a foe goes off next to it.
     const r = play(battle(["g0 g0B g0 g0"], [hero(), foeAt(2)]), [{ t: "cast", unit: "h", ability: "shove", target: { x: 1, y: 0 } }]);
     expect(r.map.tiles[1]!.prop).toBeUndefined();
@@ -823,9 +842,9 @@ describe("quick actions", () => {
     expect(sunk.map.tiles.some((t) => t.prop)).toBe(false);
   });
   it("the preview shows who a pushed object hits, and Hurl moves objects too", () => {
-    const s = battle(["g0 g0O g0 g0"], [hero({ quick: "hurl" }), unit({ id: "f", team: "foes", pos: { x: 3, y: 0 } })]);
+    const s = battle(["g0 r0 g0 g0"], [hero({ quick: "hurl" }), unit({ id: "f", team: "foes", pos: { x: 3, y: 0 } })]);
     const pv = previewEffects(s, unitById(s, "h"), ABILITIES.shove!, { x: 1, y: 0 });
-    expect(pv.splashes).toEqual([{ unit: "f", damage: IMPACT.boulder.base + IMPACT.boulder.perTile }]);
+    expect(pv.splashes).toEqual([{ unit: "f", damage: IMPACT.rock.base + IMPACT.rock.perTile }]);
     expect(pv.moves).toEqual([{ from: { x: 1, y: 0 }, to: { x: 2, y: 0 }, bump: 0, fall: 0, fell: 0 }]);
     expect(castProblem(s, unitById(s, "h"), "hurl", { x: 1, y: 0 })).toBeNull();
     expect(castProblem(s, unitById(s, "h"), "throw", { x: 1, y: 0 })).toBe("needs a crate or barrel");

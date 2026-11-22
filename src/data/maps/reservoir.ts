@@ -5,7 +5,7 @@ import { parseMap } from "../../engine/grid";
 /** The frozen shore: a channel of water and ice crossed by a long bridge, the dam's concrete to the north-east. */
 export const SHORE = parseMap("shore", [
   "g0 g0 g1 g1 d1 d1 d1 r1 d1 d1",
-  "g0 t0 g0 g1 d1O d1 d1 d1 d1C d1o",
+  "g0 t0 g0 g1 d1 d1 d1 d1 d1C d1o",
   "g0 g0 g0 g0 g0 g0 g0 d1 d1o d1B",
   "d0 g0 w0 w0 i0 w0 w0 g0 d0 d0",
   "d0 g0 w0 b0 b0 b0 w0 g0 g0 d0",
@@ -19,7 +19,7 @@ export const SHORE = parseMap("shore", [
 /** Below the cracked dam: a spillway pond with two bridges up to the dam's ledge. */
 export const SPILLWAY = parseMap("spillway", [
   "d1 d1 d1 d1 r1 d1 d1 d1 d1 d1",
-  "d1 d1B d1o d1O d1 d1 d1C d1 d1 d1",
+  "d1 d1B d1o d1 d1 d1 d1C d1 d1 d1",
   "d0o d0 d0 d0 d0 d0 d0 d0 d0 d0",
   "g0 w0 w0 d0 w0 w0 d0 w0 w0 g0",
   "g0 i0 w0 b0 w0 w0 b0 w0 i0 g0",

@@ -243,7 +243,7 @@ export function departScene(seed: string, region: string, origin: Origin, open: 
       start = { x: place.stand.x + PIECE_X, y: place.stand.y };
     }
     const rows = [...beyond, ...fork, ...walk, ...tail];
-    const m = toMap(`depart-${seed}`, rows);
+    const m = toMap(`depart-${region}-${seed}`, rows);
     const off = rows.length - tail.length;
     const starts = startAt?.map((p) => ({ x: p.x, y: p.y + off }));
     const paths = partyPaths(m, { x: start.x, y: start.y + off }, { x: FORK_WAIT.x, y: FORK_WAIT.y + beyond.length }, party, undefined, starts);
@@ -278,7 +278,7 @@ export function approachScene(seed: string, region: string, col: number, dest: D
       end = { x: place.stand.x + PIECE_X, y: place.stand.y };
     }
     const rows = [...head, ...walk, ...branch];
-    const m = toMap(`approach-${seed}`, rows);
+    const m = toMap(`approach-${region}-${seed}`, rows);
     const start = { x: sx, y: rows.length - 1 };
     // Walkers start in single file on the branch trail, the hero in front.
     const starts = [start, { x: sx, y: rows.length - 1 }, { x: sx, y: rows.length - 1 }, { x: sx, y: rows.length - 1 }];
