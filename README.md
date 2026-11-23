@@ -125,6 +125,9 @@ says "Game updated" when the build changed, and checks again when it comes back 
 - Build it yourself: `npx cap sync android`, then `cd android && ./gradlew assembleDebug` (needs JDK 21 and the
   Android SDK). Icons and splash screens come from the hero's sprite: `python3 -I tools/app-icon.py`.
 - First start needs a connection (offline it shows `app-shell/offline.html`).
+- Every APK is signed with the same debug key (`android/app/tac-tics-debug.keystore`, not a secret) and numbered by
+  the CI run, so a newer APK installs over the old one and keeps the saves. An APK built before this key (November
+  2026) has to be uninstalled once, which clears its saves.
 
 ## How the code is laid out
 

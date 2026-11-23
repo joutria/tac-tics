@@ -415,6 +415,15 @@
   #splash.gone { opacity: 0; pointer-events: none; }
   @media (prefers-reduced-motion: reduce) { #splash .pips i { animation: none; background: #ffd96b; } }
   /* Camp stations: three big tiles, each a place at the fire, with a badge for what is new. */
+  /* The chronicle: rows to read, not to press. */
+  #runPanel .chronicle h4 { margin: 8px 12px 2px; font-size: 13px; font-weight: 400; color: var(--accent); letter-spacing: 0.5px; }
+  #runPanel .cards.chronicle .card.row { justify-content: flex-start; text-align: left; width: 100%; flex-direction: row; align-items: center; gap: 10px; padding: 6px 12px; cursor: default; }
+  #runPanel .chronicle .card.row::before { content: none; }
+  #runPanel .chronicle .card.row img { width: 32px; height: 32px; image-rendering: pixelated; flex: none; }
+  #runPanel .cards.chronicle .card.row .tx { align-items: flex-start; display: flex; flex-direction: column; gap: 1px; }
+  #runPanel .chronicle .fate-endedRun b, #runPanel .chronicle .fate-atLarge b { color: var(--foe); }
+  #runPanel .chronicle .fate-spared b { color: #7ed957; }
+  #runPanel .chronicle .won b { color: var(--accent); }
   .stations { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; width: 100%; }
   .station { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; text-align: center; }
   .station b { font-size: 16px; } .station small { font-size: 12px; color: var(--quiet); }

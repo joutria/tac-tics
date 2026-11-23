@@ -5,7 +5,7 @@ import type { Line } from "./rivals";
 
 /** Something done in some run, ever. "good:<companion>" is that companion's good ending. */
 export type Milestone = "firstRun" | "region1" | "runWon" | "nemesisSettled" | "spared" | "anyGood"
-  | "good:remanso" | "good:guijo" | "good:centella" | "good:moheda";
+  | "good:remanso" | "good:guijo" | "good:centella" | "good:moheda" | "hardWon" | "sapTier" | "mended";
 
 /** How a milestone reads when it is still locked. */
 export const MILESTONE_HINT: Record<Milestone, Line> = {
@@ -19,6 +19,9 @@ export const MILESTONE_HINT: Record<Milestone, Line> = {
   "good:guijo": { es: "El final bueno de Guijo.", en: "Guijo's good ending." },
   "good:centella": { es: "El final bueno de Centella.", en: "Centella's good ending." },
   "good:moheda": { es: "El final bueno de Moheda.", en: "Moheda's good ending." },
+  hardWon: { es: "Gana un viaje en Difícil.", en: "Win a journey on Hard." },
+  sapTier: { es: "Gana un viaje en un nivel de Savia.", en: "Win a journey on a Sap tier." },
+  mended: { es: "Perdona a un compañero que volvió como rival.", en: "Spare a companion who came back as a rival." },
 };
 
 export interface Kit {
@@ -44,6 +47,10 @@ export const KITS: Kit[] = [
     desc: { es: "El chaleco de tejas que alguien te regaló al despedirse.", en: "The tile vest someone gave you when you parted." } },
   { id: "veteran", needs: "runWon", items: ["featherCharm"], name: { es: "Veterano", en: "Veteran" },
     desc: { es: "La pluma ligera de tu viaje victorioso.", en: "The light feather from your winning journey." } },
+  { id: "mender", needs: "mended", items: ["patchedCoat"], name: { es: "Remendón", en: "Mender" },
+    desc: { es: "El abrigo que cosiste con quien volvió a tu lado.", en: "The coat you stitched with the one who came back to your side." } },
+  { id: "survivor", needs: "hardWon", coins: 10, shards: 1, name: { es: "Superviviente", en: "Survivor" },
+    desc: { es: "Lo que quedó en los bolsillos tras el camino difícil.", en: "What was left in your pockets after the hard road." } },
 ];
 
 export interface LorePage { id: string; needs: Milestone; title: Line; text: Line }
@@ -67,4 +74,10 @@ export const LORE: LorePage[] = [
     text: { es: "En el juncal dicen que, cuando truena, es Centella llevando una carta. Casi siempre llega antes que la lluvia.", en: "In the marsh they say that when it thunders, it's Centella carrying a letter. It nearly always arrives before the rain." } },
   { id: "garden", needs: "good:moheda", title: { es: "El huerto que no brilla", en: "The garden that doesn't glow" },
     text: { es: "Moheda olvidó la fórmula a propósito. A veces, de noche, la escribe en el aire con el dedo, y luego la borra.", en: "Moheda forgot the formula on purpose. Sometimes, at night, she writes it in the air with a finger, and then wipes it away." } },
+  { id: "reservoir", needs: "hardWon", title: { es: "El embalse", en: "The reservoir" },
+    text: { es: "Arriba, junto a la presa, los supervivientes cuentan a los que llegan. Nunca preguntan de dónde vienes, solo si traes a alguien contigo.", en: "Up by the dam, the survivors count whoever arrives. They never ask where you come from, only whether you bring someone with you." } },
+  { id: "deep", needs: "sapTier", title: { es: "La Savia profunda", en: "The deep Sap" },
+    text: { es: "Bajo el pueblo la Savia es más vieja y más espesa. No recuerda golpes: recuerda nombres. Y a veces los dice.", en: "Under the town the Sap is older and thicker. It doesn't remember blows: it remembers names. And sometimes it says them." } },
+  { id: "home", needs: "mended", title: { es: "Volver", en: "Coming back" },
+    text: { es: "La marca no se borra del todo. Pero quien vuelve sabe ahora lo que pesa, y camina un poco más cerca del fuego.", en: "The mark never quite fades. But whoever comes back knows its weight now, and walks a little closer to the fire." } },
 ];

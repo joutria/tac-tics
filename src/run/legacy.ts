@@ -10,7 +10,7 @@ import type { Line } from "../data/rivals";
 import { NEMESIS_LINES, RETURN_LINES } from "../data/rivals";
 import { rivalFromCompanion, rivalName, type Rival } from "./rivals";
 import type { RunState } from "./run";
-import { DEPTH_HP, DEPTH_STAT, HERO, SAP_TIERS } from "../data/region";
+import { DEPTH_HP, DEPTH_STAT, HERO, REGIONS, SAP_TIERS } from "../data/region";
 import { PERKS } from "../data/gear";
 import { KITS, type Kit, type Milestone } from "../data/camp";
 import { endingOf, memberSpec, newMember } from "./party";
@@ -39,6 +39,55 @@ export interface Legacy {
   keepsake?: string;
   /** Sap tiers open on top of Hard (data/region.ts SAP_TIERS): winning Hard at the highest open tier opens the next. */
   tiers?: number;
+  /** The chronicle shown at the camp: every rival met, every journey's end, and the bosses beaten (noteRun). */
+  journal?: Journal;
+}
+
+/** A rival as the chronicle remembers it, across runs (one entry per name and epithet). */
+export interface JournalRival {
+  name: string; epithet: number; look: string;
+  cause: Rival["cause"]["kind"];
+  /** Highest level seen, battles fought against it in all runs, runs it showed up in, and the last of them. */
+  level: number; met: number; runs: number; last: number;
+  /** finished / spared: settled; endedRun: it ended a journey and is still out there; atLarge: still out there. */
+  fate: "finished" | "spared" | "endedRun" | "atLarge";
+  nemesis?: boolean;
+}
+/** One journey, as the chronicle lists it. */
+export interface JournalRun {
+  n: number; difficulty: RunState["difficulty"]; tier: number;
+  /** Regions crossed (bosses beaten) and whether the journey was won. */
+  regions: number; won: boolean;
+  endedBy?: { name: string; epithet: number };
+  party: string[];
+}
+export interface Journal { rivals: JournalRival[]; runs: JournalRun[]; bosses: Record<string, number> }
+/** How many journeys the chronicle keeps (the oldest drop off). */
+export const JOURNAL_RUNS = 12;
+
+/** Writes a finished run into the chronicle. `n` is the run's number (the legacy's run count after it). */
+export function noteRun(journal: Journal | undefined, run: RunState, n: number): Journal {
+  const j: Journal = journal ? structuredClone(journal) : { rivals: [], runs: [], bosses: {} };
+  for (const r of run.rivals) {
+    let e = j.rivals.find((x) => x.name === r.base.name && x.epithet === r.epithet);
+    if (!e) {
+      e = { name: r.base.name, epithet: r.epithet, look: r.base.look, cause: r.cause.kind, level: r.level, met: 0, runs: 0, last: n, fate: "atLarge" };
+      j.rivals.push(e);
+    }
+    e.level = Math.max(e.level, r.level);
+    e.met += r.meetings;
+    if (e.last !== n || e.runs === 0) e.runs += 1;
+    e.last = n;
+    if (r.nemesis) e.nemesis = true;
+    e.fate = r.settled ?? (run.endedBy === r.id ? "endedRun" : e.fate === "endedRun" ? "endedRun" : "atLarge");
+  }
+  const regions = run.over === "won" ? run.region + 1 : run.region;
+  for (let i = 0; i < regions; i++) { const id = REGIONS[i]?.id; if (id) j.bosses[id] = (j.bosses[id] ?? 0) + 1; }
+  const ender = run.endedBy ? run.rivals.find((r) => r.id === run.endedBy) : undefined;
+  j.runs.push({ n, difficulty: run.difficulty, tier: run.tier ?? 0, regions, won: run.over === "won",
+    ...(ender ? { endedBy: { name: ender.base.name, epithet: ender.epithet } } : {}), party: run.party.map((m) => m.id) });
+  j.runs = j.runs.slice(-JOURNAL_RUNS);
+  return j;
 }
 
 /** A companion back as a rival: the first map layer they can wait on, the companion level their spec is built at,
@@ -101,8 +150,12 @@ export function closeRun(legacy: Legacy, run: RunState): Legacy {
     if (e === "good") bonds[m.id] = { state: "good", run: next.runs };
     else if (e === "bad" && !rival?.settled) bonds[m.id] = { state: "bad", run: next.runs };
   }
+  next.journal = noteRun(next.journal, run, next.runs);
   // Milestones: what this run did that opens something at the camp.
   const reached: Milestone[] = ["firstRun"];
+  if (run.over === "won" && run.difficulty === "hard") reached.push("hardWon");
+  if (run.over === "won" && (run.tier ?? 0) > 0) reached.push("sapTier");
+  if (run.rivals.some((r) => r.returned && r.settled === "spared")) reached.push("mended");
   if ((run.region ?? 0) > 0 || run.over === "won") reached.push("region1");
   if (run.over === "won") reached.push("runWon");
   if (carried?.settled || run.rivals.some((r) => r.nemesis && r.settled)) reached.push("nemesisSettled");
