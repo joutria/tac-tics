@@ -21,6 +21,7 @@ import { dangerZone } from "./engine/threat";
 import { actionCost, isBasic, manaCost, setRules, usesMana } from "./engine/rules";
 import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape";
 import { STATUS } from "./engine/status";
+import { CRIT_CHANCE } from "./engine/combat";
 import { charged } from "./engine/terrain";
 import { rivalName, rivalTaunt, rivalTitle } from "./run/rivals";
 import { carriedNemesis, carriedReturn, closeRun, hasMilestone, keepsakeOf, keepsakesOpen, kitOf, newLegacy, type Legacy } from "./run/legacy";
@@ -1141,9 +1142,12 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   const target = at && unitAt(state, at);
   const ground = at ? tileInfo(at) : [];
   const reach = at ? reachLines(at) : [];
+  if (!at || !target) hideTargetCard();
   if (!at || (!target && !ground.length && !reach.length)) { tip.style.display = "none"; return; }
   if (!target) { showTip(tip, [...reach, ...objectLines(at), ...ground].join("<br>"), at, ev); return; }
   const hover = at;
+  // Set when the target card shows: it carries the target's name and HP, so the tip leaves them out.
+  let shown = false, cardAt = 0;
   const lines = [`<b>${target.name}</b> · ${t(lang, "hp")} ${target.hp}/${target.maxHp}`, ...reach];
   const rival = target.rival ? journey.rivals.find((r) => r.id === target.id && !r.settled) : undefined;
   if (rival) {
@@ -1182,31 +1186,17 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       }
     };
     if (ab.damage && target.team !== u.team) {
-      const base = damagePreview(state, u, target, ab), bump = pushDmg;
-      const r = { min: base.min + bump, max: base.max + bump };
-      const m = elementMultiplier(ab.element, target.element);
-      lines.push(`${abilityName(lang, selected)}: <b>${r.min}–${r.max}</b>${m > 1 ? ` · ${t(lang, "strong")}` : m < 1 ? ` · ${t(lang, "weak")}` : ""}`);
-      lines.push(dmgBreakdown(u, target, ab));
-      // Forecast: what is left of the target, and whether this can put it down.
-      // Holding back, nobody standing drops under 1 HP.
-      const floor = holdBack && target.life === "up" ? 1 : 0;
-      const lo = Math.max(floor, target.hp - r.max), hi = Math.max(floor, target.hp - r.min);
-      lines.push(t(lang, "hpAfter", { a: lo === hi ? `${lo}` : `${lo}–${hi}` }));
-      if (holdBack && Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<b>${t(lang, "holdOn")}</b>`);
-      else if (r.min >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "downsIt")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
-      else if (r.max >= target.hp) lines.push(`<b class="down">✖ ${t(lang, "canDown")}</b> · <span class="quiet">${t(lang, "holdBack")} (H)</span>`);
-      else if (Math.floor(r.max * CRIT_MULT) >= target.hp) lines.push(`<span class="down">${t(lang, "critDown")}</span>`);
+      // The numbers (damage, hit, HP before and after, a skull on a kill) are on the target card; the tip keeps
+      // what the card has no room for: where a push sends the target, and whom it splashes.
+      shown = targetCard(u, target, selected, pushDmg);
+      cardAt = lines.length;
       pushLines();
-      lines.push(t(lang, "crit"));
     } else if (ab.push && target.team !== u.team) {
       // A push with no damage of its own (Shove): what the fall or the slam would leave.
-      lines.push(`${abilityName(lang, selected)}${pushDmg ? `: <b>${pushDmg}</b>` : ""}`);
+      if (pushDmg) { shown = targetCard(u, target, selected, pushDmg); cardAt = lines.length; }
+      else lines.push(abilityName(lang, selected));
       pushLines();
-      if (pushDmg) {
-        lines.push(t(lang, "hpAfter", { a: `${Math.max(0, target.hp - pushDmg)}` }));
-        if (pushDmg >= target.hp) lines.push(holdBack ? `<b>${t(lang, "holdOn")}</b>` : `<b class="down">✖ ${t(lang, "downsIt")}</b>`);
-      }
-    } else if (ab.heal) lines.push(`${abilityName(lang, selected)}: <b>+${ab.heal.min}–${ab.heal.max}</b>`);
+    } else if (ab.heal) { shown = targetCard(u, target, selected, 0); cardAt = lines.length; }
   } else if (u && selected && target.team !== u.team && castProblem(state, u, selected, hover) === "too heavy to shove") {
     lines.push(`<span class="down">${t(lang, "tooHeavy")}</span>`);
   } else if (!selected && target.team === "foes") {
@@ -1223,8 +1213,106 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       lines.push(`${abilityName(lang, id)}${dmg}${leaves} · ${ab.range[0]}–${ab.range[1]} · ${state_}${zone.includes(id) ? ` · <b class="down">${t(lang, "reachesYou")}</b>` : ""}`);
     }
   }
-  showTip(tip, [...lines, ...ground].join("<br>"), at, ev);
+  if (!shown) hideTargetCard();
+  // With the card up, the tip keeps only what the card lacks: warnings (a line that must not be crossed, a foe about
+  // to leave the map) and what a push does after the hit. It shows only if any of that is left.
+  const rest = shown ? [...lines.slice(1, cardAt).filter((l) => l.includes('class="down"') || l.includes('class="esc"')), ...lines.slice(cardAt)] : [...lines, ...ground];
+  if (rest.length) showTip(tip, rest.join("<br>"), at, ev); else tip.style.display = "none";
 }
+
+/** Everything one hit is forecast to do to its target: the damage range (with what a push adds), the HP it leaves
+    and whether it downs it. Holding back, nobody standing drops under 1 HP. */
+function forecast(u: Unit, target: Unit, ab: Ability, pushDmg: number) {
+  const base = ab.damage ? damagePreview(state, u, target, ab) : { min: 0, max: 0 };
+  const min = base.min + pushDmg, max = base.max + pushDmg;
+  const floor = holdBack && target.life === "up" ? 1 : 0;
+  const lo = Math.max(floor, target.hp - max), hi = Math.max(floor, target.hp - min);
+  const critMax = Math.floor(base.max * CRIT_MULT) + pushDmg;
+  const kill: "sure" | "may" | "crit" | "held" | null = holdBack && critMax >= target.hp ? "held"
+    : min >= target.hp ? "sure" : max >= target.hp ? "may" : ab.damage && critMax >= target.hp ? "crit" : null;
+  return { min, max, lo, hi, kill };
+}
+
+/** An HP bar for the target card: the HP left after the hit stays solid, the share the hit may take blinks, and the
+    share it surely takes is drawn as an empty outline (Fire Emblem / FFTA forecast). */
+function hpBar(hp: number, maxHp: number, lo: number, hi: number, heal = false) {
+  const pc = (n: number) => `${Math.max(0, Math.min(100, (n / Math.max(1, maxHp)) * 100))}%`;
+  const ratio = lo / Math.max(1, maxHp);
+  const cls = ratio < 0.25 ? " crit" : ratio < 0.5 ? " low" : "";
+  if (heal) return `<span class="track"><span class="fill" style="width:${pc(hp)}"></span><span class="gain" style="left:${pc(hp)};width:${pc(hi - hp)}"></span></span>`;
+  return `<span class="track"><span class="fill${cls}" style="width:${pc(lo)}"></span><span class="maybe" style="left:${pc(lo)};width:${pc(hi - lo)}"></span>`
+    + `<span class="lost" style="left:${pc(hi)};width:${pc(hp - hi)}"></span></span>`;
+}
+
+/** The target card, FFTA-style with a Fire Emblem forecast: the unit acting and the one aimed at, face to face, with
+    the ability between them, then hit chance, damage (and its League-style breakdown) and crit chance, and the
+    target's HP before and after (a skull when the hit downs it). Shown under the top bar while aiming at a unit;
+    on a phone that is after the first tap, next to the confirm button. Returns false when there is nothing to show. */
+function targetCard(u: Unit, target: Unit, abId: string, pushDmg: number): boolean {
+  const ab = ABILITIES[abId]!;
+  const heal = !ab.damage && !!ab.heal && !pushDmg;
+  if (!ab.damage && !heal && !pushDmg) return false;
+  const card = $("target");
+  const side = (v: Unit, cls: string, gauge: string, hpText: string, ko = false) => {
+    const face = portrait(images, v.look);
+    const el = (v.element in ICONS ? v.element : "neutral") as IconId;
+    return `<div class="side ${cls} ${v.team}"><span class="facebox">${face ? `<img class="face" src="${face}" alt="">` : `<span class="face"></span>`}${ko ? `<span class="ko-badge">${icon("elite")}</span>` : ""}</span>`
+      + `<div class="who"><div class="name">${icon(el)}<span>${v.name}</span></div>`
+      + `<div class="gauge">${icon("hp")}${gauge}</div><div class="hpnum">${hpText}</div></div></div>`;
+  };
+  const mine = side(u, "me", `<span class="track"><span class="fill" style="width:${(u.hp / Math.max(1, u.maxHp)) * 100}%"></span></span>`, `<b>${u.hp}</b>/${u.maxHp}`);
+  let theirs: string, nums: string, verdict = "", sum = "";
+  const stat = (label: string, value: string, cls = "") => `<span class="stat${cls ? ` ${cls}` : ""}"><small>${label}</small><b>${value}</b></span>`;
+  // Attacks always hit (combat.ts); the card still says so, as FFTA does, so the player never wonders.
+  const hit = stat(t(lang, "tcHit"), "100%");
+  if (heal) {
+    const lo = Math.min(target.maxHp, target.hp + ab.heal!.min), hi = Math.min(target.maxHp, target.hp + ab.heal!.max);
+    const after = lo === hi ? `${lo}` : `${lo}–${hi}`;
+    theirs = side(target, "them", hpBar(target.hp, target.maxHp, lo, hi, true), `${target.hp} <i class="arrow">▸</i> <b class="up">${after}</b>/${target.maxHp}`);
+    nums = hit + stat(t(lang, "tcHeal"), `+${ab.heal!.min}–${ab.heal!.max}`, "up");
+  } else {
+    const f = forecast(u, target, ab, pushDmg);
+    const after = f.lo === f.hi ? `${f.lo}` : `${f.lo}–${f.hi}`;
+    const skull = f.kill === "sure" ? `<span class="skull">${icon("elite")}</span>` : "";
+    theirs = side(target, "them", hpBar(target.hp, target.maxHp, f.lo, f.hi),
+      `${target.hp} <i class="arrow">▸</i> ${f.kill === "sure" ? `<b class="ko">0</b>` : `<b>${after}</b>`}/${target.maxHp}`, f.kill === "sure");
+    const m = elementMultiplier(ab.element, target.element);
+    const tag = m > 1 ? `<em class="up">${t(lang, "strong")}</em>` : m < 1 ? `<em class="dn">${t(lang, "weak")}</em>` : "";
+    nums = hit + stat(t(lang, "tcDmg"), f.min === f.max ? `${f.min}` : `${f.min}–${f.max}`, "dmg") + (ab.damage ? stat(t(lang, "tcCrit"), `${Math.round(CRIT_CHANCE * 100)}%`) : "") + tag;
+    if (ab.damage) sum = dmgBreakdown(u, target, ab);
+    if (f.kill === "held") verdict = `<b>${t(lang, "holdOn")}</b>`;
+    else if (f.kill === "sure") verdict = `${skull}<b class="down">${t(lang, "downsIt")}</b> <span class="quiet">· ${t(lang, "holdBack")} (H)</span>`;
+    else if (f.kill === "may") verdict = `<b class="down">${t(lang, "canDown")}</b> <span class="quiet">· ${t(lang, "holdBack")} (H)</span>`;
+    else if (f.kill === "crit") verdict = `<span class="down">${t(lang, "critDown")}</span>`;
+    card.classList.toggle("kills", f.kill === "sure");
+  }
+  if (heal) card.classList.remove("kills");
+  card.innerHTML = `<div class="faces">${mine}<div class="mid">${icon(abilityIcon(abId, ab.element), "big")}<span>${abilityName(lang, abId)}</span><i class="go">▸▸</i></div>${theirs}</div>`
+    + `<div class="nums">${nums}</div>${sum}${verdict ? `<div class="verdict">${verdict}</div>` : ""}`;
+  card.setAttribute("aria-label", `${u.name} → ${target.name}: ${card.textContent?.replace(/\s+/g, " ").trim() ?? ""}`);
+  placeTargetCard(card);
+  card.classList.add("show");
+  return true;
+}
+/** Where the target card goes: on a phone on its side, in the gap between the command menu and the system buttons
+    (FFTA keeps its unit windows at the bottom), so it never covers the map; elsewhere, under the top bar. */
+function placeTargetCard(card: HTMLElement) {
+  const menu = $("menu").getBoundingClientRect(), sys = $("system").getBoundingClientRect();
+  const gap = sys.left - menu.right - 12;
+  const low = !roomy() && innerWidth > innerHeight && menu.width > 0 && gap >= 300;
+  card.classList.toggle("low", low);
+  if (low) {
+    const w = Math.min(460, gap);
+    card.style.width = `${w}px`;
+    card.style.left = `${menu.right + 6 + (gap - w) / 2}px`;
+    card.style.top = "";
+    card.style.bottom = `${innerHeight - Math.max(menu.bottom, sys.bottom)}px`;
+  } else {
+    card.style.width = card.style.left = card.style.bottom = "";
+    card.style.top = `${$("top").getBoundingClientRect().bottom + 6}px`;
+  }
+}
+function hideTargetCard() { $("target").classList.remove("show"); }
 
 /** With a push chosen and an object under the cursor: where it goes and whom it hits. */
 function objectLines(at: Pos): string[] {
