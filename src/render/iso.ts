@@ -434,6 +434,63 @@ export interface DrawOptions {
   outline?: boolean;
   /** Scenery mode (travel scenes, the route map): units without health bars, rings or badges. */
   bare?: boolean;
+  /** Choosing which way a unit faces as its turn ends: it turns to `face`, with four arrows round it. */
+  facing?: { unit: string; face: Facing };
+}
+
+const STEP: Record<Facing, Pos> = { N: { x: 0, y: -1 }, S: { x: 0, y: 1 }, E: { x: 1, y: 0 }, W: { x: -1, y: 0 } };
+/** Which way on screen (unscaled pixels per tile) a step toward `f` goes, in this turn of the view. */
+export function faceVector(m: GridMap, f: Facing, rot: number): { x: number; y: number } {
+  const a = rotate(m, { x: 0, y: 0 }, rot), b = rotate(m, STEP[f], rot);
+  const dx = b.x - a.x, dy = b.y - a.y;
+  return { x: (dx - dy) * (TW / 2), y: (dx + dy) * (TH / 2) };
+}
+
+/** The facing a point (unscaled map pixels) picks round a unit: the arrow whose direction is closest.
+    Null on the unit itself, where a tap keeps the facing already chosen. */
+export function faceAt(m: GridMap, u: Unit, px: number, py: number, rot: number): Facing | null {
+  const c = bodyCenter(m, u.pos, u.size ?? 1, rot);
+  // The sprite stands above its tile: a press on its body counts as on the unit.
+  const dx = px - c.x, dy = py - c.y;
+  if (Math.abs(dx) < 14 * (u.size ?? 1) && dy > -48 * (u.size ?? 1) && dy < 10) return null;
+  let best: Facing = u.facing, bd = -Infinity;
+  for (const f of ["N", "E", "S", "W"] as const) {
+    const v = faceVector(m, f, rot);
+    // Measured on the flattened diamond, so all four arrows get an equal share of the screen.
+    const d = (dx * v.x) / (TW * TW) + (dy * v.y) / (TH * TH);
+    if (d > bd) { bd = d; best = f; }
+  }
+  return best;
+}
+
+/** Four arrows on the ground round a unit choosing its facing; the chosen one is gold and pulses. */
+function drawFacingArrows(ctx: CanvasRenderingContext2D, m: GridMap, u: Unit, face: Facing, rot: number, time: number) {
+  const size = u.size ?? 1, c = bodyCenter(m, u.pos, size, rot);
+  const pulse = 0.5 + 0.5 * Math.sin(time / 160);
+  for (const f of ["N", "E", "S", "W"] as const) {
+    const v = faceVector(m, f, rot), on = f === face;
+    // Along the tile's edge direction, so the arrow lies flat on the ground like the diamond does.
+    const reach = (size - 1) * 0.5 + 0.5 + (on ? 0.1 * pulse : 0);
+    const bx = c.x + v.x * reach, by = c.y + v.y * reach;
+    const tip = on ? 0.85 : 0.7, wing = on ? 0.75 : 0.6;
+    const tx = bx + v.x * tip, ty = by + v.y * tip;
+    // Wings: across the arrow, along the other tile axis (flat on the ground).
+    const w = faceVector(m, f === "N" || f === "S" ? "E" : "N", rot), px = w.x * wing / 2, py = w.y * wing / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(bx + px, by + py);
+    ctx.lineTo(bx + v.x * 0.12, by + v.y * 0.12);
+    ctx.lineTo(bx - px, by - py);
+    ctx.closePath();
+    ctx.lineJoin = "round";
+    ctx.lineWidth = on ? 3.5 : 2.5;
+    ctx.strokeStyle = "rgba(20, 12, 4, 0.9)";
+    ctx.fillStyle = on ? `rgba(255, ${200 + Math.round(30 * pulse)}, 80, 1)` : "rgba(240, 240, 255, 0.75)";
+    if (on) { ctx.shadowColor = "rgba(255, 210, 90, 0.9)"; ctx.shadowBlur = 8 + 6 * pulse; }
+    ctx.fill(); ctx.shadowBlur = 0; ctx.stroke();
+    ctx.restore();
+  }
 }
 
 const FLAT_COLOUR: Record<string, string> = { grass: "#7fb24a", tallgrass: "#5f9a3a", dirt: "#c08a58", water: "#4fb8e0", tree: "#3f6b32", ice: "#cdeaf5", bridge: "#9a6b3f" };
@@ -499,7 +556,8 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     const hitAt = opt.flashes?.get(pl.u.id);
     const flash = hitAt !== undefined && opt.time >= hitAt && opt.time - hitAt < 180;
     const swim = !pl.big && tileAt(m, pl.slot)?.terrain === "water";
-    drawUnit(ctx, { ...pl.u, facing: pl.facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round), opt.bare, flash, swim);
+    const facing = opt.facing?.unit === pl.u.id ? opt.facing.face : pl.facing;
+    drawUnit(ctx, { ...pl.u, facing }, img, pl.c, pl.u.id === opt.active, opt.time, view.rot, pv, opt.focus === pl.u.id, wavering(pl.u, round), opt.bare, flash, swim);
     ctx.globalAlpha = 1;
   };
   // Painter's order: back diagonals first; on each tile its ground, then what stands on it.
@@ -685,6 +743,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
     ctx.lineTo(b.x - 9 * Math.cos(ang + 0.5), b.y - 9 * Math.sin(ang + 0.5)); ctx.fill();
     ctx.restore();
   }
+  if (opt.facing) { const fu = s.units.find((x) => x.id === opt.facing!.unit); if (fu) drawFacingArrows(ctx, m, fu, opt.facing.face, view.rot, opt.time); }
   if (opt.sightLine) drawSightLine(ctx, m, view.rot, opt.sightLine, opt.time);
   for (const b of opt.bursts ?? []) { const c = tileCenter(m, b.pos, view.rot); drawBurst(ctx, img, b, c.x, c.y, opt.time); }
   for (const f of opt.floaters) {

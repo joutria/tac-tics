@@ -3,7 +3,7 @@ import { ABILITIES, type Ability } from "../src/data/abilities";
 import { elementMultiplier } from "../src/data/elements";
 import { MEADOW } from "../src/data/maps/meadow";
 import { TEST_UNITS } from "../src/data/units";
-import { planTurn } from "../src/engine/ai";
+import { bestFacing, planTurn } from "../src/engine/ai";
 import { castProblem, GUARD_STRIKE, HEIGHT_CAP, fallDamage, damageFactor, damagePreview, directionBonus, maxRange, previewEffects } from "../src/engine/combat";
 import { parseMap, placeLook, sceneryLook } from "../src/engine/grid";
 import { canStep, reachable } from "../src/engine/movement";
@@ -1114,5 +1114,40 @@ describe("tall grass", () => {
     expect(s.map.tiles[4]!.fireUntil).toBeGreaterThan(s.clock);
     while (s.clock < 400) s = play(s, [{ t: "endTurn", unit: s.active }]);
     expect(s.map.tiles[4]!.terrain).toBe("dirt");
+  });
+});
+
+describe("facing on Wait (choosing a facing as the turn ends)", () => {
+  const field = (units: UnitSpec[]) => createBattle({ seed: 5, map: flat(), units });
+  const two = () => field([unit({ id: "h", team: "heroes", pos: { x: 2, y: 2 }, speed: 90 }), unit({ id: "f", team: "foes", pos: { x: 2, y: 4 } })]);
+
+  it("turns the unit before the turn ends, and a back hit then lands for more", () => {
+    const s = two();
+    expect(unitById(s, "h").facing).toBe("S");
+    const r = applyCommand(s, { t: "endTurn", unit: "h", face: "N" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(unitById(r.state, "h").facing).toBe("N");
+    expect(directionBonus(unitById(r.state, "h"), { x: 2, y: 4 })).toBe(1.15);
+    expect(r.state.active).not.toBe("h");
+  });
+
+  it("also works with Guard, keeps the old facing without one, and refuses a made-up way", () => {
+    const s = two();
+    const kept = applyCommand(s, { t: "endTurn", unit: "h" });
+    expect(kept.ok && unitById(kept.state, "h").facing).toBe("S");
+    const bad = applyCommand(s, { t: "endTurn", unit: "h", face: "X" as never });
+    expect(bad.ok).toBe(false);
+    const g = applyCommand(s, { t: "guard", unit: "h", face: "E" });
+    if (g.ok) expect(unitById(g.state, "h").facing).toBe("E");
+  });
+
+  it("suggests facing the nearest foe, and the AI ends its turns that way", () => {
+    const s = field([unit({ id: "h", team: "heroes", pos: { x: 2, y: 2 }, speed: 90 }), unit({ id: "f", team: "foes", pos: { x: 4, y: 2 } })]);
+    expect(bestFacing(s, unitById(s, "h"))).toBe("E");
+    const back = field([unit({ id: "h", team: "heroes", pos: { x: 2, y: 2 }, speed: 90, mp: 0, abilities: [] }), unit({ id: "f", team: "foes", pos: { x: 2, y: 0 } })]);
+    const cmds = planTurn(back);
+    expect(cmds.at(-1)).toMatchObject({ t: "endTurn", face: "N" });
+    expect(planTurn(back, { noFace: true }).at(-1)).not.toHaveProperty("face");
   });
 });

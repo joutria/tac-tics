@@ -24,6 +24,7 @@ import { cowering, escapeStateFor, FLEE_LOCK, isBorder, turnMp, yielding, type E
 
 export type Team = "heroes" | "foes";
 export type Facing = "N" | "E" | "S" | "W";
+export const FACINGS: readonly Facing[] = ["N", "E", "S", "W"];
 export type AiKind = "caster" | "bruiser" | "skirmisher";
 /** How boldly a computer-controlled foe plays, on top of its AiKind (see ai.ts TEMPERS). Rolled per battle from
     the seed when the spec has none, so every fight mixes rushers, flankers and the odd one that holds its ground. */
@@ -169,9 +170,9 @@ export type Command =
   /** `hold`: Hold back. A hit that would down someone stops at 1 HP, and nobody downed is finished off. */
   | { t: "cast"; unit: string; ability: string; target: Pos; hold?: boolean }
   | { t: "wait"; unit: string }
-  /** End the turn on Guard (see the top of this file). */
-  | { t: "guard"; unit: string }
-  | { t: "endTurn"; unit: string }
+  /** End the turn on Guard (see the top of this file). `face`: the way it turns before the turn ends (FFTA's Wait). */
+  | { t: "guard"; unit: string; face?: Facing }
+  | { t: "endTurn"; unit: string; face?: Facing }
   /** A retreating or fleeing unit on the edge of the map leaves the battle. */
   | { t: "escape"; unit: string }
   /** After a win: what the party does with a foe still on the map, downed or yielding. `unit` is that foe. */
@@ -494,12 +495,16 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       const id = guardAbility(actor);
       if (actor.escape !== "none" || !id) return { ok: false, error: "needs AP left for an attack that reaches next to you" };
       if (inWater(s.map, actor) && !nativeSwimmer(actor)) return { ok: false, error: "no footing while swimming" };
+      if (cmd.face && !FACINGS.includes(cmd.face)) return { ok: false, error: "face N, E, S or W" };
       actor.guard = id;
       actor.spentAp = true;
+      if (cmd.face) actor.facing = cmd.face;
       events.push({ e: "guarded", unit: actor.id });
       return applyEnd(s, actor, events);
     }
     case "endTurn": {
+      if (cmd.face && !FACINGS.includes(cmd.face)) return { ok: false, error: "face N, E, S or W" };
+      if (cmd.face) actor.facing = cmd.face;
       return applyEnd(s, actor, events);
     }
   }
