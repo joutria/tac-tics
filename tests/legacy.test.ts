@@ -1,7 +1,7 @@
 /* M4: the nemesis, the rival who ended a run, carried into the next one until it is settled. */
 import { describe, expect, it } from "vitest";
 import { createBattle, type BattleState } from "../src/engine/state";
-import { carriedNemesis, carriedReturn, closeRun, hasMilestone, keepsakeOf, kitOf, NEMESIS, newLegacy, RETURN } from "../src/run/legacy";
+import { carriedNemesis, carriedReturn, closeRun, hasMilestone, JOURNAL_RUNS, keepsakeOf, kitOf, NEMESIS, newLegacy, RETURN } from "../src/run/legacy";
 import { newMember } from "../src/run/party";
 import { PERKS } from "../src/data/gear";
 import { KITS, LORE, MILESTONE_HINT } from "../src/data/camp";
@@ -172,6 +172,7 @@ describe("companion endings carry over", () => {
     expect(after.rivals.find((r) => r.returned)!.settled).toBe("spared");
     expect(after.party.map((m) => m.id)).toContain("remanso");
     expect(closeRun(legacy, { ...after, over: "lost" }).bonds?.remanso?.state).not.toBe("bad");
+    expect(closeRun(legacy, { ...after, over: "lost" }).milestones).toContain("mended");
     const finished = { ...after, over: "won" as const, party: [], rivals: after.rivals.map((r) => (r.returned ? { ...r, settled: "finished" as const } : r)) };
     const closed = closeRun(legacy, finished);
     expect(closed.bonds?.remanso?.state).toBe("finished");
@@ -184,5 +185,42 @@ describe("companion endings carry over", () => {
     legacy = closeRun(legacy, ended("n2", { ...newMember("guijo", 30, true), lesson: "sacrifice" }));
     expect(legacy.bonds?.guijo?.state).toBe("good");
     expect(carriedReturn(legacy)!.returned).toBe("centella");
+  });
+});
+
+describe("the chronicle", () => {
+  it("writes down whoever ended a journey, the journey itself, and keeps a rival's record across runs", () => {
+    let run = firstFight(newRun("c1"));
+    run = finishBattle(run, end(run, "lose"));
+    const ender = run.rivals.find((r) => r.id === run.endedBy)!;
+    const one = closeRun(newLegacy(), run);
+    const entry = one.journal!.rivals.find((r) => r.name === ender.base.name && r.epithet === ender.epithet)!;
+    expect(entry.fate).toBe("endedRun");
+    expect(entry.runs).toBe(1);
+    expect(one.journal!.runs).toEqual([expect.objectContaining({ n: 1, won: false, regions: 0, endedBy: { name: ender.base.name, epithet: ender.epithet } })]);
+    // The next run carries it as the nemesis and settles it: the same entry, now spared, seen in two runs.
+    const next = newRun("c2", "normal", carriedNemesis(one));
+    const settled = { ...next, over: "won" as const, rivals: next.rivals.map((r) => (r.nemesis ? { ...r, settled: "spared" as const, meetings: 1 } : r)) };
+    const two = closeRun(one, settled);
+    const again = two.journal!.rivals.filter((r) => r.name === ender.base.name && r.epithet === ender.epithet);
+    expect(again).toHaveLength(1);
+    expect(again[0]).toMatchObject({ fate: "spared", runs: 2, nemesis: true });
+    expect(two.journal!.runs.at(-1)).toMatchObject({ n: 2, won: true, regions: 1 });
+    expect(two.journal!.bosses.town).toBe(1);
+  });
+
+  it("keeps only the last journeys", () => {
+    let legacy = newLegacy();
+    for (let i = 0; i < JOURNAL_RUNS + 3; i++) legacy = closeRun(legacy, { ...newRun(`k${i}`), over: "lost" as const });
+    expect(legacy.journal!.runs).toHaveLength(JOURNAL_RUNS);
+    expect(legacy.journal!.runs[0]!.n).toBe(4);
+  });
+
+  it("winning on Hard and on a Sap tier open their own kit and pages", () => {
+    const hard = closeRun(newLegacy(), { ...newRun("h1", "hard"), over: "won" as const });
+    expect(hard.milestones).toContain("hardWon");
+    expect(hard.milestones).not.toContain("sapTier");
+    const tier = closeRun(hard, { ...newRun("h2", "hard", undefined, undefined, { tier: 1 }), over: "won" as const });
+    expect(tier.fresh).toEqual(["sapTier"]);
   });
 });

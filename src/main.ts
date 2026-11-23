@@ -24,6 +24,7 @@ import { STATUS } from "./engine/status";
 import { charged } from "./engine/terrain";
 import { rivalName, rivalTaunt, rivalTitle } from "./run/rivals";
 import { carriedNemesis, carriedReturn, closeRun, hasMilestone, keepsakeOf, keepsakesOpen, kitOf, newLegacy, type Legacy } from "./run/legacy";
+import { EPITHETS } from "./data/rivals";
 import { KITS, LORE, MILESTONE_HINT } from "./data/camp";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
 import { aheadOf, choices } from "./run/map";
@@ -142,7 +143,7 @@ let atCamp = false;
 /** The lore page open at the camp. */
 let campPage: string | null = null;
 /** Which camp station is open (null: the camp itself, with its stations). */
-let campTab: "kits" | "keeps" | "lore" | null = null;
+let campTab: "kits" | "keeps" | "lore" | "chronicle" | null = null;
 /** While true, the map shows the play log panel. */
 let statsOpen = false;
 /** When the battle on screen started, for the play log (0 for a battle resumed from a save). */
@@ -241,14 +242,15 @@ function renderCamp(panel: HTMLElement) {
   if (campTab) {
     const backBtn = el("button", "", t(lang, "menuBack"));
     backBtn.onclick = () => { sfx("select"); campTab = null; showMap(); };
-    const [head, body] = campTab === "kits" ? [t(lang, "campKits"), kits] : campTab === "keeps" ? [t(lang, "campKeepsakes"), keeps] : [t(lang, "campLore"), lore];
+    const [head, body] = campTab === "kits" ? [t(lang, "campKits"), kits] : campTab === "keeps" ? [t(lang, "campKeepsakes"), keeps]
+      : campTab === "chronicle" ? [t(lang, "chronicle"), chronicleOf(legacy)] : [t(lang, "campLore"), lore];
     title.textContent = head;
     panel.replaceChildren(title, body, backBtn);
     (body.querySelector<HTMLElement>("button:not(:disabled)") ?? backBtn).focus();
     return;
   }
   const stations = el("div", "stations");
-  const station = (id: "kits" | "keeps" | "lore", ic: string, name: string, now: string, news: number) => {
+  const station = (id: "kits" | "keeps" | "lore" | "chronicle", ic: string, name: string, now: string, news: number) => {
     const b = el("button", "station");
     b.innerHTML = `${iconTile(pk(ic as never), news ? "rare" : "common")}<b></b><small></small>${news ? `<em class="badge">${news}</em>` : ""}`;
     b.querySelector("b")!.textContent = name; b.querySelector("small")!.textContent = now;
@@ -260,10 +262,49 @@ function renderCamp(panel: HTMLElement) {
   station("kits", RUN_PACK.chest, t(lang, "campKits"), kit.name[lang], newKits);
   station("keeps", RUN_PACK.charm, t(lang, "campKeepsakes"), keepName ?? t(lang, "campNone"), 0);
   station("lore", RUN_PACK.job, t(lang, "campLore"), t(lang, "campPages", { n: LORE.filter((p) => hasMilestone(legacy, p.needs)).length, of: LORE.length }), newLore);
+  station("chronicle", RUN_PACK.hard, t(lang, "chronicle"), t(lang, "chronicleCount", { n: legacy.journal?.rivals.length ?? 0 }), 0);
   go.className = "primary";
   parts.push(stations, go);
   panel.replaceChildren(...parts);
   go.focus();
+}
+
+/** The chronicle at the camp: the rivals met in every run (face, name, how it stands), the last journeys and the
+    bosses beaten. Read only. */
+function chronicleOf(legacy: Legacy): HTMLElement {
+  const box = document.createElement("div"); box.className = "cards chronicle";
+  const j = legacy.journal;
+  const row = (face: string, head: string, sub: string, cls = "") => {
+    const r = document.createElement("div"); r.className = `card row ${cls}`;
+    r.innerHTML = `${face ? `<img src="${face}" alt="">` : ""}<span class="tx"><b></b><small></small></span>`;
+    r.querySelector("b")!.textContent = head; r.querySelector("small")!.textContent = sub;
+    return r;
+  };
+  const sub = (text: string) => { const h = document.createElement("h4"); h.textContent = text; return h; };
+  if (!j || (!j.rivals.length && !j.runs.length)) { box.append(Object.assign(document.createElement("p"), { className: "spoils", textContent: t(lang, "chronicleEmpty") })); return box; }
+  if (j.rivals.length) {
+    box.append(sub(t(lang, "chronicleRivals")));
+    for (const r of [...j.rivals].sort((a, b) => b.last - a.last || b.met - a.met)) {
+      const name = `${r.name} ${EPITHETS[r.epithet]?.[lang] ?? ""}`.trim();
+      const fate = t(lang, `fate.${r.fate}` as TextKey);
+      box.append(row(portrait(images, r.look), `${r.nemesis ? "★ " : ""}${name}`, `${fate} · ${t(lang, "chronicleMet", { n: r.met, lv: r.level, runs: r.runs })}`, `fate-${r.fate}`));
+    }
+  }
+  if (j.runs.length) {
+    box.append(sub(t(lang, "chronicleRuns")));
+    for (const r of [...j.runs].reverse()) {
+      const diff = `${t(lang, `diff.${r.difficulty}` as TextKey)}${r.tier ? ` · ${SAP_TIERS[r.tier - 1]?.name[lang] ?? ""}` : ""}`;
+      const end = r.won ? t(lang, "chronicleWon") : r.endedBy ? t(lang, "chronicleFell", { name: `${r.endedBy.name} ${EPITHETS[r.endedBy.epithet]?.[lang] ?? ""}`.trim() })
+        : t(lang, "chronicleLost");
+      box.append(row("", `#${r.n} · ${diff}`, `${t(lang, "chronicleRegions", { n: r.regions })} · ${end}`, r.won ? "won" : ""));
+    }
+  }
+  const bosses = REGIONS.filter((rg) => j.bosses[rg.id]);
+  if (bosses.length) {
+    box.append(sub(t(lang, "chronicleBosses")));
+    for (const rg of bosses) box.append(row("", rg.name[lang], t(lang, "chronicleBeaten", { n: j.bosses[rg.id]! })));
+  }
+  return box;
 }
 
 function renderDifficulty(panel: HTMLElement) {
