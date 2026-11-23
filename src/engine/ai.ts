@@ -14,7 +14,7 @@ import { cowering, isBorder, yielding } from "./escape";
 import { hasLineOfSight } from "./sight";
 import { actionCost, manaCost, RULES } from "./rules";
 import { statusOf, STATUS, type Status } from "./status";
-import { activeUnit, applyCommand, BattleState, bodiesInWay, Command, isFoe, moveRules, nearestOf, onMap, roundOf, sizeOf, unitAt, unitGap, type AiKind, type Temper, type Unit } from "./state";
+import { activeUnit, applyCommand, BattleState, FACINGS, type Facing, bodiesInWay, Command, isFoe, moveRules, nearestOf, onMap, roundOf, sizeOf, unitAt, unitGap, type AiKind, type Temper, type Unit } from "./state";
 
 interface Weights {
   /** How much a point of expected incoming damage hurts a standing spot. */
@@ -192,7 +192,7 @@ function areaValue(s: BattleState, u: Unit, area: Pos[], from: Pos, dmg: number)
 }
 
 /** How the party's side plays when the AI runs it (the simulator): `mercy` spares yielding foes. */
-export interface AiOptions { mercy?: boolean }
+export interface AiOptions { mercy?: boolean; /** Skip turning at the end of a turn (the sim's --noface, to compare). */ noFace?: boolean }
 
 function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos, opts: AiOptions = {}): number {
   let v = 0;
@@ -390,6 +390,30 @@ function guardWorth(s: BattleState, me: Unit): boolean {
   return s.units.some((o) => o.life === "up" && isFoe(me, o) && unitGap(o, me) > 1 && unitGap(o, me) <= o.maxMp + 1);
 }
 
+/** The way to face at the end of a turn (FFTA's Wait): the side that leaves the fewest foes at its back or side,
+    the nearest ones counting most. Ties keep the way it already faces. Also the player's suggested facing. */
+/** Turning at the end of a turn, unless the sim asks for the old way (facing only where it last stepped or struck). */
+const faceCmd = (s: BattleState, opts: AiOptions): { face?: Facing } => {
+  if (opts.noFace) return {};
+  const u = activeUnit(s), f = bestFacing(s, u);
+  return f === u.facing ? {} : { face: f };
+};
+
+export function bestFacing(s: BattleState, u: Unit): Facing {
+  const foes = s.units.filter((o) => o.life === "up" && isFoe(u, o));
+  let best = u.facing, bestScore = Infinity;
+  for (const f of [u.facing, ...FACINGS.filter((x) => x !== u.facing)]) {
+    const me = { ...u, facing: f };
+    let score = 0;
+    for (const o of foes) {
+      const gap = Math.max(1, unitGap(o, u));
+      score += (directionBonus(me, nearestCell(o.pos, sizeOf(o), nearestOf(u, o.pos))) - 1) / (gap * gap);
+    }
+    if (score < bestScore - 1e-9) { best = f; bestScore = score; }
+  }
+  return best;
+}
+
 /** Plays the active unit's whole turn and returns the commands, ending with endTurn (or escape). */
 export function planTurn(start: BattleState, opts: AiOptions = {}): Command[] {
   const cmds: Command[] = [];
@@ -414,8 +438,8 @@ export function planTurn(start: BattleState, opts: AiOptions = {}): Command[] {
     const plan = bestStep({ ...s, units: s.units.map((u) => (u.id === id ? { ...u, ap: 0 } : u)) });
     if (plan.moveTo) run({ t: "move", unit: id, to: plan.moveTo });
     // Guard when an enemy could walk up to it before its next turn; otherwise keep the shorter delay.
-    if (!s.winner && s.active === id && guardWorth(s, activeUnit(s))) run({ t: "guard", unit: id });
-    if (!s.winner && s.active === id) run({ t: "endTurn", unit: id });
+    if (!s.winner && s.active === id && guardWorth(s, activeUnit(s))) run({ t: "guard", unit: id, ...faceCmd(s, opts) });
+    if (!s.winner && s.active === id) run({ t: "endTurn", unit: id, ...faceCmd(s, opts) });
   }
   return cmds;
 }

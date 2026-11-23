@@ -6,7 +6,8 @@
    Add `--party <temper>` to have the party play boldly (see ai.ts TEMPERS). Add `--legacy` to carry each run's
    nemesis into the next (src/run/legacy.ts), as a player's runs do. Add `--kit <id>` to set out with that camp
    kit (src/data/camp.ts) every run, opened or not, to see what it changes. Add `--tier <n>` with hard to play at
-   that Sap tier (src/data/region.ts SAP_TIERS). */
+   that Sap tier (src/data/region.ts SAP_TIERS). Add `--noface <heroes|foes|all>` so that side never turns at the end
+   of its turns (it keeps facing where it last stepped or struck), to see what choosing a facing is worth. */
 import { PaceStats, rulesFromArgs } from "./battle-stats";
 import { writeFileSync } from "node:fs";
 import { planTurn } from "../src/engine/ai";
@@ -39,6 +40,8 @@ const kitAt = args.indexOf("--kit");
 const kitId = kitAt >= 0 ? args.splice(kitAt, 2)[1] : undefined;
 const kit = kitId ? KITS.find((k) => k.id === kitId) : undefined;
 if (kitAt >= 0 && !kit) throw new Error(`no such kit; try ${KITS.map((k) => k.id).join(", ")}`);
+const nofaceAt = args.indexOf("--noface");
+const noface = nofaceAt >= 0 ? args.splice(nofaceAt, 2)[1] : undefined;
 let legacy = newLegacy();
 let nemesisRuns = 0, nemesisWins = 0, returnRuns = 0, returnsSettled = 0, keepsakeRuns = 0;
 const runs = Number(args[0] ?? 100);
@@ -72,7 +75,7 @@ for (let i = 1; i <= runs; i++) {
     let s = createBattle(setup);
     pace.start();
     while (!s.winner && s.turns < 300) {
-      const before = s, cmds = planTurn(s, { mercy: mercy && activeUnit(s).team === "heroes" });
+      const before = s, cmds = planTurn(s, { mercy: mercy && activeUnit(s).team === "heroes", noFace: noface === "all" || noface === activeUnit(s).team });
       for (const c of cmds) {
         const r = applyCommand(s, c);
         if (!r.ok) throw new Error(`run ${i}: illegal AI command ${JSON.stringify(c)}: ${r.error}`);

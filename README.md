@@ -12,7 +12,7 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 
 - **Turn timeline.** Faster units act sooner and more often. A turn where you only move (no AP spent) comes back sooner. **Wait** passes your turn, before you move or act, to act right after the next character.
 - **AP and MP.** Abilities cost Action Points; walking costs Movement Points. **Lock:** leaving a tile next to foes costs 1 extra MP for each of them whose Agility is at least yours.
-- **Damage** is a roll inside the ability's range (steady 7 to 9, or a 0 to 20 gamble), then x (1 + Strength or Magic / 100), +10% per level of height above the target (at most +30%), +25% from behind or +10% from the side, the element wheel (x1.5 strong, x0.75 weak, x1.25 opposite), a 5% critical (x1.5), and the target's resistance. Attacks always hit. Area attacks hit allies too.
+- **Damage** is a roll inside the ability's range (steady 7 to 9, or a 0 to 20 gamble), then x (1 + Strength or Magic / 100), +5% per level of height above the target (at most +15%), +15% from behind or +5% from the side, the element wheel (x1.5 strong, x0.75 weak, x1.25 opposite), a 5% critical (x1.5), and the target's resistance. Attacks always hit. Area attacks hit allies too.
 - **Reach and height.** Ranged abilities gain 1 range per level above the target and lose 1 per level below (never under 1). Rocks, trees and units block line of sight; high ground sees over them.
 - **Cooldowns and limits** per ability; the map shows the range in red and valid targets in bright red, and hovering a target previews the damage.
 - **Downed, not dead.** At 0 HP a unit is downed for 2 of its turns; an ally can **Help up** (25% HP). Hitting a downed unit kills it. A side with nobody standing loses.
@@ -91,7 +91,7 @@ Play it at https://joutria.github.io/tac-tics/. You control the Light hero again
 | Battle: move the tile cursor | Arrow keys (along the screen's diagonals) | D-pad |
 | Battle: act on the cursor tile (first press previews, second acts) | Enter | A |
 | Battle: choose an ability | 1 to 9, or Tab to cycle | X to cycle |
-| Battle: end turn | T | Start |
+| Battle: end turn, then choose which way to face (arrows pick, press again to end) | T | Start |
 | Battle: rotate the view | Q / E | LB / RB |
 | Battle: danger zone | | Y |
 | Battle: Hold back on or off | H | LT |

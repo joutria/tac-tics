@@ -12,7 +12,7 @@ import { COMPANIONS } from "./data/companions";
 import { MEADOW } from "./data/maps/meadow";
 import { HERO } from "./data/region";
 import { TEST_UNITS, lookArt, lookFace } from "./data/units";
-import { planTurn } from "./engine/ai";
+import { bestFacing, planTurn } from "./engine/ai";
 import { abilityAvailable, areaTiles, castProblem, comboProblem, guardAbility, CRIT_MULT, MAX_REVIVES, damagePreview, damageParts, type DamagePart, maxRange, previewEffects, unitAbilities, type MovePreview } from "./engine/combat";
 import { manhattan, Pos, rockSizeOf, sightBlock, TERRAIN, tileAt, type GridMap } from "./engine/grid";
 import { reachable } from "./engine/movement";
@@ -42,12 +42,12 @@ import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
 import {
-  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, moveRules, roundOf, unitAt, unitById, unsettled, upcomingTurns, type Unit, type UnitSpec,
+  activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, FACINGS, moveRules, type Facing, roundOf, unitAt, unitById, unsettled, upcomingTurns, type Unit, type UnitSpec,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { fxSources, type Burst } from "./render/fx";
 import { SCENERY_IMAGES } from "./render/scenery";
-import { drawBattle, Floater, type ReachBadge, type SightLine, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
+import { drawBattle, faceAt, faceVector, Floater, type ReachBadge, type SightLine, Images, isFlat, loadImages, mapPixelSize, Mark, Motion, motionMs, pickAt, portrait, rotate as rotateGrid, setFlat, tileCenter, TW, unrotate as unrotateGrid, View } from "./render/iso";
 
 /** The run save: the run, with the battle being fought inside it. */
 const RUN_KEY = "tac-tics.run.v1";
@@ -86,6 +86,9 @@ type CmdPage = "" | "magic" | "skills" | "quick";
 let page: CmdPage = "";
 /** On touch the first tap only chooses a tile; a second tap on it, or the Confirm button, carries the action out. */
 let pending: Pos | null = null;
+/** FFTA's Wait: after End turn (or Guard) the unit picks which way it faces, from four arrows round it,
+    before the turn really ends. `face` starts on the suggested way (the fewest foes at its back). */
+let facePick: { unit: string; cmd: "endTurn" | "guard"; face: Facing } | null = null;
 let busy = false;
 let turnStart = 0;
 /** Command counts at which the hero's turns began, for Rewind. */
@@ -923,6 +926,7 @@ function dress(id: string, ic: IconId, label: string, help: () => string, iconOn
 function refresh() {
   if (onMap) return;
   const u = activeUnit(state);
+  if (facePick && (facePick.unit !== u.id || !heroTurn() || busy || selected || pending || deploy)) facePick = null;
   renderUnitCard(deploy?.pick ? unitById(state, deploy.pick) : u);
   document.body.classList.toggle("deploying", !!deploy);
   if (deploy) {
@@ -1045,14 +1049,14 @@ function refresh() {
   dress("lang", "lang", lang === "es" ? "English" : "Español", () => plainHelp(lang === "es" ? "English" : "Español", t(lang, "langHint"), "lang"));
   dress("toolsBtn", "menu", t(lang, "more"), () => plainHelp(t(lang, "more"), t(lang, "moreHint"), "menu"), true);
   const confirm = $<HTMLButtonElement>("confirm");
-  confirm.style.display = mine && pending ? "" : "none";
-  confirm.innerHTML = `${icon("confirm")}<span>${selected ? abilityName(lang, selected) : t(lang, "moveHere")}</span>`;
-  $("cancel").style.display = mine && (pending || selected) ? "" : "none";
+  confirm.style.display = mine && (pending || facePick) ? "" : "none";
+  confirm.innerHTML = `${icon("confirm")}<span>${facePick ? t(lang, "faceHere") : selected ? abilityName(lang, selected) : t(lang, "moveHere")}</span>`;
+  $("cancel").style.display = mine && (pending || selected || facePick) ? "" : "none";
   $("cancel").innerHTML = `${icon("cancel")}<span>${t(lang, "cancel")}</span>`;
   const bottomH = $("bottom").getBoundingClientRect().height;
   $("hint").style.bottom = `${roomy() ? 10 : bottomH + 2}px`;
   $("act").style.bottom = `${roomy() ? 36 : bottomH + 24}px`;
-  $("hint").textContent = !mine ? t(lang, u.team === "foes" ? "foeTurn" : "hintFoe") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
+  $("hint").textContent = !mine ? t(lang, u.team === "foes" ? "foeTurn" : "hintFoe") : facePick ? t(lang, "hintFace") : pending ? t(lang, "hintConfirm") : selected ? t(lang, "hintTarget") : `${t(lang, "hintMove")} ${t(lang, "foeTip")}`;
   const lost = state.winner === "foes" || state.units.some((x) => x.id === HERO.id && x.life !== "up");
   const boss = journey.battle && journey.map.nodes[journey.battle.node]!.kind === "boss";
   $("again").textContent = t(lang, lost ? "newRun" : boss ? "regionCleared" : "toMap");
@@ -1933,6 +1937,12 @@ function input(k: Input) {
   if ((!heroTurn() && !deploy) || busy || animating()) return;
   if (k === "end") { if (deploy) beginFight(); else $("end").click(); return; }
   if (deploy && k === "next") return;
+  if (facePick) {
+    if (k === "confirm") confirmPending();
+    else if (k === "back") { facePick = null; refresh(); }
+    else if (k === "up" || k === "down" || k === "left" || k === "right") faceKey(k);
+    return;
+  }
   if (k === "back") { if (!selected && !pending && page) page = ""; selected = null; pending = null; inspect = null; tooltip(null); refresh(); return; }
   if (k === "next") {
     // Cycles the abilities that can be used now, then back to moving.
@@ -2031,8 +2041,11 @@ function screenOf(p: Pos) {
 }
 
 /** Pans so a tile sits in the middle of the free space between the bars. */
-function centreOn(p: Pos) {
-  const top = $("top").getBoundingClientRect().height, bottom = $("bottom").getBoundingClientRect().height;
+function centreOn(p: Pos, aboveAct = false) {
+  const top = $("top").getBoundingClientRect().height;
+  // `aboveAct`: in the gap above the Confirm / Cancel buttons instead, so they never cover what is chosen there.
+  const acts = [...$("act").querySelectorAll<HTMLElement>("button")].filter((b) => b.style.display !== "none");
+  const bottom = aboveAct && acts.length ? innerHeight - Math.min(...acts.map((b) => b.getBoundingClientRect().top)) + 12 : $("bottom").getBoundingClientRect().height;
   const now = screenOf(p);
   panX += innerWidth / 2 - now.clientX;
   panY += top + (innerHeight - top - bottom) / 2 - now.clientY;
@@ -2090,7 +2103,35 @@ function onTap(p: Pos, touch: boolean) {
   pending = p; refresh(); tooltip(p);
 }
 
+/** Ends the turn (or goes on guard) facing the way chosen with the arrows. */
+function endWithFacing(t_: "endTurn" | "wait" | "guard") {
+  if (!heroTurn() || busy || animating()) return;
+  const unit = activeUnit(state).id, face = t_ !== "wait" && facePick?.unit === unit ? facePick.face : undefined;
+  facePick = null;
+  run(t_ === "wait" ? { t: t_, unit } : { t: t_, unit, ...(face && face !== activeUnit(state).facing ? { face } : {}) });
+  selected = null; pending = null; tooltip(null); refresh(); maybeFoeTurn();
+}
+
+/** Choosing a facing: a press picks the arrow toward it (a mouse already picked it by pointing), and a press on
+    the chosen arrow or on the unit itself ends the turn. */
+function faceTap(px: number, py: number, touch: boolean) {
+  if (!facePick) return;
+  const u = unitById(state, facePick.unit), f = faceAt(state.map, u, px, py, view.rot);
+  if (!f || f === facePick.face || !touch) { if (f) facePick.face = f; endWithFacing(facePick.cmd); return; }
+  facePick.face = f; sfx("select"); refresh();
+}
+
+/** The d-pad and arrow keys pick the arrow that points the same way on screen as the key. */
+function faceKey(k: "up" | "down" | "left" | "right") {
+  if (!facePick) return;
+  const want = { up: { x: 1, y: -1 }, down: { x: -1, y: 1 }, left: { x: -1, y: -1 }, right: { x: 1, y: 1 } }[k];
+  let best = facePick.face, bd = -Infinity;
+  for (const f of FACINGS) { const v = faceVector(state.map, f, view.rot), d = v.x * want.x / TW + v.y * want.y / (TW / 2); if (d > bd) { bd = d; best = f; } }
+  facePick.face = best; refresh();
+}
+
 function confirmPending() {
+  if (facePick) { endWithFacing(facePick.cmd); return; }
   if (!pending || !heroTurn() || busy || animating()) return;
   const a = actionAt(pending);
   if (a && "cmd" in a) act(a.cmd); else { pending = null; refresh(); }
@@ -2194,7 +2235,7 @@ function frame(time: number) {
   drawBattle(ctx, state, images, shown, {
     marks: aiming?.marks ?? new Map(), badges: aiming?.badges, sightLine: aiming?.line, outline: !!selected, hover, active: state.active, time, floaters, bursts, motions, flashes,
     danger: dangerTiles(), preview: moving ? undefined : previewHit(), effects: moving ? undefined : previewMoves(), focus: focus?.id,
-    escapePaths: moving ? undefined : escapePaths(),
+    escapePaths: moving ? undefined : escapePaths(), facing: facePick && !moving ? { unit: facePick.unit, face: facePick.face } : undefined,
   });
   requestAnimationFrame(frame);
 }
@@ -2304,6 +2345,7 @@ async function start() {
     }
     if (mapOpen || onMap) return;
     if (touch) return; // a finger has no hover: its tap shows the preview instead
+    if (facePick) { const c = toCanvas(ev), f = faceAt(state.map, unitById(state, facePick.unit), (c.x - view.ox) / view.scale, (c.y - view.oy) / view.scale, view.rot); if (f && f !== facePick.face) { facePick.face = f; refresh(); } return; }
     const h = toMap(ev);
     if (h?.x !== hover?.x || h?.y !== hover?.y) hover = h;
     tooltip(hover, ev);
@@ -2317,6 +2359,7 @@ async function start() {
     if (mapOpen) { routeTap(ev); return; }
     if (onMap) { skipWalk(); return; }
     const touch = ev.pointerType !== "mouse";
+    if (facePick) { const c = toCanvas(ev); faceTap((c.x - view.ox) / view.scale, (c.y - view.oy) / view.scale, touch); return; }
     const p = toMap(ev, touch ? 0.6 : 0);
     if (p) onTap(p, touch);
   };
@@ -2332,7 +2375,16 @@ async function start() {
   $("rotateR").addEventListener("click", () => turn(1));
   const pass = (t_: "endTurn" | "wait" | "guard") => {
     if (!heroTurn() || busy || animating()) return;
-    run({ t: t_, unit: activeUnit(state).id }); selected = null; pending = null; tooltip(null); refresh(); maybeFoeTurn();
+    if (t_ !== "wait" && facePick?.cmd !== t_) {
+      // First press: turn to choose a facing (pressing it again, or tapping the chosen arrow, ends the turn).
+      const u = activeUnit(state);
+      selected = null; pending = null; inspect = null; tooltip(null);
+      facePick = { unit: u.id, cmd: t_, face: facePick?.face ?? bestFacing(state, u) };
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      helpHover = null; showHelp(); refresh(); centreOn(u.pos, true); return;
+    }
+    if (t_ === "wait") facePick = null;
+    endWithFacing(t_);
   };
   $("end").addEventListener("click", () => pass("endTurn"));
   $("wait").addEventListener("click", () => pass("wait"));
@@ -2344,7 +2396,7 @@ async function start() {
   $("hold").addEventListener("click", toggleHold);
   $("confirm").addEventListener("click", confirmPending);
   $("deployGo").addEventListener("click", () => beginFight());
-  $("cancel").addEventListener("click", () => { selected = null; pending = null; tooltip(null); refresh(); });
+  $("cancel").addEventListener("click", () => { selected = null; pending = null; facePick = null; tooltip(null); refresh(); });
   $("again").addEventListener("click", afterBattleButton);
   $("gearBtn").addEventListener("click", () => { if (choosingDifficulty) return; gearOpen = !gearOpen; statsOpen = false; showMap(); });
   $("statsBtn").addEventListener("click", () => { if (choosingDifficulty || journey.offers.length) return; statsOpen = !statsOpen; gearOpen = false; showMap(); });
