@@ -207,3 +207,37 @@ describe("the boss lair", () => {
     expect(s.winner).not.toBeNull();
   });
 });
+
+describe("brutes lead elite fights", () => {
+  it("every arena has room for its region's brute, clear of the party and the other foes", () => {
+    for (const r of REGIONS) {
+      if (!r.brute) continue;
+      expect(r.brute.size).toBe(2);
+      for (const a of r.arenas) {
+        expect(a.giant).toBeDefined();
+        const cells = cellsOf(a.giant!, 2);
+        const others = [a.hero, ...a.allies, ...a.foes.slice(1)];
+        expect(cells.some((c) => others.some((p) => p.x === c.x && p.y === c.y))).toBe(false);
+      }
+    }
+  });
+
+  it("fields the brute as a 2x2 giant in elite fights, in both regions, ambushes and floods included", () => {
+    let seen = 0;
+    for (let i = 0; i < 40; i++) {
+      const run = newRun(`brute${i}`);
+      for (const region of [0, 1]) {
+        const r = { ...run, region };
+        for (const n of r.map.nodes.filter((n) => n.kind === "elite")) {
+          const setup = battleSetup(r, n.id, "en");
+          const s = createBattle(setup); // throws if any body stands where it can't
+          const brute = s.units.find((u) => u.look === REGIONS[region]!.brute!.look);
+          expect(brute?.size).toBe(2);
+          expect(brute?.marked).toBeFalsy();
+          seen++;
+        }
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+});

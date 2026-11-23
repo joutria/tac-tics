@@ -11,6 +11,10 @@ Sources (credited in CREDITS.md and on the title's credits screen):
 - Ratfolk, by Svetlana Kushnariova (lana-chan@yandex.ru), Stephen Challener (Redshrike) and Jordan Irwin
   (AntumDeluge), CC-BY 3.0 / OGA-BY 3.0 https://opengameart.org/content/ratfolk (downloaded here): same 24x32
   layout as our party's art, on a transparent backdrop.
+- Orcs and Trolls, by Tuomo Untinen (Reemax), reworked by Jordan Irwin (AntumDeluge), CC-BY 3.0
+  https://opengameart.org/content/orcs and https://opengameart.org/content/trolls-0 (downloaded here): 48x64 frames
+  in the same 3 x 4 layout. They are the 2x2 brutes; a giant's sheet is drawn at twice the size (iso.ts), so these
+  go in at 1x and come out at the same pixel size as everyone else.
 - PIPOYA FREE RPG Character Sprites 32x32, by Pipoya (https://pipoya.itch.io/pipoya-free-rpg-character-sprites-32x32;
   free for commercial use, editing allowed, no credit required, the asset files themselves may not be resold or
   redistributed as assets). itch.io can't be reached from every machine, so pass the unzipped folder. 32x32 frames,
@@ -40,6 +44,8 @@ EYE_GAP, CROWN = 8, 7
 JS = {"pena": 0, "brasa": 1, "malva": 2, "marea": 3}
 # Ratfolk (24x32, KusSv layout): look -> file
 RATS = {"ratero": "ratfolk-m-001.png"}
+# Brutes (48x64, KusSv layout), drawn at 1x for 2x2 giants: look -> file
+BRUTES = {"ogro": "orc_warrior-brown.png", "trol": "troll-green_3.png"}
 # Pipoya: look -> file inside the pack folder
 PIPOYA = {"trasgo": "Enemy/Enemy 18.png", "trasgo-chaman": "Enemy/Enemy 21.png"}
 
@@ -74,12 +80,12 @@ def backdrop_off(im, tol=12):
     return im
 
 
-def sheet(frames, downed):
+def sheet(frames, downed, k=K):
     """frames: S, S, N, N, E, E (each a small RGBA frame); downed: the pose for cell 9."""
     out = Image.new("RGBA", (10 * 64, 64), (0, 0, 0, 0))
 
     def put(fr, cell):
-        big = fr.resize((fr.width * K, fr.height * K), Image.NEAREST)
+        big = fr.resize((fr.width * k, fr.height * k), Image.NEAREST)
         bb = big.getbbox()
         out.alpha_composite(big, (cell * 64 + (64 - big.width) // 2, FEET - bb[3]))
     for i, fr in enumerate(frames):
@@ -151,6 +157,10 @@ def main():
     for look, f in RATS.items():
         frames, stand = kus_frames(fetch(f))
         sheet(frames, stand.rotate(90, expand=True)).save(os.path.join(OUT, f"{look}.png"))
+        print("wrote", look)
+    for look, f in BRUTES.items():
+        frames, stand = kus_frames(fetch(f), 0, 48, 64)
+        sheet([fr.crop(fr.getbbox()) for fr in frames], stand.rotate(90, expand=True), 1).save(os.path.join(OUT, f"{look}.png"))
         print("wrote", look)
     for look, f in PIPOYA.items():
         pipoya(os.path.join(sys.argv[1], f)).save(os.path.join(OUT, f"{look}.png"))
