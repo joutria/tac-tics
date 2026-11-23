@@ -137,6 +137,54 @@
     /* Floats just above the bottom bar so showing it never shifts the map under the player's finger. */
     #act { position: fixed; left: 0; right: 0; display: flex; justify-content: center; gap: 10px; pointer-events: none; z-index: 3; }
     #act button { pointer-events: auto; padding: 9px 16px; font-size: 16px; box-shadow: 0 0 0 2px var(--rim), 0 4px 14px rgba(0,0,0,0.5); }
+    /* The target card (FFTA unit windows, Fire Emblem forecast): the one acting and the one aimed at, face to face,
+       then hit, damage and crit, and the HP bar after the hit: solid what is left, blinking what it may take,
+       hollow what it surely takes. A skull and a red rim when the hit downs the target. */
+    #target { position: fixed; left: 50%; transform: translate(-50%, -6px); width: min(460px, calc(100vw - 12px)); padding: 6px 10px 7px; z-index: 4;
+      pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .12s, transform .12s; font-size: 13px; }
+    #target.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+    #target .faces { display: flex; align-items: center; gap: 6px; }
+    #target .side { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; }
+    #target .side.them { flex-direction: row-reverse; text-align: right; }
+    #target .face { width: 40px; height: 40px; flex: none; image-rendering: pixelated; border: 2px solid var(--hero); background: rgba(11,16,51,0.6); }
+    #target .side.foes .face { border-color: var(--foe); background: rgba(70,12,20,0.55); }
+    #target .who { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+    #target .name { display: flex; align-items: center; gap: 4px; font-weight: 600; color: var(--accent); white-space: nowrap; overflow: hidden; }
+    #target .name span { overflow: hidden; text-overflow: ellipsis; }
+    #target .side.them .name, #target .side.them .gauge { flex-direction: row-reverse; }
+    #target .side.foes .name { color: #ffd0c8; }
+    #target .gauge .track { width: 100%; flex: 1; position: relative; }
+    #target .gauge .maybe { position: absolute; top: 0; bottom: 0; background: linear-gradient(#ffd27a, #d98a1c); animation: tc-blink 0.8s steps(2) infinite; }
+    #target .gauge .lost { position: absolute; top: 0; bottom: 0; box-shadow: inset 0 0 0 1px rgba(255, 138, 122, 0.8); background: rgba(192, 57, 43, 0.25); }
+    #target .gauge .gain { position: absolute; top: 0; bottom: 0; background: linear-gradient(#d4ffb8, #7fd65a); animation: tc-blink 0.8s steps(2) infinite; }
+    #target .side.them .gauge .track { transform: scaleX(-1); }
+    #target .hpnum { font-size: 12px; color: var(--quiet); white-space: nowrap; }
+    #target .hpnum b { color: var(--ink); font-size: 14px; } #target .hpnum b.up { color: #a4f07c; }
+    #target .hpnum .arrow { font-style: normal; color: var(--accent); }
+    #target .hpnum b.ko { color: #ff8a7a; display: inline-flex; align-items: center; gap: 2px; } #target .hpnum b.ko img.ico { width: 14px; height: 14px; }
+    #target .mid { flex: none; display: flex; flex-direction: column; align-items: center; max-width: 84px; text-align: center; font-size: 11px; line-height: 1.1; color: var(--ink); }
+    #target .mid img.ico.big { width: 26px; height: 26px; }
+    #target .mid span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 84px; }
+    #target .mid .go { font-style: normal; color: var(--accent); letter-spacing: -2px; animation: nudge 0.6s steps(2) infinite; }
+    #target .nums { display: flex; justify-content: center; align-items: baseline; gap: 4px 14px; margin-top: 5px; padding-top: 4px; border-top: 1px solid rgba(255, 214, 107, 0.28); flex-wrap: wrap; }
+    #target .stat { display: inline-flex; align-items: baseline; gap: 4px; } #target .stat small { color: var(--quiet); font-size: 12px; }
+    #target .stat b { font-size: 17px; color: var(--ink); } #target .stat.dmg b { color: #ffe06b; } #target .stat.up b { color: #a4f07c; }
+    #target .nums em { font-style: normal; font-size: 12px; } #target .nums em.up { color: #a4f07c; } #target .nums em.dn { color: #ffb3a6; }
+    #target .sum { display: flex; justify-content: center; margin-top: 2px; font-size: 12px; }
+    #target .verdict { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 3px; }
+    #target .down { color: #ffb3a6; } #target .quiet { color: var(--quiet); font-size: 12px; } #target b { font-weight: 600; }
+    #target .skull img.ico { width: 20px; height: 20px; }
+    #target .facebox { position: relative; flex: none; display: inline-flex; }
+    #target .ko-badge { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(60, 8, 12, 0.55); }
+    #target .ko-badge img.ico { width: 75%; height: 75%; animation: tc-blink 0.8s steps(2) infinite; }
+    #target.kills { filter: drop-shadow(0 0 0 #ff8a7a); } #target.kills .side.them .face { border-color: #ff8a7a; box-shadow: 0 0 0 2px #8e2a22; }
+    #target.low { transform: translate(0, 6px); } #target.low.show { transform: none; }
+    @media (max-width: 720px), (max-height: 560px) {
+      #target { padding: 4px 8px 5px; font-size: 12px; } #target .face { width: 32px; height: 32px; }
+      #target .stat b { font-size: 15px; } #target .nums { margin-top: 3px; padding-top: 3px; } #target .mid img.ico.big { width: 22px; height: 22px; }
+      #target .mid, #target .mid span { max-width: 64px; }
+    }
+    @keyframes tc-blink { 50% { opacity: 0.35; } }
     #tip { position: fixed; pointer-events: none; padding: 6px 9px; font-size: 13px; max-width: 270px; display: none; z-index: 4; }
     #tip b { color: var(--accent); }
     #tip .quiet { color: var(--quiet); }
@@ -168,7 +216,7 @@
   #routeKeys { color: var(--quiet); font-size: 12px; }
   #routeTitleBox { padding: 6px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; } #routeTitle { color: var(--accent); }
   #runmap { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 5; }
-  body.mapopen #top, body.mapopen #bottom, body.mapopen #act, body.mapopen #travel, body.mapopen #overlay, body.mapopen #tip, body.mapopen #help, body.mapopen #hint, body.mapopen #callout { display: none !important; }
+  body.mapopen #top, body.mapopen #bottom, body.mapopen #act, body.mapopen #travel, body.mapopen #overlay, body.mapopen #tip, body.mapopen #help, body.mapopen #hint, body.mapopen #callout, body.mapopen #target { display: none !important; }
   #signs { position: absolute; inset: 0; pointer-events: none; }
   .sign { position: absolute; pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: 1px;
     padding: 5px 10px 6px; background: linear-gradient(#7a5530, #5a3d1f); border: 2px solid #d9a35f; border-radius: 6px; box-shadow: 0 0 0 2px #2e1d0c, 0 6px 14px rgba(0,0,0,.45); white-space: nowrap; flex-direction: column; }
@@ -432,7 +480,7 @@
     background: radial-gradient(ellipse at 50% 42%, rgba(20, 14, 28, 0.55), rgba(8, 6, 12, 0.9) 70%); overflow: hidden; }
   body.titleopen #title { display: flex; }
   body.titleopen #top, body.titleopen #bottom, body.titleopen #act, body.titleopen #travel, body.titleopen #runmap, body.titleopen #runPanel,
-  body.titleopen #hint, body.titleopen #tip, body.titleopen #help, body.titleopen #callout, body.titleopen #overlay, body.titleopen #deployBar,
+  body.titleopen #hint, body.titleopen #target, body.titleopen #tip, body.titleopen #help, body.titleopen #callout, body.titleopen #overlay, body.titleopen #deployBar,
   body.titleopen #soundPanel, body.titleopen #toast { display: none !important; }
   #title .logo { text-align: center; animation: titleIn 0.9s steps(6, end) both; }
   #title h1 { margin: 0; font: 400 clamp(76px, 22vw, 140px)/0.9 "Jacquard 12", var(--px); color: #ffd96b; letter-spacing: 2px;
@@ -514,6 +562,7 @@
   <span id="hint"></span>
   <div id="help" class="win" role="status" aria-live="polite"></div>
   <div id="callout" class="win" aria-live="polite"></div>
+  <div id="target" class="win" role="status"></div>
   <div id="deployBar" class="win"><div><b id="deployTitle"></b><span id="deployHint"></span></div><button id="deployGo" class="go"></button></div>
   <div id="act"><button id="cancel"></button><button id="confirm" class="go"></button></div>
   <div id="tip" class="win"></div>
