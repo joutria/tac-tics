@@ -23,6 +23,7 @@ const CREDITS: { what: string; who: string; licence: string }[] = [
   { what: "24x32 characters (the party)", who: "Svetlana Kushnariova · lana-chan@yandex.ru", licence: "CC-BY 3.0" },
   { what: "JS Actors · Aeon Warriors (human foes)", who: "JosephSeraph", licence: "CC-BY 3.0" },
   { what: "Ratfolk", who: "Svetlana Kushnariova · lana-chan@yandex.ru, Redshrike, AntumDeluge", licence: "CC-BY 3.0" },
+  { what: "Orcs · Trolls (the brutes)", who: "Tuomo Untinen (Reemax), AntumDeluge", licence: "CC-BY 3.0" },
   { what: "Free RPG Character Sprites (goblins)", who: "Pipoya", licence: "Free use" },
   { what: "Golden UI", who: "Buch", licence: "CC0" },
   { what: "496 pixel art icons", who: "Henrique Lazarini (7Soul1)", licence: "CC0" },

@@ -9,7 +9,7 @@
 import { ITEMS, PERKS, REWARD, SHOP, type Rarity } from "../data/gear";
 import { DEPTH_HP, DEPTH_STAT, HERO, rulesFor, SAP_TIERS, REGIONS, regionalSpecies, type Difficulty, type Region, type Species } from "../data/region";
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
-import { standable, tileAt, type GridMap, type Pos } from "../engine/grid";
+import { cellsOf, coversPos, standable, tileAt, type GridMap, type Pos } from "../engine/grid";
 import type { BattleSave } from "../engine/save";
 import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
 import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
@@ -250,12 +250,14 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
         ...(boss.abilities ? { abilities: [...f.abilities, ...boss.abilities] } : {}) });
       continue;
     }
+    // An elite fight is led by the region's brute, a 2x2 giant, where the arena has room for it.
+    if (node.kind === "elite" && i === 0 && region.brute && arena.giant) { units.push(foeSpec(run, region.brute, id, arena.giant, depth)); continue; }
     units.push(foeSpec(run, pick(), id, pos, depth));
   }
   const help = run.help && run.help.node === nodeId && run.help.region === (run.region ?? 0) ? run.help : undefined;
   const helper = help?.kind === "join" ? run.spared?.find((f) => f.id === help.foe) : undefined;
   if (helper) units.push(helperSpec(helper, arena, units));
-  const map = node.flood ? floodMap(arena.map, node.flood, units.map((u) => u.pos), seedFrom(`${rs}:flood:${node.id}`)) : arena.map;
+  const map = node.flood ? floodMap(arena.map, node.flood, units.flatMap((u) => cellsOf(u.pos, u.size ?? 1)), seedFrom(`${rs}:flood:${node.id}`)) : arena.map;
   if (!isAmbush(run, node) || help?.kind === "warn") return { seed: `${rs}:battle:${node.id}`, map, units };
   placeAmbush(map, units, seedFrom(`${rs}:ambush-spots:${node.id}`));
   return { seed: `${rs}:battle:${node.id}`, map, units, ambush: true };
@@ -322,6 +324,7 @@ function placeAmbush(map: GridMap, units: UnitSpec[], seed: number) {
   }
   const used: Pos[] = [];
   foes.forEach((f, i) => {
+    if ((f.size ?? 1) > 1) return; // a giant is too big to hide: it waits where it stands
     const want = [0, 1, 2, 0][i % 4]!;
     const free = spots.filter((s) => !used.some((u) => u.x === s.p.x && u.y === s.p.y) && !used.some((u) => Math.abs(u.x - s.p.x) + Math.abs(u.y - s.p.y) < 2));
     const pick = free.filter((s) => s.side === want).sort((a, b) => a.roll - b.roll)[0] ?? free.sort((a, b) => a.roll - b.roll)[0];
@@ -332,7 +335,7 @@ function placeAmbush(map: GridMap, units: UnitSpec[], seed: number) {
 
 /** A spared foe fighting beside the party for one battle: on a free ally spot, or the free tile nearest the hero. */
 function helperSpec(f: SparedFoe, arena: ReturnType<typeof arenaFor>, units: UnitSpec[]): UnitSpec {
-  const taken = (p: Pos) => units.some((u) => u.pos.x === p.x && u.pos.y === p.y);
+  const taken = (p: Pos) => units.some((u) => coversPos(u.pos, u.size ?? 1, p));
   let pos = arena.allies.find((p) => !taken(p));
   if (!pos) {
     let best: { p: Pos; d: number } | null = null;
@@ -345,6 +348,7 @@ function helperSpec(f: SparedFoe, arena: ReturnType<typeof arenaFor>, units: Uni
   }
   const spec: UnitSpec = { ...structuredClone(f.spec), id: `ally-${f.id}`, team: "heroes", pos: { ...pos } };
   delete spec.marked; delete spec.rival; delete spec.hunts; delete spec.hpNow; delete spec.refuses;
+  delete spec.size; // a spared giant comes back at normal size, as a giant rival does (rivals.ts)
   return spec;
 }
 

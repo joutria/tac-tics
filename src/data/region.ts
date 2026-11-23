@@ -14,11 +14,15 @@ import type { Element } from "./elements";
 import type { Line } from "./rivals";
 import type { RecruitSpot } from "../run/map";
 
-export interface Arena { map: GridMap; hero: Pos; allies: Pos[]; foes: Pos[] }
+export interface Arena {
+  map: GridMap; hero: Pos; allies: Pos[]; foes: Pos[];
+  /** Where a 2x2 brute (Region.brute) stands in an elite fight: the corner of four level, open tiles. */
+  giant?: Pos;
+}
 
 export const ARENAS: Arena[] = [
-  { map: MEADOW, hero: { x: 2, y: 6 }, allies: [{ x: 1, y: 6 }, { x: 2, y: 7 }, { x: 3, y: 6 }], foes: [{ x: 7, y: 1 }, { x: 8, y: 6 }, { x: 6, y: 8 }, { x: 9, y: 4 }] },
-  { map: RUINS, hero: { x: 2, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 2, y: 7 }, { x: 4, y: 8 }], foes: [{ x: 8, y: 1 }, { x: 6, y: 2 }, { x: 9, y: 6 }, { x: 5, y: 5 }] },
+  { map: MEADOW, hero: { x: 2, y: 6 }, allies: [{ x: 1, y: 6 }, { x: 2, y: 7 }, { x: 3, y: 6 }], foes: [{ x: 7, y: 1 }, { x: 8, y: 6 }, { x: 6, y: 8 }, { x: 9, y: 4 }], giant: { x: 2, y: 0 } },
+  { map: RUINS, hero: { x: 2, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 2, y: 7 }, { x: 4, y: 8 }], foes: [{ x: 8, y: 1 }, { x: 6, y: 2 }, { x: 9, y: 6 }, { x: 5, y: 5 }], giant: { x: 8, y: 3 } },
 ];
 
 /** Species spec without id or position; a battle gives each one a unique id. */
@@ -75,6 +79,9 @@ export interface Region {
   variant?: VariantRule;
   /** Species that live only here, fielded as they are. */
   natives?: Species[];
+  /** A 2x2 giant that leads the region's elite fights, in place of their first foe, where the arena has room
+      (Arena.giant). Never Sap-marked: too big to slip away and turn rival. */
+  brute?: Species;
   /** Companions met here, by map layer. */
   recruits: RecruitSpot[];
   /** Layer of the region's Floodgate, if it has one (a choice node that floods one path and freezes the other). */
@@ -110,6 +117,17 @@ const TOWN_NATIVES: Species[] = [
     res: { bolt: 20 }, abilities: ["spark", "jolt"], ai: "caster", marked: true },
 ];
 
+/* The brutes (art in public/art/folk/, tools/folk-art.py): an ogre that took over the ruined town's square, and a
+   troll from the reservoir's flooded tunnels. Slow and hard-hitting; party members can step around them. */
+const OGRE: Species = {
+  name: "Ogro", team: "foes", element: "stone", look: "ogro", size: 2, hp: 84, ap: 6, mp: 3, speed: 34, jump: 1, str: 15, mag: 0, agi: 4,
+  res: { stone: 25 }, abilities: ["slam", "stomp"], ai: "bruiser",
+};
+const TROLL: Species = {
+  name: "Trol", team: "foes", element: "plant", look: "trol", size: 2, hp: 92, ap: 6, mp: 3, speed: 32, jump: 1, str: 15, mag: 0, agi: 4,
+  res: { plant: 25, water: 10 }, abilities: ["bite", "stomp"], ai: "bruiser",
+};
+
 const RESERVOIR_NATIVES: Species[] = [
   { name: "Relampín", team: "foes", element: "bolt", look: "relampin", hp: 28, ap: 6, mp: 4, speed: 52, jump: 1, str: 6, mag: 12, agi: 16,
     res: { bolt: 25 }, abilities: ["spark", "jolt"], ai: "skirmisher", marked: true },
@@ -130,18 +148,18 @@ const BROKEN_MIRA: Species = {
 };
 
 export const REGIONS: Region[] = [
-  { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS, natives: TOWN_NATIVES,
+  { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS, natives: TOWN_NATIVES, brute: OGRE,
     recruits: [{ layer: 1, talk: "remanso.meet" }, { layer: 3, talk: "guijo.meet" }] },
   {
     id: "reservoir", name: { es: "El Embalse Quebrado", en: "The Broken Reservoir" },
     arenas: [
-      { map: SHORE, hero: { x: 2, y: 8 }, allies: [{ x: 1, y: 8 }, { x: 3, y: 7 }, { x: 2, y: 9 }], foes: [{ x: 7, y: 1 }, { x: 9, y: 1 }, { x: 5, y: 0 }, { x: 8, y: 3 }] },
-      { map: SPILLWAY, hero: { x: 4, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 5, y: 8 }, { x: 4, y: 9 }], foes: [{ x: 2, y: 0 }, { x: 5, y: 1 }, { x: 8, y: 0 }, { x: 6, y: 2 }] },
+      { map: SHORE, hero: { x: 2, y: 8 }, allies: [{ x: 1, y: 8 }, { x: 3, y: 7 }, { x: 2, y: 9 }], foes: [{ x: 7, y: 1 }, { x: 9, y: 1 }, { x: 5, y: 0 }, { x: 8, y: 3 }], giant: { x: 7, y: 4 } },
+      { map: SPILLWAY, hero: { x: 4, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 5, y: 8 }, { x: 4, y: 9 }], foes: [{ x: 2, y: 0 }, { x: 5, y: 1 }, { x: 8, y: 0 }, { x: 6, y: 2 }], giant: { x: 2, y: 0 } },
     ],
     // The first region's foes, touched by the frozen lake: Ice instead of their element, and a cold bite.
     species: SPECIES,
     variant: { element: "ice", name: { es: "{name} Escarchado", en: "Frost {name}" }, res: { ice: 20 }, hp: 4, abilities: ["frostbite"] },
-    natives: RESERVOIR_NATIVES,
+    natives: RESERVOIR_NATIVES, brute: TROLL,
     boss: { species: 0, hp: 1, stat: 0, mp: 0, name: { es: "Mira Quebrada", en: "Broken Mira" }, unit: BROKEN_MIRA },
     recruits: [{ layer: 1, talk: "centella.meet" }, { layer: 3, talk: "moheda.meet" }],
     floodgate: 2,

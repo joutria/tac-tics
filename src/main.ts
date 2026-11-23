@@ -2162,7 +2162,7 @@ async function start() {
   const base = import.meta.env.BASE_URL;
   const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", ...SCENERY_IMAGES];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
-  const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : [])])];
+  const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : []), ...(r.brute ? [r.brute] : [])])];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}${lookArt(u.look)}`;
   for (const u of looks) { const f = lookFace(u.look); if (f) srcs[`face-${u.look}`] = `${base}${f}`; }
   Object.assign(srcs, fxSources(base));
