@@ -18,7 +18,7 @@ import { manhattan, Pos, rockSizeOf, sightBlock, TERRAIN, tileAt, type GridMap }
 import { reachable } from "./engine/movement";
 import { heightShapesReach, reachAt, reachBound, type Reach } from "./engine/reach";
 import { dangerZone } from "./engine/threat";
-import { actionCost, manaCost, setRules, usesMana } from "./engine/rules";
+import { actionCost, isBasic, manaCost, setRules, usesMana } from "./engine/rules";
 import { cowering, isBorder, turnMp, wavering, yielding } from "./engine/escape";
 import { STATUS } from "./engine/status";
 import { charged } from "./engine/terrain";
@@ -79,8 +79,10 @@ let view: View = { ox: 0, oy: 0, scale: 1, rot: 0 };
 let zoom = 0, panX = 0, panY = 0; // zoom 0 = pick a comfortable size on the first layout
 let hover: Pos | null = null;
 let selected: string | null = null;
-/** The quick actions row is open (one free quick action per turn). */
-let quickOpen = false;
+/** The command menu's open page, FFTA-style: "" is the top list (the basic attack and one row per set), otherwise the
+    set whose abilities fill the menu in its place: mana spells, the other abilities, or the quick actions. */
+type CmdPage = "" | "magic" | "skills" | "quick";
+let page: CmdPage = "";
 /** On touch the first tap only chooses a tile; a second tap on it, or the Confirm button, carries the action out. */
 let pending: Pos | null = null;
 let busy = false;
@@ -839,10 +841,19 @@ function abilityHelp(id: string, u: Unit | null): string {
     + `${why ? `<p class="why">${explainAvail(why)}</p>` : ""}`;
 }
 
-/** The order abilities are listed in the menu (and picked with the number keys): the unit's own, then the quick ones. */
+/** Which page of the command menu an ability sits on: the basic attack on the top list, like FFTA's Fight; spells
+    that cost mana under Magic; free abilities (Help up, Spare...) under Skills; quick actions under Quick. */
+function pageOf(id: string): CmdPage {
+  const ab = ABILITIES[id]!;
+  if (ab.quick) return "quick";
+  if (isBasic(ab)) return "";
+  return manaCost(ab) > 0 ? "magic" : "skills";
+}
+const PAGES = ["", "magic", "skills", "quick"] as const;
+/** The order abilities are listed in the menu (and picked with the number keys): page by page, as the menu shows them. */
 function menuOrder(u: Unit): string[] {
   const all = unitAbilities(u);
-  return [...all.filter((id) => !ABILITIES[id]!.quick), ...all.filter((id) => ABILITIES[id]!.quick)];
+  return PAGES.flatMap((pg) => all.filter((id) => pageOf(id) === pg));
 }
 
 const pips = (n: number, max: number) => Array.from({ length: max }, (_, i) => `<i${i < n ? ' class="on"' : ""}></i>`).join("");
@@ -899,34 +910,45 @@ function refresh() {
     queue.append(chip);
   });
   const mine = heroTurn() && !busy;
-  // The command menu: the unit's abilities as rows, then the quick actions folded under one row.
+  // The command menu, FFTA-style: the top list holds the basic attack and one row per set (Magic, Skills, Quick);
+  // a set's row swaps the list for that set's abilities, with a back row on top, so the menu stays one short column.
   const bar = $("abilities");
   bar.replaceChildren();
   $("menu").style.display = u.team === "heroes" ? "" : "none";
-  $("menuTitle").textContent = t(lang, "actions");
-  const quickIds = menuOrder(u).filter((id) => ABILITIES[id]!.quick);
+  const order = u.team === "heroes" ? menuOrder(u) : [];
+  if (selected && order.includes(selected)) page = pageOf(selected);
+  if (page && !order.some((id) => pageOf(id) === page)) page = "";
   const quickDone = !!u.usedThisTurn.quick;
-  if (selected && ABILITIES[selected]?.quick) quickOpen = true;
-  const shown = menuOrder(u).filter((id) => !ABILITIES[id]!.quick);
-  for (const id of [...shown, "__quick", ...(quickOpen ? quickIds : [])]) {
-    if (u.team !== "heroes") break;
-    if (id === "__quick") {
-      // One row opens the quick actions: a free one per turn, shared between them.
-      const q = document.createElement("button");
-      q.className = `cmd quickToggle${quickOpen ? " open" : ""}`;
-      q.disabled = !mine || quickDone;
-      q.innerHTML = `${icon("quick")}<span class="nm">${t(lang, quickDone ? "quickUsed" : "quickMenu")}</span><span class="cost">0${icon("ap")}</span>`;
-      explains(q, () => plainHelp(t(lang, "quickMenu"), t(lang, "quickInfo"), "quick"));
-      q.onclick = () => { quickOpen = !quickOpen; if (!quickOpen && selected && ABILITIES[selected]?.quick) selected = null; refresh(); };
-      bar.append(q);
-      continue;
-    }
+  if (page === "quick" && quickDone && !selected) page = "";
+  const pageName = (pg: CmdPage) => t(lang, pg === "magic" ? "cmdMagic" : pg === "skills" ? "cmdSkills" : pg === "quick" ? "quickMenu" : "actions");
+  const pageIcon = (pg: CmdPage) => (pg === "magic" ? pk("S_Magic08") : pg === "skills" ? pk(RUN_PACK.normal) : "quick");
+  const pageHint = (pg: CmdPage) => t(lang, pg === "magic" ? "cmdMagicHint" : pg === "skills" ? "cmdSkillsHint" : "quickInfo");
+  $("menuTitle").textContent = pageName(page);
+  $("menu").dataset.page = page;
+  const row = (cls: string, html: string, help: () => string, onclick: () => void, disabled = false) => {
+    const b = document.createElement("button");
+    b.className = `cmd ${cls}`;
+    b.innerHTML = html;
+    b.disabled = disabled;
+    explains(b, help);
+    b.onclick = onclick;
+    bar.append(b);
+    return b;
+  };
+  if (page) {
+    row("back", `<span class="nm">${pageName(page)}</span>`, () => plainHelp(t(lang, "menuBack"), pageHint(page)), () => {
+      if (selected && pageOf(selected) === page) selected = null;
+      page = ""; pending = null; refresh();
+    });
+  }
+  const whyNot = (id: string) => { const ab = ABILITIES[id]!; return abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? swimProblem(state.map, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null); };
+  const ids = page ? order.filter((id) => pageOf(id) === page) : order.filter((id) => pageOf(id) === "");
+  for (const id of ids) {
     const ab = ABILITIES[id]!;
     const b = document.createElement("button");
-    b.className = `cmd${ab.quick ? " sub" : ""}${selected === id ? " on" : ""}`;
+    b.className = `cmd${selected === id ? " on" : ""}`;
     b.style.setProperty("--el", ELEMENTS[ab.element].col);
-    const why = abilityAvailable(u, id) ?? comboProblem(state, u, ab) ?? swimProblem(state.map, u, ab) ?? (ab.spare && !state.units.some(yielding) ? "nobody yields" : null);
-    b.disabled = !mine || !!why;
+    b.disabled = !mine || !!whyNot(id);
     const cd = u.cooldowns[id];
     b.innerHTML = `${icon(abilityIcon(id, ab.element))}<span class="nm">${abilityName(lang, id)}</span>`
       + `<span class="cost${cd ? " cd" : ""}">${cd ? `${icon("cooldown")}${cd}` : costText(ab)}</span>`;
@@ -934,6 +956,18 @@ function refresh() {
     explains(b, () => abilityHelp(id, activeUnit(state)));
     b.onclick = () => { selected = selected === id ? null : id; pending = null; inspect = null; tooltip(null); refresh(); };
     bar.append(b);
+  }
+  if (!page) {
+    for (const pg of ["magic", "skills", "quick"] as const) {
+      const inSet = order.filter((id) => pageOf(id) === pg);
+      if (!inSet.length) continue;
+      const used = pg === "quick" && quickDone;
+      const ready = inSet.filter((id) => !whyNot(id)).length;
+      const side = pg === "quick" ? `0${icon("ap")}` : `${ready}/${inSet.length}`;
+      row(`set${pg === "quick" ? " quickToggle" : ""}`, `${icon(pageIcon(pg))}<span class="nm">${t(lang, used ? "quickUsed" : pg === "quick" ? "quickMenu" : pg === "magic" ? "cmdMagic" : "cmdSkills")}</span><span class="cost">${side}</span>`,
+        () => `<div class="head">${icon(pageIcon(pg), "big")}<span>${pageName(pg)}</span></div><p>${pageHint(pg)}</p>`,
+        () => { page = pg; pending = null; refresh(); }, !mine || used);
+    }
   }
   $<HTMLButtonElement>("end").disabled = !mine;
   $<HTMLButtonElement>("wait").disabled = !mine || u.spentAp || u.moved || u.waited || !!u.usedThisTurn.quick;
@@ -1858,13 +1892,12 @@ function input(k: Input) {
   if ((!heroTurn() && !deploy) || busy || animating()) return;
   if (k === "end") { if (deploy) beginFight(); else $("end").click(); return; }
   if (deploy && k === "next") return;
-  if (k === "back") { selected = null; pending = null; inspect = null; tooltip(null); refresh(); return; }
+  if (k === "back") { if (!selected && !pending && page) page = ""; selected = null; pending = null; inspect = null; tooltip(null); refresh(); return; }
   if (k === "next") {
     // Cycles the abilities that can be used now, then back to moving.
     const u = activeUnit(state), list = menuOrder(u).filter((id) => !abilityAvailable(u, id));
     const i = selected ? list.indexOf(selected) : -1;
     selected = i + 1 < list.length ? list[i + 1]! : null; pending = null;
-    if (selected && ABILITIES[selected]!.quick) quickOpen = true;
     refresh(); tooltip(cursor);
     return;
   }
@@ -1991,8 +2024,9 @@ function actionAt(p: Pos): { cmd: Command } | { why: string } | null {
 
 function act(cmd: Command) {
   const ok = run(cmd);
-  if (cmd.t === "cast" && ok) { if (ABILITIES[cmd.ability]?.quick) quickOpen = false; selected = null; }
-  if (cmd.t === "endTurn" || cmd.t === "wait" || cmd.t === "guard") quickOpen = false;
+  // As in FFTA, the menu goes back to its top list once something is done.
+  if (cmd.t === "cast" && ok) { page = ""; selected = null; }
+  if (cmd.t === "endTurn" || cmd.t === "wait" || cmd.t === "guard") page = "";
   pending = null;
   refresh();
   if (cmd.t === "cast") maybeFoeTurn();
