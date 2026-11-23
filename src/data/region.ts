@@ -95,11 +95,32 @@ export function regionalSpecies(region: Region, lang: "es" | "en"): Species[] {
   })), ...(region.natives ?? [])];
 }
 
+/* Humanoid foes (art in public/art/folk/, tools/folk-art.py). The four fighters are people the Sap marked: looters
+   and drifters who came for what the ruin left, and grudge-holders who make the best rivals. Goblins came down from
+   the hills to the empty town; ratfolk live in the reservoir's pump tunnels. Stats sit beside the creatures they
+   share a region with, so foe strength stays where it was. */
+const TOWN_NATIVES: Species[] = [
+  { name: "Brasa", team: "foes", element: "fire", look: "brasa", hp: 30, ap: 6, mp: 3, speed: 46, jump: 1, str: 4, mag: 10, agi: 12,
+    res: { fire: 25 }, abilities: ["ember", "blaze"], ai: "skirmisher", marked: true },
+  { name: "Peña", team: "foes", element: "stone", look: "pena", hp: 40, ap: 6, mp: 3, speed: 34, jump: 1, str: 11, mag: 0, agi: 6,
+    res: { stone: 25 }, abilities: ["slam", "tremor"], ai: "bruiser", marked: true },
+  { name: "Trasgo", team: "foes", element: "plant", look: "trasgo", hp: 32, ap: 6, mp: 3, speed: 44, jump: 1, str: 9, mag: 0, agi: 12,
+    res: { plant: 20 }, abilities: ["bite", "snare"], ai: "bruiser", marked: true },
+  { name: "Trasgo Chamán", team: "foes", element: "bolt", look: "trasgo-chaman", hp: 26, ap: 6, mp: 3, speed: 40, jump: 1, str: 0, mag: 11, agi: 10,
+    res: { bolt: 20 }, abilities: ["spark", "jolt"], ai: "caster", marked: true },
+];
+
 const RESERVOIR_NATIVES: Species[] = [
   { name: "Relampín", team: "foes", element: "bolt", look: "relampin", hp: 28, ap: 6, mp: 4, speed: 52, jump: 1, str: 6, mag: 12, agi: 16,
     res: { bolt: 25 }, abilities: ["spark", "jolt"], ai: "skirmisher", marked: true },
   { name: "Carámbano", team: "foes", element: "ice", look: "carambano", hp: 40, ap: 6, mp: 3, speed: 34, jump: 1, str: 10, mag: 8, agi: 8,
     res: { ice: 30, water: 15 }, abilities: ["chill", "freeze"], ai: "bruiser", marked: true },
+  { name: "Malva", team: "foes", element: "mush", look: "malva", hp: 30, ap: 6, mp: 3, speed: 42, jump: 1, str: 0, mag: 12, agi: 10,
+    res: { mush: 25 }, abilities: ["wilt", "spores"], ai: "caster", marked: true },
+  { name: "Marea", team: "foes", element: "ice", look: "marea", hp: 40, ap: 6, mp: 3, speed: 36, jump: 1, str: 10, mag: 4, agi: 8,
+    res: { ice: 25, water: 10 }, abilities: ["frostbite", "chill"], ai: "bruiser", marked: true },
+  { name: "Ratero", team: "foes", element: "water", look: "ratero", hp: 30, ap: 6, mp: 4, speed: 50, jump: 1, str: 7, mag: 0, agi: 16,
+    res: { water: 20 }, abilities: ["splash", "undertow"], ai: "skirmisher", marked: true },
 ];
 
 /** Broken Mira: the reservoir's guardian, frozen and swollen by the Sap. A boss of her own, not a swollen species. */
@@ -109,7 +130,7 @@ const BROKEN_MIRA: Species = {
 };
 
 export const REGIONS: Region[] = [
-  { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS,
+  { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS, natives: TOWN_NATIVES,
     recruits: [{ layer: 1, talk: "remanso.meet" }, { layer: 3, talk: "guijo.meet" }] },
   {
     id: "reservoir", name: { es: "El Embalse Quebrado", en: "The Broken Reservoir" },
