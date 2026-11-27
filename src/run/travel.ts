@@ -91,6 +91,9 @@ export interface Scene {
   foes: Pos[];
   /** The foes are hidden until the party arrives, then jump out. */
   ambush: boolean;
+  /** A fight that is not an ambush: each foe's march onto its spot from the arena's far edge, while the ground
+      around the arena falls away (one point when it already stands there). */
+  foePaths?: Pos[][];
   /** Where the arena begins (the top `arenaRows` rows of the strip are the arena), 0 when there is none. */
   arenaRows: number;
 }
@@ -255,7 +258,7 @@ export function departScene(seed: string, region: string, origin: Origin, open: 
 
 /** What waits at the end of a path. */
 export type Destination =
-  | { t: "fight"; arena: GridMap; party: Pos[]; foes: Pos[]; ambush: boolean }
+  | { t: "fight"; arena: GridMap; party: Pos[]; foes: Pos[]; ambush: boolean; still?: number[] }
   | { t: "place"; place: keyof typeof PLACES };
 
 /** The walk from the fork, down the chosen node's trail, to what waits there. */
@@ -284,9 +287,43 @@ export function approachScene(seed: string, region: string, col: number, dest: D
     const starts = [start, { x: sx, y: rows.length - 1 }, { x: sx, y: rows.length - 1 }, { x: sx, y: rows.length - 1 }];
     const paths = partyPaths(m, start, end, party, ends, starts);
     if (!paths) continue;
-    return { map: m, paths, signs: [], foes: dest.t === "fight" ? dest.foes : [], ambush: dest.t === "fight" && dest.ambush, arenaRows: dest.t === "fight" ? head.length : 0 };
+    if (dest.t !== "fight") return { map: m, paths, signs: [], foes: [], ambush: false, arenaRows: 0 };
+    const foePaths = dest.ambush ? undefined : marchPaths(m, head.length, dest.foes, paths.map((p) => p.at(-1)!), dest.still ?? []);
+    return { map: m, paths, signs: [], foes: dest.foes, ambush: dest.ambush, arenaRows: head.length, foePaths };
   }
   throw new Error("no walkable approach strip");
+}
+
+/** How far a foe marches onto the arena: a few steps in from the nearest far edge (the top rows or the upper sides,
+    never the side the party came from). */
+export const MARCH_STEPS = 4;
+
+/** Each foe's march to its spot: it starts up to MARCH_STEPS tiles away, toward the arena's far edges, and walks in
+    around the party and the other foes' spots. `still` are foes (by index) that are already there (a survivor). */
+function marchPaths(m: GridMap, arenaRows: number, foes: Pos[], party: Pos[], still: number[]): Pos[][] {
+  const taken = [...party, ...foes];
+  return foes.map((to, i) => {
+    if (still.includes(i)) return [{ ...to }];
+    const blocked = (p: Pos) => taken.some((q) => q.x === p.x && q.y === p.y && !(q.x === to.x && q.y === to.y));
+    // Candidate starts: open tiles in the arena's upper half, farther from the party than the spot is, ranked by
+    // how close to MARCH_STEPS steps away they are and how near the edge.
+    const far = (p: Pos) => Math.min(...party.map((q) => Math.abs(q.x - p.x) + Math.abs(q.y - p.y)));
+    const starts: { p: Pos; score: number }[] = [];
+    for (let y = 0; y < Math.max(1, Math.ceil(arenaRows / 2) + 1); y++) for (let x = 0; x < m.w; x++) {
+      const p = { x, y }, t = tileAt(m, p);
+      if (!standable(t) || blocked(p) || (t!.fireUntil ?? 0) > 0) continue;
+      const d = Math.abs(p.x - to.x) + Math.abs(p.y - to.y);
+      if (d === 0 || d > MARCH_STEPS + 2 || far(p) < far(to)) continue;
+      const edge = Math.min(y, x, m.w - 1 - x);
+      starts.push({ p, score: Math.abs(d - MARCH_STEPS) * 2 + edge });
+    }
+    starts.sort((a, b) => a.score - b.score || a.p.y - b.p.y || a.p.x - b.p.x);
+    for (const s of starts.slice(0, 6)) {
+      const path = walkPath(m, s.p, to, blocked);
+      if (path && path.length <= MARCH_STEPS + 4) return path;
+    }
+    return [{ ...to }];
+  });
 }
 
 /** Where a node's path ends, if it is not a fight. */

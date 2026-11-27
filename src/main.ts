@@ -31,7 +31,7 @@ import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveS
 import { aheadOf, choices } from "./run/map";
 import { memberSpec } from "./run/party";
 import { deployUnit, deployZone } from "./run/deploy";
-import { approachScene, departScene, placeOf, type Origin, type Scene } from "./run/travel";
+import { approachScene, departScene, placeOf, walkPath, type Origin, type Scene } from "./run/travel";
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, iconTile, nodeLabel, renderRunMap } from "./ui/runmap";
@@ -44,8 +44,10 @@ import { hideTitle, showTitle, titleBack, titleButtons, titleOpen, type TitleOpt
 import { record, renderStats } from "./ui/stats";
 import { logBattle, logBuy, logChoice, logNode, logRunEnd, logRunStart, logShopHeal, logShopLeave, logWear, PLAYER } from "./run/playlog";
 import { BattleSave, replay } from "./engine/save";
+import { parley, type Spoken } from "./run/parley";
 import {
   activeUnit, applyCommand, BattleEvent, BattleState, createBattle, Command, FACINGS, moveRules, type Facing, roundOf, unitAt, unitById, unsettled, upcomingTurns, type Unit, type UnitSpec,
+  cellsOfUnit,
 } from "./engine/state";
 import { abilityDesc, abilityName, Lang, t, type TextKey } from "./i18n/text";
 import { fxSources, type Burst } from "./render/fx";
@@ -116,7 +118,7 @@ const animating = () => performance.now() < animUntil;
 function safeGet(k: string) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode: play without saving */ } }
 
-const heroTurn = () => !deploy && !state.winner && activeUnit(state).team === "heroes";
+const heroTurn = () => !deploy && !talk && !state.winner && activeUnit(state).team === "heroes";
 
 /** Replays a save one command at a time to rebuild the turn bookkeeping (where the current turn began, where each
     of the hero's turns began), so Undo and Rewind still work after a reload. */
@@ -156,6 +158,10 @@ let statsOpen = false;
 let battleStartedAt = 0;
 /** Before a fight: the tiles the party may start on and the party member picked to move (run/deploy.ts). */
 let deploy: { zone: Pos[]; pick: string | null } | null = null;
+/** Words before a fight (run/parley.ts): the lines, the one showing, when it began typing, then what comes after. */
+let talk: { lines: Spoken[]; i: number; at: number; tag: string; then: () => void } | null = null;
+/** Letters typed per second in the talk box. */
+const TALK_CPS = 48;
 /** The battle view grows (or shrinks) from the travel scene's size when a fight opens after the intro. */
 let introZoom: { from: number; at: number } | null = null;
 const INTRO_ZOOM_MS = 750;
@@ -436,10 +442,88 @@ function startBattle(announce: boolean) {
   if (introFrom) { introZoom = { from: introFrom, at: performance.now() }; introFrom = 0; }
   persist(); refresh(); followHero();
   const rivals = journey.rivals.filter((r) => !r.settled && save.setup.units.some((u) => u.id === r.id));
-  if (announce && rivals.length && !save.commands.length) toast(rivals.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
-  else if (save.setup.ambush && !save.commands.length) toast(t(lang, "ambush"), 2600);
-  else if (journey.help && journey.help.node === journey.battle!.node && !save.commands.length) toast(helpLine(journey, lang), 3200);
-  maybeFoeTurn();
+  const fresh = !save.commands.length && !save.placed;
+  // Foes who can talk say something first (an ambush leaves time for one shout only).
+  const lines = fresh && !save.talked ? parley(save.setup, { lang, kind: journey.map.nodes[journey.battle!.node]?.kind, rivals: journey.rivals }) : [];
+  const said = save.setup.ambush ? lines.filter((l) => l.side === "foes").slice(0, 1) : lines;
+  const then = () => {
+    // A rival's taunt is in the talk when there is one; otherwise it shows as before.
+    if (!said.length && announce && rivals.length && !save.commands.length) toast(rivals.map((r) => rivalTaunt(r, lang)).join("\n"), 4500);
+    if (save.setup.ambush && !save.commands.length) toast(t(lang, "ambush"), 2600);
+    else if (journey.help && journey.help.node === journey.battle!.node && !save.commands.length) toast(helpLine(journey, lang), 3200);
+    maybeFoeTurn();
+  };
+  if (said.length) startTalk(said, then); else then();
+}
+
+/** The objective in a line, for the talk box. */
+function goalLine(): string {
+  const g = state.goal;
+  if (!g) return "";
+  const who = goalUnit(state);
+  const text = g.kind === "protect" ? t(lang, "goalDo.protect", { name: who?.name ?? "" })
+    : g.kind === "survive" ? t(lang, "goalDo.survive", { n: g.rounds }) : t(lang, "goalDo.catch");
+  return t(lang, "parleyGoal", { goal: text });
+}
+
+function startTalk(lines: Spoken[], then: () => void) {
+  talk = { lines, i: 0, at: performance.now(), tag: goalLine(), then };
+  $("parleySkip").textContent = t(lang, "parleySkip");
+  showTalk();
+}
+
+/** Puts the current line in the talk box and turns the camera to whoever says it. */
+function showTalk() {
+  if (!talk) return;
+  const line = talk.lines[talk.i]!, box = $("parley");
+  document.body.classList.add("talking");
+  box.className = `win ${line.side}`;
+  const face = portrait(images, line.look);
+  box.querySelector(".face")!.innerHTML = face ? `<img src="${face}" alt="">` : "";
+  box.querySelector(".who")!.textContent = line.name;
+  box.querySelector("p")!.textContent = "";
+  // The goal shows under the hero's answer (the last line the hero says).
+  const heroLine = talk.lines.map((l) => l.unit).lastIndexOf(HERO.id);
+  box.querySelector(".tag")!.textContent = talk.i === heroLine ? talk.tag : "";
+  (box.querySelector(".more") as HTMLElement).style.visibility = "hidden";
+  talk.at = performance.now();
+  const u = state.units.find((v) => v.id === line.unit);
+  if (u) {
+    focus = { id: u.id, until: performance.now() + 60_000 }; centreOn(u.pos);
+    // A speech mark pops over whoever talks, so they can be found on the board.
+    floaters.push({ pos: { ...u.pos }, text: "…", color: line.side === "foes" ? "#ff8a7a" : "#bfe6ff", born: performance.now() });
+  }
+  sfx(line.side === "foes" ? "page" : "select");
+  tickTalk();
+}
+
+/** Types the line out, letter by letter. */
+function tickTalk() {
+  if (!talk) return;
+  const text = talk.lines[talk.i]!.text, n = Math.floor(((performance.now() - talk.at) / 1000) * TALK_CPS);
+  const p = $("parley").querySelector("p")!;
+  p.textContent = text.slice(0, n);
+  if (n < text.length) { requestAnimationFrame(tickTalk); return; }
+  ($("parley").querySelector(".more") as HTMLElement).style.visibility = "";
+}
+
+/** A tap, A or Space: finish typing the line, or go on to the next (or end the talk after the last). */
+function advanceTalk() {
+  if (!talk) return;
+  const text = talk.lines[talk.i]!.text;
+  if (((performance.now() - talk.at) / 1000) * TALK_CPS < text.length) { talk.at = -1e9; tickTalk(); return; }
+  if (talk.i + 1 < talk.lines.length) { talk.i++; showTalk(); return; }
+  endTalk();
+}
+
+function endTalk() {
+  if (!talk) return;
+  const then = talk.then;
+  talk = null; focus = null;
+  document.body.classList.remove("talking");
+  save.talked = true;
+  persist(); refresh(); followHero();
+  then();
 }
 
 /** Placing the party: a tap on a party member picks it; a tap on a gold tile moves it there (or swaps two). */
@@ -450,8 +534,19 @@ function deployTap(p: Pos) {
   if (!deploy.pick) return;
   const next = deployUnit(save.setup, deploy.pick, p, deploy.zone);
   if (next === save.setup) { if (!who) sfx("error"); return; }
+  const was = new Map(state.units.map((u) => [u.id, { ...u.pos }]));
   save.setup = next;
   rebuild([]);
+  // Whoever moved (two when they swap) walks to the new spot instead of jumping there.
+  const now = performance.now();
+  for (const u of state.units) {
+    const from = was.get(u.id);
+    if (!from || (from.x === u.pos.x && from.y === u.pos.y)) continue;
+    const path = walkPath(state.map, from, u.pos, (q) => state.units.some((v) => v.id !== u.id && v.life === "up" && v.team === "foes" && cellsOfUnit(v).some((c) => c.x === q.x && c.y === q.y))) ?? [from, { ...u.pos }];
+    const mo: Motion = { points: path, born: now, stepMs: 110, kind: path.length > 2 || Math.abs(from.x - u.pos.x) + Math.abs(from.y - u.pos.y) <= 1 ? "walk" : "slide" };
+    animUntil = Math.max(animUntil, now + motionMs(mo));
+    motions.set(u.id, mo);
+  }
   sfx("step");
   persist(); refresh();
 }
@@ -669,7 +764,7 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
 }
 
 async function maybeFoeTurn() {
-  if (busy || onMap || deploy) return;
+  if (busy || onMap || deploy || talk) return;
   busy = true; pending = null; tooltip(null); refresh();
   while (!state.winner && activeUnit(state).team === "foes") {
     for (const c of planTurn(state)) {
@@ -1628,6 +1723,8 @@ function stagePlay(key: string, kind: Play["kind"], scene: Scene, party: UnitSpe
     u.facing = u.team === "heroes" ? "N" : "S";
     if (u.team === "foes" && scene.ambush) u.life = "escaped"; // hidden until they spring
   }
+  // Foes who march in during the intro are not there yet.
+  scene.foePaths?.forEach((path, i) => { const u = stage.units[party.slice(0, scene.paths.length).length + i]; if (u && path.length > 1) u.life = "escaped"; });
   const motions = new Map<string, Motion>();
   scene.paths.forEach((path, i) => motions.set(units[i]!.id, { points: path, born: Infinity, stepMs: TRAVEL_STEP_MS, kind: "walk" }));
   sceneCam = null;
@@ -1677,7 +1774,8 @@ function approach(nodeId: number, then: () => void) {
     // A goal's survivor waits on the field with the foes; it does not walk in with the party.
     const heroes = b.setup.units.filter((u) => u.team === "heroes" && !u.ward);
     foes = b.setup.units.filter((u) => u.team === "foes" || u.ward);
-    scene = approachScene(seed, regionOf(journey).id, node.col, { t: "fight", arena: b.setup.map, party: heroes.map((u) => u.pos), foes: foes.map((u) => u.pos), ambush: !!b.setup.ambush }, heroes.length);
+    const still = foes.flatMap((u, i) => (u.ward ? [i] : []));
+    scene = approachScene(seed, regionOf(journey).id, node.col, { t: "fight", arena: b.setup.map, party: heroes.map((u) => u.pos), foes: foes.map((u) => u.pos), ambush: !!b.setup.ambush, still }, heroes.length);
     party = heroes;
   } else {
     party = partySpecs();
@@ -1690,11 +1788,13 @@ function approach(nodeId: number, then: () => void) {
 /** Every frame on the travel screen: ends the walk, springs an ambush, then hands over. */
 /** A title card across the screen as a fight begins, like a stage name in a console game: the region small, the
     fight's name large, sliding in and fading out on its own (CSS) while the ground falls away. */
-function banner(small: string, big: string) {
+function banner(small: string, big: string, warn?: string) {
   const b = $("banner");
-  b.innerHTML = `<small>${small}</small><h2>${big}</h2>`;
-  b.classList.remove("on"); void b.offsetWidth; b.classList.add("on");
+  b.innerHTML = `<small>${small}</small><h2>${big}</h2>${warn ? `<p>${warn}</p>` : ""}`;
+  b.classList.remove("on", "warn"); void b.offsetWidth; b.classList.add("on"); if (warn) b.classList.add("warn");
 }
+/** Until when the travel scene jolts (an ambush springing). */
+let sceneShakeUntil = 0;
 
 function tickPlay(now: number) {
   if (!play || play.finished || play.started === null || now < play.done) return;
@@ -1709,8 +1809,12 @@ function tickPlay(now: number) {
       play.motions.set(u.id, { points: [from, { ...u.pos }], born: now, stepMs: 260, kind: "walk" });
       sceneFloaters.push({ pos: { ...u.pos }, text: "!", color: "#ff8a7a", born: now });
     }
-    toast(t(lang, "ambushTag"), 1200);
-    play.done = now + 1100;
+    // The warning: a red title card that shakes, the screen's edges pulsing red, the view jolting.
+    banner(t(lang, "ambushSmall"), t(lang, "ambushTag"), t(lang, "ambushNote"));
+    const alarm = $("alarm"); alarm.classList.remove("on"); void alarm.offsetWidth; alarm.classList.add("on");
+    sceneShakeUntil = now + 450;
+    sfx("boom");
+    play.done = now + 1900;
     return;
   }
   if (play.kind === "approach" && play.scene.arenaRows > 0 && play.intro === undefined) {
@@ -1722,6 +1826,17 @@ function tickPlay(now: number) {
     sfx("door");
     const node = journey.map.nodes[Number(play.key.slice(3))];
     if (node) banner(regionOf(journey).name[lang], nodeLabel(journey, node, lang));
+    // The foes march onto their spots from the far side while the ground falls away.
+    const firstFoe = play.stage.units.findIndex((u) => u.team === "foes" || u.ward);
+    let k = 0;
+    play.scene.foePaths?.forEach((path, i) => {
+      const u = play!.stage.units[firstFoe + i];
+      if (!u || path.length < 2) return;
+      u.life = "up";
+      const mo: Motion = { points: path, born: now + 250 + k++ * 180, stepMs: (u.size ?? 1) > 1 ? 330 : TRAVEL_STEP_MS + 20, kind: "walk" };
+      play!.motions.set(u.id, mo);
+      play!.done = Math.max(play!.done, mo.born + motionMs(mo) + INTRO.holdMs);
+    });
     return;
   }
   if (play.intro !== undefined) introFrom = sceneView.scale;
@@ -1774,7 +1889,8 @@ function drawScene(time: number) {
   const ease = arenaMid ? 0.045 : 0.08;
   sceneCam = sceneCam ? { x: sceneCam.x + (target.x - sceneCam.x) * ease, y: sceneCam.y + (target.y - sceneCam.y) * ease } : target;
   const midY = top + (innerHeight - top - bottom) / 2;
-  sceneView = { rot: 0, scale, ox: canvas.width / 2 - sceneCam.x * scale, oy: midY * dpr - sceneCam.y * scale };
+  const jolt = time < sceneShakeUntil ? Math.round(Math.sin(time / 20) * 5 * ((sceneShakeUntil - time) / 450) * dpr) : 0;
+  sceneView = { rot: 0, scale, ox: canvas.width / 2 - sceneCam.x * scale + jolt, oy: midY * dpr - sceneCam.y * scale + jolt / 2 };
   const wasFlat = isFlat(); setFlat(false);
   const arenaRows = play.scene.arenaRows;
   const sink = intro === undefined ? undefined : (p: Pos) => {
@@ -2046,6 +2162,7 @@ function input(k: Input) {
     }
     return;
   }
+  if (talk) { if (k === "confirm" || k === "end") advanceTalk(); else if (k === "back") endTalk(); return; }
   if (k === "hold") { toggleHold(); return; }
   if (k === "rotL" || k === "rotR") { view.rot = (view.rot + (k === "rotL" ? -1 : 1) + 4) % 4; hover = cursor; tooltip(cursor); return; }
   if (k === "danger") { dangerAll = !dangerAll; refresh(); return; }
@@ -2204,6 +2321,7 @@ function act(cmd: Command) {
 /** A mouse click acts at once (the hover already previewed it). A finger has no hover, so its first tap chooses
     the tile and shows what will happen; tapping it again or pressing Confirm does it. */
 function onTap(p: Pos, touch: boolean) {
+  if (talk) { advanceTalk(); return; }
   if (deploy) { deployTap(p); tooltip(p); return; }
   if (!heroTurn() || busy || animating()) return;
   const a = actionAt(p);
@@ -2511,6 +2629,8 @@ async function start() {
   $("hold").addEventListener("click", toggleHold);
   $("confirm").addEventListener("click", confirmPending);
   $("deployGo").addEventListener("click", () => beginFight());
+  $("parley").addEventListener("click", () => advanceTalk());
+  $("parleySkip").addEventListener("click", () => endTalk());
   $("cancel").addEventListener("click", () => { selected = null; pending = null; facePick = null; tooltip(null); refresh(); });
   $("again").addEventListener("click", afterBattleButton);
   $("gearBtn").addEventListener("click", () => { if (choosingDifficulty) return; gearOpen = !gearOpen; statsOpen = false; showMap(); });
