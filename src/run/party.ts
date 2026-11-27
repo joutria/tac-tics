@@ -101,6 +101,8 @@ export function readDeeds(setup: BattleSetup, commands: Command[]): Deeds {
         if (h.heal > 0) seen.heal++;
         if (was.team === "heroes") continue;
         if (was.life === "downed" && h.died) seen.finishDowned++;
+        // A Sap courier (a catch goal, engine/goals.ts) runs from the start: stopping it is the job, not a cruelty.
+        if (was.runner) continue;
         if (was.escape === "flee" && (h.downed || h.died)) seen.killFleeing++;
         else if (yielding(was) && (h.downed || h.died)) seen.finishYielding++;
       }

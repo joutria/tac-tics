@@ -52,6 +52,13 @@
     #travelTools { display: flex; gap: 2px; padding: 3px; align-items: center; }
     /* Turn order: a row of faces; the one acting now is bigger, framed in gold, with the turn arrow over it. */
     #top > .spacer { order: 2; } #tools { order: 3; }
+    /* A battle goal (engine/goals.ts): one line under the head window, gold while open, green met, red failed. */
+    #goal { order: 1; display: none; align-items: center; gap: 6px; padding: 5px 9px; font: inherit; font-size: 13px; pointer-events: auto; cursor: pointer; align-self: flex-start; }
+    #goal.on { display: inline-flex; }
+    #goal .icon { width: 18px; height: 18px; }
+    #goal.met { border-color: #6fcf6a; } #goal.met b { color: #9ff09a; }
+    #goal.failed { border-color: #d9542c; } #goal.failed b { color: #ff9a80; }
+    #goal small { opacity: 0.85; }
     #queue { order: 1; display: flex; gap: 3px; flex: 0 1 auto; min-width: 0; overflow-x: auto; align-items: center; padding: 4px 6px; scrollbar-width: none; }
     #queue .label { display: none; }
     /* One window for the unit in play and the turn order (FFTA keeps them together), split by a thin gold rule. */
@@ -331,10 +338,12 @@
     #unitCard { flex: 1; }
     #menu { flex: 1; } #bottom > .spacer { display: none; }
     #head { flex: 1; flex-wrap: wrap; } #head #queue { flex: 1 1 100%; border-left: 0; border-top: 1px solid rgba(255, 214, 107, 0.28); }
+    #goal { order: 4; flex: 1 1 100%; justify-content: center; }
   }
   /* Phone on its side: the turn order sits in the top bar; three columns of abilities keep the menu short. */
   @media (min-width: 721px) and (max-height: 560px) {
     #top { flex-wrap: nowrap; align-items: flex-start; }
+    #goal { font-size: 12px; white-space: nowrap; min-width: 0; flex: 0 1 auto; } #goal b { overflow: hidden; text-overflow: ellipsis; }
     #menu { width: 240px; max-height: 58vh; }
     #system { grid-template-columns: repeat(5, auto); }
     #runHead .meters { display: none; }
@@ -547,6 +556,7 @@
   <canvas id="game"></canvas>
   <div id="top" class="bar">
     <div id="head" class="win"><div id="unitCard"></div><div id="queue"></div></div>
+    <div id="goal" class="win" role="button" tabindex="0"></div>
     <span class="spacer"></span>
     <div id="tools" class="win">
       <button id="rotateL" class="icon"></button><button id="rotateR" class="icon"></button>

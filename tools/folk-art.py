@@ -47,7 +47,9 @@ RATS = {"ratero": "ratfolk-m-001.png"}
 # Brutes (48x64, KusSv layout), drawn at 1x for 2x2 giants: look -> file
 BRUTES = {"ogro": "orc_warrior-brown.png", "trol": "troll-green_3.png"}
 # Pipoya: look -> file inside the pack folder
-PIPOYA = {"trasgo": "Enemy/Enemy 18.png", "trasgo-chaman": "Enemy/Enemy 21.png"}
+PIPOYA = {"trasgo": "Enemy/Enemy 18.png", "trasgo-chaman": "Enemy/Enemy 21.png",
+          # Survivors of a protect goal (src/data/goals.ts)
+          "aldeano": "Male/Male 12-1.png", "anciana": "Female/Female 19-1.png"}
 
 
 def fetch(name):

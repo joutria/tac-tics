@@ -8,7 +8,7 @@ import { applyCommand, createBattle, type BattleState, type Command, type UnitSp
 import { endingOf, memberSpec, newMember } from "../src/run/party";
 import { setFloodgate } from "../src/run/map";
 import { abilityDesc, abilityName } from "../src/i18n/text";
-import { ALT_HP_CUT, battleSetup, choose, enterNode, finishBattle, FLOOD, floodMap, newRun, questView, type RunState } from "../src/run/run";
+import { ALT_HP_CUT, battleSetup, choose, goalAt, enterNode, finishBattle, FLOOD, floodMap, newRun, questView, type RunState } from "../src/run/run";
 import { REGIONS } from "../src/data/region";
 import { setRules } from "../src/engine/rules";
 
@@ -151,7 +151,8 @@ describe("the Floodgate", () => {
 
   it("a flooded fight fields one foe fewer; a frozen one turns its water to ice", () => {
     const run = reservoir();
-    const node = run.map.nodes.find((n) => n.kind === "battle" && n.layer >= 3)!;
+    // A fight with no goal: a goal's extra foe or courier would change the count (a flooded fight never has one).
+    const node = run.map.nodes.find((n) => n.kind === "battle" && n.layer >= 3 && !goalAt(run, n))!;
     const dry = battleSetup(run, node.id, "en");
     node.flood = "flooded";
     const wet = battleSetup(run, node.id, "en");

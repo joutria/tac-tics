@@ -21,6 +21,7 @@ import { rngNext, seedFrom } from "./rng";
 import { fireUnder, sapUnder, shockNear, soak, updateTiles, type TerrainFx } from "./terrain";
 import { canSwim, inWater, nativeSwimmer, SWIM_EXTRA_MP } from "./swim";
 import { cowering, escapeStateFor, FLEE_LOCK, isBorder, turnMp, yielding, type EscapeState } from "./escape";
+import { isWard, type Goal } from "./goals";
 
 export type Team = "heroes" | "foes";
 export type Facing = "N" | "E" | "S" | "W";
@@ -90,6 +91,10 @@ export interface UnitSpec {
   regen?: number;
   /** Poison hurts this much less per turn (Moheda's research, finished). */
   poisonWard?: number;
+  /** A protect goal's survivor (goals.ts): on the party's side, but it never takes a turn. */
+  ward?: boolean;
+  /** A catch goal's courier (goals.ts): flees for the edge from the start and never fights. */
+  runner?: boolean;
 }
 
 export interface Unit extends UnitSpec {
@@ -145,6 +150,8 @@ export interface BattleSetup {
   units: UnitSpec[];
   /** The foes sprang an ambush: every foe takes its first turn before anyone in the party. */
   ambush?: boolean;
+  /** What wins the fight beyond routing the foes, or what it must not cost (goals.ts). */
+  goal?: Goal;
 }
 
 export interface BattleState {
@@ -163,6 +170,7 @@ export interface BattleState {
   habits: { ranged: number; melee: number; elements: Partial<Record<Element, number>> };
   /** Last round the Sap sources grew (terrain.ts). */
   sapRound?: number;
+  goal?: Goal;
 }
 
 export type Command =
@@ -282,10 +290,12 @@ export function createBattle(setup: BattleSetup): BattleState {
     ct: setup.ambush && u.team === "foes" ? i : Math.round(delayFor(u.speed) / 2) + (setup.ambush ? order.length : 0), seq: i, waited: false, spentAp: false, moved: false,
     ...(u.team === "foes" && !u.temper ? { temper: rollTemper(setup.seed, u) } : {}),
     ...(setup.ambush && u.team === "foes" ? { opener: true } : {}),
+    ...(u.runner ? { escape: "flee" as const } : {}),
   }));
   const s: BattleState = {
     version: 2, rng, map: structuredClone(setup.map), units, clock: 0, seqCounter: units.length,
     active: "", turns: 0, winner: null, habits: { ranged: 0, melee: 0, elements: {} },
+    ...(setup.goal ? { goal: structuredClone(setup.goal) } : {}),
   };
   // A giant flattens the grass it starts on.
   for (const u of s.units) if (sizeOf(u) > 1) trample(s, u, []);
@@ -303,7 +313,7 @@ function rollTemper(seed: string | number, u: UnitSpec): Temper {
 
 /** The order of the next `count` turns, for the turn bar. */
 export function upcomingTurns(s: BattleState, count: number): string[] {
-  const sim = s.units.filter(onMap).map((u) => ({ id: u.id, ct: u.ct, seq: u.seq, d: delayFor(u.speed) }));
+  const sim = s.units.filter((u) => onMap(u) && !(isWard(u) && u.life === "up")).map((u) => ({ id: u.id, ct: u.ct, seq: u.seq, d: delayFor(u.speed) }));
   const out: string[] = [];
   let seq = s.seqCounter;
   while (out.length < count && sim.length) {
@@ -315,8 +325,8 @@ export function upcomingTurns(s: BattleState, count: number): string[] {
   return out;
 }
 
-function nextInLine(s: BattleState, exclude?: string): Unit | undefined {
-  return s.units.filter((u) => onMap(u) && u.id !== exclude).sort((a, b) => a.ct - b.ct || a.seq - b.seq)[0];
+function nextInLine(s: BattleState, exclude?: string, skipWards = false): Unit | undefined {
+  return s.units.filter((u) => onMap(u) && u.id !== exclude && !(skipWards && isWard(u))).sort((a, b) => a.ct - b.ct || a.seq - b.seq)[0];
 }
 
 /** Starts the next turn. Downed units spend their turns counting down instead of acting. */
@@ -325,6 +335,8 @@ function advance(s: BattleState, events: BattleEvent[]) {
     const u = nextInLine(s);
     if (!u) return;
     s.clock = u.ct;
+    // A survive goal: the round after the last one to hold out begins, and the foes fall back.
+    if (s.goal?.kind === "survive" && roundOf(s) > s.goal.rounds) { s.winner = winnerOf(s); return; }
     s.active = u.id;
     delete u.guard; delete u.revealed;
     updateTiles(s);
@@ -334,6 +346,8 @@ function advance(s: BattleState, events: BattleEvent[]) {
       u.ct += delayFor(u.speed); u.seq = ++s.seqCounter;
       continue;
     }
+    // A survivor waits where it is: its turns pass on their own.
+    if (isWard(u)) { u.ct += delayFor(u.speed); u.seq = ++s.seqCounter; continue; }
     if (!u.waited) {
       if (shockNear(s, u)) events.push({ e: "shocked", unit: u.id });
       if (statusOf(u, "stun")) {
@@ -442,7 +456,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
       // A companion who has fallen out with the player will not strike a fleeing foe: the order is refused and
       // the rest of their turn is lost (plan doc, "Companion values").
       const victim = unitAt(s, cmd.target);
-      if (actor.refuses === "fleeing" && ab.damage && victim && isFoe(actor, victim) && victim.escape === "flee") {
+      if (actor.refuses === "fleeing" && ab.damage && victim && isFoe(actor, victim) && victim.escape === "flee" && !victim.runner) {
         const r = applyCommand(prev, { t: "endTurn", unit: actor.id });
         if (!r.ok) return r;
         return { ok: true, state: r.state, events: [{ e: "refused", unit: actor.id, target: cmd.target }, ...r.events] };
@@ -473,7 +487,7 @@ export function applyCommand(prev: BattleState, cmd: Command): Result {
     }
     case "wait": {
       if (actor.spentAp || actor.moved || actor.waited || actor.usedThisTurn.quick) return { ok: false, error: "can only wait before moving or acting, once per turn" };
-      const next = nextInLine(s, actor.id);
+      const next = nextInLine(s, actor.id, true);
       if (!next) return { ok: false, error: "nobody to wait for" };
       actor.ct = next.ct;
       actor.seq = ++s.seqCounter;
@@ -574,11 +588,13 @@ function updateEscapes(s: BattleState, events: BattleEvent[]) {
   }
 }
 
-/** A side with nobody standing loses. Foes who yield without running (cowering) no longer count: once only they
+/** A side with nobody standing loses (a survivor does not count: it cannot fight). Foes who yield without running (cowering) no longer count: once only they
     are left, the party has won, and it decides what to do with them (see `unsettled`). */
 function winnerOf(s: BattleState): Team | null {
-  const standing = (t: Team) => s.units.some((u) => u.team === t && u.life === "up" && !cowering(u));
+  const standing = (t: Team) => s.units.some((u) => u.team === t && u.life === "up" && !cowering(u) && !isWard(u));
   if (!standing("heroes")) return "foes";
   if (!standing("foes")) return "heroes";
+  // A survive goal (goals.ts): held out until the round after the last one began.
+  if (s.goal?.kind === "survive" && roundOf(s) > s.goal.rounds) return "heroes";
   return null;
 }

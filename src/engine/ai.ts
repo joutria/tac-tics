@@ -194,6 +194,10 @@ function areaValue(s: BattleState, u: Unit, area: Pos[], from: Pos, dmg: number)
 /** How the party's side plays when the AI runs it (the simulator): `mercy` spares yielding foes. */
 export interface AiOptions { mercy?: boolean; /** Skip turning at the end of a turn (the sim's --noface, to compare). */ noFace?: boolean }
 
+/** Battle goals (goals.ts): foes go for a survivor, and the party for a courier before it gets away. */
+const GOAL_TARGET = { ward: 14, runner: 22 };
+const goalTarget = (o: Unit) => (o.ward ? GOAL_TARGET.ward : o.runner ? GOAL_TARGET.runner : 0);
+
 function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Pos, opts: AiOptions = {}): number {
   let v = 0;
   if (ab.spare) { const o = unitAt(s, target); return opts.mercy && o && yielding(o) ? 30 : 0; }
@@ -222,7 +226,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
       const dmg = avg(damagePreview(s, u, o, ab, from));
       if (enemy) {
         if (o.life === "downed") v += dmg > 0 ? 45 : 0;
-        else v += Math.min(dmg, o.hp) + (dmg >= o.hp ? 25 : 0) + (1 - o.hp / o.maxHp) * 8 + (u.hunts === "healer" && isHealer(o) ? 12 : 0);
+        else v += Math.min(dmg, o.hp) + (dmg >= o.hp ? 25 : 0) + (1 - o.hp / o.maxHp) * 8 + (u.hunts === "healer" && isHealer(o) ? 12 : 0) + goalTarget(o);
       } else if (o.id !== u.id) v -= dmg * 1.5 + 5; // casters are spared by their own area attacks
     }
     if (ab.heal && !enemy && o.life === "up") v += Math.min(avg(ab.heal) * RULES.heal, o.maxHp - o.hp);

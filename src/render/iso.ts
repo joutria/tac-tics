@@ -988,6 +988,12 @@ function drawUnit(
     // A rival from an earlier battle: a purple star over its head.
     ctx.drawImage(iconCanvas("rival"), Math.round(c.x - 6), Math.round(c.y - 82), 12, 12);
   }
+  // Battle goals (engine/goals.ts): a shield over the survivor to protect, a shard over the courier's satchel.
+  if ((u.ward || u.runner) && u.life === "up") {
+    ctx.globalAlpha = base * (0.75 + 0.25 * Math.sin(time / 300));
+    ctx.drawImage(iconCanvas(u.ward ? "shield" : "shard"), Math.round(c.x - 7), Math.round(c.y - (yielding(u) ? 98 : 84)), 14, 14);
+    ctx.globalAlpha = base;
+  }
   if (active) {
     // Whose turn it is: a bouncing arrow over the head, gold for the party, red for foes.
     const bob = Math.round(Math.abs(Math.sin(time / 260)) * -5);
