@@ -6,8 +6,8 @@ import type { UnitSpec } from "../engine/state";
     look is a creature sheet in public/art/creatures/. */
 export const HERO_LOOKS = new Set(["lumo", "remolin", "guijo", "centella", "moheda"]);
 
-/** Humanoid foes (JS Actors fighters, ratfolk, Pipoya goblins, the ogre and troll brutes) in public/art/folk/, built by tools/folk-art.py. */
-export const FOLK_LOOKS = new Set(["brasa", "pena", "malva", "marea", "ratero", "trasgo", "trasgo-chaman", "ogro", "trol"]);
+/** Humanoid foes (JS Actors fighters, ratfolk, Pipoya goblins and survivors, the ogre and troll brutes) in public/art/folk/, built by tools/folk-art.py. */
+export const FOLK_LOOKS = new Set(["brasa", "pena", "malva", "marea", "ratero", "trasgo", "trasgo-chaman", "ogro", "trol", "aldeano", "anciana"]);
 /** Looks that also have a drawn face portrait, <look>-face.png next to their sheet. */
 const FACED = new Set([...HERO_LOOKS, "brasa", "pena", "malva", "marea"]);
 

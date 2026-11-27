@@ -11,6 +11,8 @@
 import { PaceStats, rulesFromArgs } from "./battle-stats";
 import { writeFileSync } from "node:fs";
 import { planTurn } from "../src/engine/ai";
+import { goalStatus, type GoalKind } from "../src/engine/goals";
+const goals: Record<GoalKind, [number, number, number]> = { protect: [0, 0, 0], survive: [0, 0, 0], catch: [0, 0, 0] };
 import { activeUnit, applyCommand, createBattle, unsettled, type Temper } from "../src/engine/state";
 import type { Difficulty } from "../src/data/region";
 import { MAP_LAYERS } from "../src/run/map";
@@ -84,12 +86,14 @@ for (let i = 1; i <= runs; i++) {
       pace.turn(before, cmds, s);
     }
     pace.end(s);
-    if (!s.winner) { run.over = "lost"; break; }
+    if (!s.winner) { run.over = "lost"; if (s.goal) goals[s.goal.kind][2]++; break; }
+    if (s.winner === "foes" && s.goal) goals[s.goal.kind][2]++;
     for (const u of mercy ? unsettled(s) : []) {
       const c = { t: "settle" as const, unit: u.id, choice: "spare" as const };
       const r = applyCommand(s, c);
       if (r.ok) { s = r.state; run.battle.commands.push(c); }
     }
+    if (s.goal) { const g = goals[s.goal.kind]; g[goalStatus(s) === "met" ? 0 : 1]++; }
     const layer = run.map.nodes[run.battle.node]!.layer + 10 * run.region;
     const fought = run;
     run = finishBattle(run, s);
@@ -119,6 +123,7 @@ console.log(`rivals made ${rivalsMade}, rival nodes entered ${rivalsMet}`);
 if (useLegacy) console.log(`bonds: ${keepsakeRuns} runs began with a keepsake, ${returnRuns} with a companion back as a rival (${returnsSettled} settled)`);
 if (useLegacy) console.log(`nemesis: ${nemesisRuns} runs began with one (${nemesisWins} won), ${legacy.settled.length} settled (${legacy.settled.filter((x) => x.how === "spared").length} spared)`);
 console.log(`foes spared ${sparedAll}, came back to help ${helped}`);
+console.log(`goals (met/failed/lost the run): ${Object.entries(goals).map(([k, [m, f, l]]) => `${k} ${m}/${f}/${l}`).join(", ")}`);
 console.log(pace.report());
 console.log(`hero alignment at the end: ${[...alignments.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);
 console.log(`endings: ${[...endings.entries()].sort().map(([k, n]) => `${k} ${n}`).join(", ")}`);

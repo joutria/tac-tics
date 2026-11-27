@@ -35,6 +35,8 @@ import { approachScene, departScene, placeOf, type Origin, type Scene } from "./
 import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, iconTile, nodeLabel, renderRunMap } from "./ui/runmap";
+import { goalStatus, goalUnit, roundsLeft, type GoalKind } from "./engine/goals";
+import { COURIER, SURVIVORS } from "./data/goals";
 import { LEVEL_CAP, xpToNext } from "./data/gear";
 import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, pk, RUN_PACK, type IconId } from "./ui/icons";
 import { BUILD } from "./app/update";
@@ -444,7 +446,7 @@ function startBattle(announce: boolean) {
 function deployTap(p: Pos) {
   if (!deploy) return;
   const who = unitAt(state, p);
-  if (who && who.team === "heroes" && who.id !== deploy.pick) { deploy.pick = who.id; sfx("select"); refresh(); return; }
+  if (who && who.team === "heroes" && !who.ward && who.id !== deploy.pick) { deploy.pick = who.id; sfx("select"); refresh(); return; }
   if (!deploy.pick) return;
   const next = deployUnit(save.setup, deploy.pick, p, deploy.zone);
   if (next === save.setup) { if (!who) sfx("error"); return; }
@@ -472,7 +474,7 @@ function afterBattleButton() {
   const region = journey.region;
   const before = journey, fought = { ...save, node: journey.battle.node };
   // The next walk sets out from this arena, from where the party stands now.
-  const standing = state.units.filter((u) => u.team === "heroes" && (u.life === "up" || u.life === "downed"))
+  const standing = state.units.filter((u) => u.team === "heroes" && !u.ward && (u.life === "up" || u.life === "downed"))
     .sort((a, b) => (a.id === heroOf(journey).id ? -1 : b.id === heroOf(journey).id ? 1 : 0));
   lastArena = { key: `${journey.region ?? 0}:${journey.battle.node}`, map: structuredClone(state.map), at: standing.map((u) => ({ ...u.pos })) };
   journey = finishBattle(journey, state);
@@ -916,6 +918,26 @@ function renderUnitCard(u: Unit) {
   $("unitCard").setAttribute("aria-label", `${t(lang, "turnOf", { name: u.name })} · ${t(lang, "hp")} ${u.hp}/${u.maxHp} · ${t(lang, "ap")} ${u.ap}/${u.maxAp} · ${t(lang, "mp")} ${u.mp}/${u.maxMp}${u.maxMana ? ` · ${t(lang, "mana")} ${u.mana}/${u.maxMana}` : ""}`);
 }
 
+/** The battle's goal, if it has one (engine/goals.ts): what to do, how it stands, and a tap finds its unit. */
+function renderGoal() {
+  const box = $("goal"), g = state.goal;
+  box.classList.toggle("on", !!g);
+  if (!g) return;
+  const done = goalStatus(state), who = goalUnit(state);
+  const left = roundsLeft(state, roundOf(state));
+  const text = g.kind === "protect" ? t(lang, "goalDo.protect", { name: who?.name ?? "" })
+    : g.kind === "survive" ? (left <= 1 ? t(lang, "goalDo.surviveLast") : t(lang, "goalDo.survive", { n: left }))
+    : t(lang, "goalDo.catch");
+  const tail = done === "met" ? t(lang, "goalMet") : done === "failed" ? t(lang, "goalFailed")
+    : g.kind === "protect" && who ? `${t(lang, "hp")} ${who.hp}/${who.maxHp}` : "";
+  box.className = `win${g ? " on" : ""}${done !== "open" ? ` ${done}` : ""}`;
+  box.innerHTML = `${icon(GOAL_ICON_ID[g.kind])}<b>${text}</b>${tail ? `<small>${tail}</small>` : ""}`;
+  box.setAttribute("aria-label", `${text}${tail ? ` · ${tail}` : ""}`);
+  explains(box, () => plainHelp(t(lang, `goal.${g.kind}`), t(lang, `goalHelp.${g.kind}`, { n: g.kind === "survive" ? g.rounds : 0 }), GOAL_ICON_ID[g.kind]));
+  box.onclick = () => { const u = goalUnit(state); if (u && (u.life === "up" || u.life === "downed")) { focus = { id: u.id, until: performance.now() + 1800 }; centreOn(u.pos); } };
+}
+const GOAL_ICON_ID: Record<GoalKind, IconId> = { protect: "shield", survive: "cooldown", catch: "shard" };
+
 /** A button with a pixel icon, a label (hidden on phones for the system buttons) and its help. */
 function dress(id: string, ic: IconId, label: string, help: () => string, iconOnly = false) {
   const b = $<HTMLButtonElement>(id);
@@ -929,6 +951,7 @@ function refresh() {
   const u = activeUnit(state);
   if (facePick && (facePick.unit !== u.id || !heroTurn() || busy || selected || pending || deploy)) facePick = null;
   renderUnitCard(deploy?.pick ? unitById(state, deploy.pick) : u);
+  renderGoal();
   document.body.classList.toggle("deploying", !!deploy);
   if (deploy) {
     $("deployTitle").textContent = t(lang, "deployTitle");
@@ -1066,9 +1089,10 @@ function refresh() {
   $("result").textContent = state.winner === "heroes" && !lost ? t(lang, "victory") : t(lang, "defeat");
   over.classList.toggle("lost", !!state.winner && lost);
   renderSpoils(state.winner === "heroes" && !lost && !onMap);
-  const escaped = state.units.filter((x) => x.team === "foes" && x.life === "escaped").length;
+  const escaped = state.units.filter((x) => x.team === "foes" && !x.runner && x.life === "escaped").length;
   const spared = state.units.filter((x) => x.team === "foes" && x.life === "spared").length;
-  $("resultNote").textContent = [escaped ? t(lang, "escapedNote", { n: escaped }) : "", spared ? t(lang, "sparedNote", { n: spared }) : "", lost ? t(lang, "runLost") : ""].filter(Boolean).join(" ");
+  const goalNote = state.goal && state.winner && !lost ? goalStatus(state) : "open";
+  $("resultNote").textContent = [goalNote === "met" ? `✓ ${t(lang, "goalMet")}` : goalNote === "failed" ? `✗ ${t(lang, "goalFailed")}` : "", escaped ? t(lang, "escapedNote", { n: escaped }) : "", spared ? t(lang, "sparedNote", { n: spared }) : "", lost ? t(lang, "runLost") : ""].filter(Boolean).join(" ");
   renderMercy();
   document.documentElement.lang = lang;
   layout();
@@ -1156,11 +1180,13 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
   }
   const left = MAX_REVIVES - target.revives;
   lines.push(left > 0 ? t(lang, "revivesLeft", { n: left }) : `<span class="down">${t(lang, "lastFall")}</span>`);
+  if (target.ward) lines.push(`<b>🛡 ${t(lang, "goal.protect")}</b> · ${t(lang, "wardInfo")}`);
+  if (target.runner) lines.push(`<b>◆ ${t(lang, "goal.catch")}</b> · ${t(lang, "runnerInfo")}`);
   if (target.escape === "retreat") lines.push(`<b class="esc">${t(lang, "retreating")}</b> · ${t(lang, "retreatInfo")}`);
   else if (target.escape === "flee") lines.push(`<b class="esc">${t(lang, "fleeing")}</b> · ${t(lang, "fleeInfo")}`);
   if (target.escape !== "none" && target.life === "up" && isBorder(state, target.pos)) lines.push(`<b class="down">${t(lang, "leavesNext")}</b>`);
   // Companion lines the player has heard about: striking a fleeing foe crosses one.
-  if (target.team === "foes" && target.escape === "flee") {
+  if (target.team === "foes" && target.escape === "flee" && !target.runner) {
     for (const m of journey.party) {
       const c = COMPANIONS[m.id]!;
       if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
@@ -1648,8 +1674,9 @@ function approach(nodeId: number, then: () => void) {
   const seed = `${journey.seed}:${journey.region ?? 0}:to:${nodeId}`;
   let scene: Scene, party: UnitSpec[], foes: UnitSpec[] = [];
   if (b) {
-    const heroes = b.setup.units.filter((u) => u.team === "heroes");
-    foes = b.setup.units.filter((u) => u.team === "foes");
+    // A goal's survivor waits on the field with the foes; it does not walk in with the party.
+    const heroes = b.setup.units.filter((u) => u.team === "heroes" && !u.ward);
+    foes = b.setup.units.filter((u) => u.team === "foes" || u.ward);
     scene = approachScene(seed, regionOf(journey).id, node.col, { t: "fight", arena: b.setup.map, party: heroes.map((u) => u.pos), foes: foes.map((u) => u.pos), ambush: !!b.setup.ambush }, heroes.length);
     party = heroes;
   } else {
@@ -2332,7 +2359,7 @@ async function start() {
   const base = import.meta.env.BASE_URL;
   const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", ...SCENERY_IMAGES];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
-  const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : []), ...(r.brute ? [r.brute] : [])])];
+  const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : []), ...(r.brute ? [r.brute] : [])]), ...SURVIVORS, COURIER];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}${lookArt(u.look)}`;
   for (const u of looks) { const f = lookFace(u.look); if (f) srcs[`face-${u.look}`] = `${base}${f}`; }
   Object.assign(srcs, fxSources(base));

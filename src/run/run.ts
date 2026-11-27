@@ -27,6 +27,8 @@ import { ALIGN, SHIFT, type Align, type Meter, type Side } from "../data/alignme
 import { alignOf, battleShift, lockIn, shiftAlign, twinBar } from "./alignment";
 import { twinOf } from "../data/twins";
 import { ABILITIES, COMBO_CASTER, type ComboId } from "../data/abilities";
+import { COURIER, COURIER_NAME, GOAL, GOAL_LINES, SURVIVOR_STATS, SURVIVORS } from "../data/goals";
+import { GOAL_KINDS, goalStatus, type Goal, type GoalKind } from "../engine/goals";
 
 export const RUN_VERSION = 5;
 /** Share of max HP a rest node gives back. */
@@ -229,6 +231,8 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   if (node.kind === "elite") count = hi + 1;
   if (node.kind === "boss") count = 2;
   if (node.layer >= 2 && node.kind !== "boss") count += rulesOf(run).extraFoes;
+  const goalKind = goalAt(run, node);
+  if (goalKind === "survive") count += GOAL.surviveExtraFoes;
   count = Math.min(4, count + fielded(run).length);
   // A flooded fight: the rising water carried one foe off.
   if (node.flood === "flooded") count = Math.max(1, count - FLOOD.foesFewer);
@@ -257,7 +261,9 @@ export function battleSetup(run: RunState, nodeId: number, lang: "es" | "en"): B
   const help = run.help && run.help.node === nodeId && run.help.region === (run.region ?? 0) ? run.help : undefined;
   const helper = help?.kind === "join" ? run.spared?.find((f) => f.id === help.foe) : undefined;
   if (helper) units.push(helperSpec(helper, arena, units));
+  const goal = goalKind ? addGoal(run, node, goalKind, arena.map, units, depth, lang) : undefined;
   const map = node.flood ? floodMap(arena.map, node.flood, units.flatMap((u) => cellsOf(u.pos, u.size ?? 1)), seedFrom(`${rs}:flood:${node.id}`)) : arena.map;
+  if (goal) return { seed: `${rs}:battle:${node.id}`, map, units, goal };
   if (!isAmbush(run, node) || help?.kind === "warn") return { seed: `${rs}:battle:${node.id}`, map, units };
   placeAmbush(map, units, seedFrom(`${rs}:ambush-spots:${node.id}`));
   return { seed: `${rs}:battle:${node.id}`, map, units, ambush: true };
@@ -295,6 +301,48 @@ function addCombos(run: RunState, units: UnitSpec[]) {
     if (!ab?.combo || !caster || !units.some((u) => u.id === ab.combo!.partner)) continue;
     if (!caster.abilities.includes(id)) caster.abilities = [...caster.abilities, id];
   }
+}
+
+/** The goal a plain fight carries, if any (engine/goals.ts): seeded per node, so the signposts can show it before the
+    party picks a path. Never on an ambush, a flooded or frozen fight, the first layer, or any other kind of node. */
+export function goalAt(run: RunState, node: RunNode): GoalKind | undefined {
+  if (node.kind !== "battle" || node.layer < 1 || node.flood || node.rival || node.quest || isAmbush(run, node)) return undefined;
+  const rs = regionSeed(run.seed, run.region ?? 0);
+  let [v, rng] = rngNext(seedFrom(`${rs}:goal:${node.id}`));
+  if (v >= GOAL.chance) return undefined;
+  let i: number; [i, rng] = rngInt(rng, 0, GOAL_KINDS.length - 1);
+  return GOAL_KINDS[i];
+}
+
+/** Puts a goal's survivor or courier on the field and returns the goal. The survivor stands in the open between the
+    two sides; the courier starts as far from every edge as the map allows (clear of the party), so it has a way to run. */
+function addGoal(run: RunState, node: RunNode, kind: GoalKind, map: GridMap, units: UnitSpec[], depth: number, lang: "es" | "en"): Goal {
+  if (kind === "survive") return { kind, rounds: GOAL.surviveRounds };
+  const rs = regionSeed(run.seed, run.region ?? 0);
+  const taken = (p: Pos) => units.some((u) => coversPos(u.pos, u.size ?? 1, p));
+  const gap = (p: Pos, team: "heroes" | "foes") => Math.min(99, ...units.filter((u) => u.team === team).map((u) => Math.abs(u.pos.x - p.x) + Math.abs(u.pos.y - p.y)));
+  const edge = (p: Pos) => Math.min(p.x, p.y, map.w - 1 - p.x, map.h - 1 - p.y);
+  let best: { p: Pos; score: number } | null = null;
+  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+    const p = { x, y };
+    if (!standable(tileAt(map, p)) || taken(p) || tileAt(map, p)!.terrain === "water") continue;
+    const hg = gap(p, "heroes"), fg = gap(p, "foes");
+    if (hg < 3 || (kind === "protect" && fg < 3)) continue;
+    // Survivor: about as far from both sides, nearer the party if anything. Courier: deep inside the map.
+    const score = kind === "protect" ? -Math.abs(hg - fg) - 0.1 * hg + 0.2 * edge(p) : edge(p) * 10 - fg * 0.5;
+    if (!best || score > best.score) best = { p, score };
+  }
+  const pos = best?.p ?? units.find((u) => u.team === "heroes")!.pos;
+  const hp = (base: number) => Math.round(base * (1 + DEPTH_HP * depth));
+  if (kind === "protect") {
+    const [i] = rngInt(seedFrom(`${rs}:survivor:${node.id}`), 0, SURVIVORS.length - 1);
+    const sv = SURVIVORS[i]!;
+    units.push({ ...structuredClone(SURVIVOR_STATS), id: "ward", name: sv.name[lang], look: sv.look, pos: { ...pos }, hp: hp(SURVIVOR_STATS.hp), ward: true });
+    return { kind, ward: "ward" };
+  }
+  const id = run.region ? `r${run.region}n${node.id}-courier` : `n${node.id}-courier`;
+  units.push({ ...structuredClone(COURIER), id, name: COURIER_NAME[lang], pos: { ...pos }, hp: hp(COURIER.hp), runner: true });
+  return { kind, runner: id };
 }
 
 /** Share of plain fights and elites (from layer 1 on) where the foes lie in wait. Rivals and bosses never hide:
@@ -458,7 +506,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   const returnDone = next.rivals.find((r) => r.returned && r.settled && !run.rivals.find((o) => o.id === r.id)?.settled);
 
   const beaten = end.units.filter((u) => u.team === "foes" && (u.life === "dead" || u.life === "downed" || u.life === "spared"));
-  const spared = end.units.filter((u) => u.team === "foes" && u.life === "spared");
+  const spared = end.units.filter((u) => u.team === "foes" && u.life === "spared" && !u.runner);
   const shards = node.kind === "boss" ? REWARD.bossShards : node.kind === "elite" ? REWARD.eliteShards
     : node.kind === "rival" && beaten.some((u) => u.rival) ? REWARD.rivalShards : 0;
 
@@ -504,14 +552,28 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
 
   // Spoils: every foe put down (not the ones that got away), scaled by depth and the kind of node.
   const mult = (1 + REWARD.perLayer * depthOf(next, node)) * (node.kind === "boss" ? REWARD.bossMult : node.kind === "elite" ? REWARD.eliteMult : node.kind === "rival" ? REWARD.rivalMult : 1);
-  const coins = Math.round(beaten.length * REWARD.coinsPerFoe * mult * rulesOf(next).coins * (node.flood === "frozen" ? FLOOD.frozenCoins : 1));
-  const xp = Math.round(beaten.length * REWARD.xpPerFoe * mult);
-  next.coins += coins; next.shards += shards;
+  // A goal (engine/goals.ts): a met one pays its prize; a failed one only costs it.
+  const goal = b.setup.goal, goalDone = goal ? goalStatus(end) : undefined;
+  const held = goal?.kind === "survive" && goalDone === "met" ? end.units.filter((u) => u.team === "foes" && u.life === "up" && !u.runner).length * GOAL.surviveStandingShare : 0;
+  const counted = beaten.filter((u) => !u.runner).length + held;
+  const purse = goal?.kind === "catch" && goalDone === "met" ? Math.round(REWARD.purse * GOAL.catchCoins * (1 + REWARD.perLayer * depthOf(next, node))) : 0;
+  const goalShards = goal?.kind === "catch" && goalDone === "met" ? GOAL.catchShards : 0;
+  const coins = Math.round(counted * REWARD.coinsPerFoe * mult * rulesOf(next).coins * (node.flood === "frozen" ? FLOOD.frozenCoins : 1)) + purse;
+  const xp = Math.round(counted * REWARD.xpPerFoe * mult);
+  next.coins += coins; next.shards += shards + goalShards;
   const before = heroMaxHp(next);
   const grown = gainXp(next.hero, xp, `${next.seed}:${b.node}`);
   next.hero = grown.progress;
-  next.spoils = { coins, xp, shards, levels: grown.levels, align: { mercy: after.mercy - alignBefore.mercy, purity: after.purity - alignBefore.purity } };
+  next.spoils = { coins, xp, shards: shards + goalShards, levels: grown.levels, align: { mercy: after.mercy - alignBefore.mercy, purity: after.purity - alignBefore.purity } };
   next.remarks.push(...crossed);
+  const ward = goal?.kind === "protect" ? b.setup.units.find((u) => u.id === goal.ward) : undefined;
+  if (goal && goalDone) {
+    const line = GOAL_LINES[goal.kind][goalDone === "met" ? "met" : "failed"];
+    const sv = SURVIVORS.find((x) => x.look === ward?.look) ?? SURVIVORS[0]!;
+    const fill = (text: string, l: "es" | "en") => text.replace("{the}", sv.the[l]).replace("{The}", sv.the[l][0]!.toUpperCase() + sv.the[l].slice(1));
+    if (line.en && goalDone !== "open") next.remarks.push({ es: fill(line.es, "es"), en: fill(line.en, "en") });
+    if (goal.kind === "protect" && goalDone === "met") next.remarks.push(...shiftAlign(next, { mercy: GOAL.protectMercy }));
+  }
   if (nemesisDone) { next.shards += NEMESIS.shards; next.remarks.push(nemesisLine("settled", nemesisDone)); }
   if (returnDone) next.remarks.push(returnLine(returnDone.settled === "spared" ? "spared" : "finished", returnDone.base.name));
   // Spared, they walk with the hero again, warily (starting approval, their lines known from last time).
@@ -550,6 +612,8 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
     (next.spared ??= []).push({ id: u.id, name: u.name, spec: structuredClone(spec), region: next.region ?? 0 });
     next.offers.push({ kind: "reward", options: giftOptions(next, node), gift: u.name });
   }
+  // A survivor kept alive hands something over too.
+  if (ward && goalDone === "met") next.offers.push({ kind: "reward", options: giftOptions(next, node), gift: ward.name });
   next.offers.push({ kind: "reward", options: rewardOptions(next, node) });
   offerJob(next);
   return next;

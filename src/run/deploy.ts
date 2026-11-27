@@ -13,7 +13,7 @@ const key = (p: Pos) => `${p.x},${p.y}`;
 export function deployZone(setup: BattleSetup, origin: Pos[] = partyStarts(setup)): Pos[] {
   const s = createBattle(setup);
   const foes = s.units.filter((u) => u.team === "foes");
-  const heroes = new Set(s.units.filter((u) => u.team === "heroes").map((u) => u.id));
+  const heroes = new Set(s.units.filter((u) => u.team === "heroes" && !u.ward).map((u) => u.id));
   const out = new Map<string, Pos>();
   for (const p of origin) out.set(key(p), p);
   for (let y = 0; y < setup.map.h; y++) for (let x = 0; x < setup.map.w; x++) {
@@ -29,15 +29,15 @@ export function deployZone(setup: BattleSetup, origin: Pos[] = partyStarts(setup
 }
 
 /** Where the party stands in the setup. */
-export const partyStarts = (setup: BattleSetup): Pos[] => setup.units.filter((u) => u.team === "heroes").map((u) => ({ ...u.pos }));
+export const partyStarts = (setup: BattleSetup): Pos[] => setup.units.filter((u) => u.team === "heroes" && !u.ward).map((u) => ({ ...u.pos }));
 
 /** Moves a party member to a tile of the zone; if another party member stands there, the two swap places. Returns
     the setup unchanged when the move is not allowed. */
 export function deployUnit(setup: BattleSetup, unitId: string, to: Pos, zone: Pos[]): BattleSetup {
   const me = setup.units.find((u) => u.id === unitId);
-  if (!me || me.team !== "heroes" || !zone.some((p) => p.x === to.x && p.y === to.y)) return setup;
+  if (!me || me.team !== "heroes" || me.ward || !zone.some((p) => p.x === to.x && p.y === to.y)) return setup;
   const other = setup.units.find((u) => u.id !== unitId && u.pos.x === to.x && u.pos.y === to.y);
-  if (other && other.team !== "heroes") return setup;
+  if (other && (other.team !== "heroes" || other.ward)) return setup;
   const from = { ...me.pos };
   return { ...setup, units: setup.units.map((u) => (u.id === unitId ? { ...u, pos: { ...to } } : other && u.id === other.id ? { ...u, pos: from } : u)) };
 }

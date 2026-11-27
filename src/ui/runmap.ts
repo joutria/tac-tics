@@ -10,7 +10,8 @@ import { rivalName } from "../run/rivals";
 import { NEMESIS, returnLine } from "../run/legacy";
 import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
 import { JOBS } from "../data/jobs";
-import { ALTAR, questView, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
+import type { GoalKind } from "../engine/goals";
+import { ALTAR, goalAt, questView, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
 import { endingOf, readyForLesson, type Member } from "../run/party";
 import { ALIGN, ALIGNMENTS, type Align, type Meter } from "../data/alignment";
 import { TWINS } from "../data/twins";
@@ -347,12 +348,18 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
   panel.replaceChildren(title, ...(spoils.textContent ? [spoils] : []), list, foot);
 }
 
+/** The icon of each battle goal (emoji swapped for pixel icons, ui/icons.ts). */
+export const GOAL_ICON: Record<GoalKind, string> = { protect: "🛡", survive: "⏳", catch: "◆" };
+
 /** Node label: a rival's name and level, a companion's quest, or the kind of stop. `short` keeps it to a few words. */
 export function nodeLabel(run: RunState, n: RunNode, lang: Lang, short = false): string {
   const rival = n.rival ? run.rivals.find((r) => r.id === n.rival && !r.settled) : undefined;
   if (rival) return short ? t(lang, "rival", { n: rival.level }) : `${rivalName(rival, lang)} · ${t(lang, "rival", { n: rival.level })}`;
   const flood = n.flood && !short ? ` · ${t(lang, `flood.${n.flood}`)}` : n.flood ? ` ${n.flood === "flooded" ? "💧" : "❄"}` : "";
   if (n.quest && COMPANIONS[n.quest]) return t(lang, "questOf", { name: COMPANIONS[n.quest]!.spec.name }) + flood;
+  // A fight with a goal (engine/goals.ts) says so before the party picks the path.
+  const goal = goalAt(run, n);
+  if (goal) return short ? `${GOAL_ICON[goal]} ${t(lang, `goal.${goal}`)}` : `${t(lang, `node.${n.kind}`)} · ${GOAL_ICON[goal]} ${t(lang, `goal.${goal}`)}`;
   return t(lang, `node.${n.kind}`) + flood;
 }
 
