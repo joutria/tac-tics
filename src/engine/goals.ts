@@ -4,7 +4,8 @@
    - protect: a survivor of the Sap stands on the field. It is on the party's side but does not act, and the foes go
      for it. It can be helped up like anyone. If it dies, the goal fails (the fight goes on).
    - survive: more foes than usual, but the party only has to hold out. Once the given round begins with the hero
-     standing, the foes fall back and the fight is won, whoever is still up.
+     standing, the foes fall back and the fight is won, whoever is still up. The goal itself asks for a clean hold:
+     if anyone in the party falls before then, it fails (the fight goes on, and holding out still ends it).
    - catch:   a Sap courier runs for the edge from the first turn (it flees: +2 MP, takes more damage, pinned hard
      by Lock, and never fights back). Down it, finish it or spare it before it leaves and the goal is met. If it gets
      away, the goal fails (the fight goes on). A courier never becomes a rival.
@@ -41,6 +42,8 @@ export function goalStatus(s: BattleState): GoalStatus {
     if (r.life === "dead" || r.life === "downed" || r.life === "spared") return "met";
     return "open";
   }
+  // Survive: a clean hold. Anyone in the party (not a ward) downed even once fails it.
+  if (s.units.some((u) => u.team === "heroes" && !isWard(u) && (u.revives > 0 || u.life === "downed" || u.life === "dead"))) return "failed";
   return s.winner === "heroes" ? "met" : "open";
 }
 

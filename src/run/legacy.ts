@@ -13,6 +13,8 @@ import type { RunState } from "./run";
 import { DEPTH_HP, DEPTH_STAT, HERO, REGIONS, SAP_TIERS } from "../data/region";
 import { PERKS } from "../data/gear";
 import { KITS, type Kit, type Milestone } from "../data/camp";
+import { STARTERS, type Starter, type StarterId } from "../data/starters";
+import { CROSSOVER, type Crossover } from "../data/crossover";
 import { endingOf, memberSpec, newMember } from "./party";
 
 export interface Legacy {
@@ -32,6 +34,8 @@ export interface Legacy {
   fresh?: Milestone[];
   /** The starting kit picked at the camp. */
   kit?: string;
+  /** The starting hero picked at the camp (data/starters.ts). */
+  starter?: StarterId;
   /** How each companion's story stands across runs, by companion id: a good ending leaves a keepsake perk, a bad one
       brings them back as a rival until they are spared ("mended") or finished. The run is the legacy's run count. */
   bonds?: Record<string, { state: "good" | "bad" | "mended" | "finished"; run: number }>;
@@ -173,6 +177,15 @@ export function kitOf(legacy: Legacy | undefined): Kit {
   const k = KITS.find((x) => x.id === legacy?.kit);
   return k && hasMilestone(legacy, k.needs) ? k : KITS[0]!;
 }
+
+/** The starting hero a new run is led by: the one picked at the camp, if it is open, else the hero of Light. */
+export function starterPicked(legacy: Legacy | undefined): Starter {
+  const s = STARTERS[legacy?.starter as StarterId];
+  return s && hasMilestone(legacy, s.needs) ? s : STARTERS.light;
+}
+
+/** Crossover characters the camp has opened (every milestone they need reached). */
+export const guestsOpen = (legacy: Legacy | undefined): Crossover[] => CROSSOVER.filter((c) => c.needs.every((m) => hasMilestone(legacy, m)));
 
 /** The keepsake a new run starts with: the one picked at the camp while its companion's bond is good, else the
     newest good bond's, else none. */

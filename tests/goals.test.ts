@@ -135,6 +135,23 @@ describe("survive", () => {
     expect(roundOf(s)).toBe(4);
     expect(s.units.find((u) => u.id === "f1")!.life).toBe("up");
   });
+
+  it("asks for a clean hold: anyone in the party downed fails the goal, though holding out still ends the fight", () => {
+    const setup: BattleSetup = {
+      seed: "survive", map: flat(10, 10), goal: { kind: "survive", rounds: 2 },
+      units: [
+        unit({ id: "hero", team: "heroes", pos: { x: 0, y: 9 }, hp: 500, abilities: [] }),
+        unit({ id: "a", team: "heroes", pos: { x: 1, y: 9 }, hp: 500, abilities: [] }),
+        unit({ id: "f1", team: "foes", pos: { x: 9, y: 0 }, hp: 500, mp: 1 }),
+      ],
+    };
+    let s = createBattle(setup);
+    s.units.find((u) => u.id === "a")!.revives = 1; // fell once and was helped up
+    expect(goalStatus(s)).toBe("failed");
+    while (!s.winner && s.turns < 100) s = play(s, [{ t: "endTurn", unit: s.active }]);
+    expect(s.winner).toBe("heroes");
+    expect(goalStatus(s)).toBe("failed");
+  });
 });
 
 describe("catch", () => {

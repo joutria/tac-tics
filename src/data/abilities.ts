@@ -149,6 +149,41 @@ export const ABILITIES: Record<string, Ability> = {
   sapBloom: { id: "sapBloom", element: "neutral", ap: 3, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 8, max: 11, stat: "mag" }, status: { id: "poison", turns: 2, power: 4 }, selfHurt: 5 },
   sapCapRich: { id: "sapCapRich", element: "mush", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 4, max: 6 }, status: { id: "regen", turns: 3, power: 5 } },
 
+  // Starting heroes (data/starters.ts). The Vanguard: Fire, close quarters, Strength based.
+  cleave: { id: "cleave", element: "fire", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 9, max: 12, stat: "str" } },
+  charge: { id: "charge", element: "fire", ap: 2, range: [1, 3], los: true, target: "emptyTile", area: "single", cooldown: 2, perTurn: 1, teleport: true },
+  kindle: { id: "kindle", element: "fire", ap: 4, range: [1, 1], los: false, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 4, max: 6, stat: "str" }, status: { id: "burn", turns: 2, power: 3 } },
+  warcry: { id: "warcry", element: "fire", ap: 3, range: [0, 0], los: false, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, status: { id: "shield", turns: 2, power: 10 } },
+  // Her jobs. Bastion protects, Fury finishes.
+  rampart: { id: "rampart", element: "fire", ap: 4, range: [0, 2], los: false, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, heal: { min: 2, max: 3 }, status: { id: "shield", turns: 2, power: 14 } },
+  rescue: { id: "rescue", element: "fire", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 6, max: 8 }, status: { id: "shield", turns: 1, power: 6 } },
+  inferno: { id: "inferno", element: "fire", ap: 4, range: [1, 2], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 7, max: 9, stat: "str" }, status: { id: "burn", turns: 2, power: 3 } },
+  finisher: { id: "finisher", element: "fire", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 12, max: 15, stat: "str" } },
+  // The Scout: Air, long range, Strength based.
+  arrow: { id: "arrow", element: "air", ap: 3, range: [1, 6], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 7, max: 9, stat: "str" } },
+  volley: { id: "volley", element: "air", ap: 4, range: [2, 5], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 4, max: 6, stat: "str" } },
+  pin: { id: "pin", element: "air", ap: 3, range: [2, 5], los: true, target: "foe", area: "single", cooldown: 3, perTurn: 1, damage: { min: 2, max: 4, stat: "str" }, root: true },
+  gust: { id: "gust", element: "air", ap: 3, range: [1, 2], los: true, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 3, max: 4, stat: "str" }, push: 2 },
+  salve: { id: "salve", element: "plant", ap: 3, range: [0, 1], los: false, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 5, max: 7 } },
+  // His jobs. Warden protects, Hunter finishes.
+  tailwind: { id: "tailwind", element: "air", ap: 3, range: [0, 5], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 4, max: 6 }, status: { id: "regen", turns: 2, power: 3 } },
+  smokeScreen: { id: "smokeScreen", element: "air", ap: 4, range: [0, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, status: { id: "shield", turns: 2, power: 10 } },
+  markedShot: { id: "markedShot", element: "air", ap: 4, range: [3, 8], los: true, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 9, max: 11, stat: "str" }, status: { id: "weaken", turns: 2, power: 0 } },
+  arrowRain: { id: "arrowRain", element: "air", ap: 4, range: [2, 6], los: true, target: "any", area: "square1", cooldown: 4, perTurn: 1, foesOnly: true, damage: { min: 4, max: 6, stat: "str" } },
+
+  // Crossover characters from Evolvlings (data/companions.ts). Tila: the Dim Quarter's lamplighter, quick and bright.
+  lantern: { id: "lantern", element: "light", ap: 3, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 5, max: 7, stat: "mag" } },
+  oilFlask: { id: "oilFlask", element: "fire", ap: 4, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 2, perTurn: 1, damage: { min: 2, max: 3, stat: "mag" }, status: { id: "burn", turns: 2, power: 3 } },
+  lastLantern: { id: "lastLantern", element: "light", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 2, perTurn: 1, heal: { min: 5, max: 7 }, status: { id: "regen", turns: 2, power: 2 } },
+  // Nim: the boy who draws maps of everything, from the night side.
+  nightCut: { id: "nightCut", element: "shadow", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 7, max: 10, stat: "str" } },
+  shadowStep: { id: "shadowStep", element: "shadow", ap: 2, range: [1, 4], los: false, target: "emptyTile", area: "single", cooldown: 2, perTurn: 1, teleport: true },
+  charcoal: { id: "charcoal", element: "shadow", ap: 3, range: [1, 4], los: true, target: "foe", area: "single", cooldown: 2, perTurn: 1, damage: { min: 2, max: 3, stat: "str" }, status: { id: "weaken", turns: 2, power: 0 } },
+  // Unísona: the Star story creature, who sings two lullabies at once.
+  firstNote: { id: "firstNote", element: "star", ap: 3, range: [1, 5], los: true, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 6, max: 8, stat: "mag" } },
+  duet: { id: "duet", element: "star", ap: 3, range: [0, 4], los: true, target: "any", area: "cross1", cooldown: 3, perTurn: 1, alliesOnly: true, heal: { min: 3, max: 5 }, status: { id: "regen", turns: 2, power: 2 } },
+  unison: { id: "unison", element: "star", ap: 4, range: [1, 4], los: true, target: "any", area: "cross1", cooldown: 4, perTurn: 1, foesOnly: true, damage: { min: 3, max: 5, stat: "mag" }, status: { id: "stun", turns: 1, power: 0 } },
+
   // Combos (M3 draft): two companions acting together, unlocked by a personal quest. The caster pays the AP.
   // Lighthouse Wall (the hero with Guijo): the hero's light bounces off Guijo's shield and dazzles the foes around him.
   lighthouseWall: { id: "lighthouseWall", element: "light", ap: 4, range: [0, 5], los: true, target: "ally", area: "square1", cooldown: 4, perTurn: 1, foesOnly: true,

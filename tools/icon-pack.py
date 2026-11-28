@@ -29,6 +29,9 @@ S_Holy01 I_GoldCoin I_Jade I_Map I_Clock S_Magic08 I_Scroll
 W_Staff03 W_Dagger002 W_Mace007 W_Staff02 W_Gold_Spear A_Clothing02 A_Armour01 A_Clothing01 A_Armour03 Ac_Medal02 I_Feather01
 S_Buff08 A_Shoes02 S_Buff04 Ac_Necklace06 I_Rock02 I_Scroll02 E_Wood02 P_Red01 I_Clover W_Sword002 S_Shadow14 S_Poison05
 W_Book05 I_Chest02 W_Sword001
+S_Wind03 S_Shadow02 S_Shadow04 S_Sword16 S_Sword01 S_Fire01 S_Buff02 S_Buff01 S_Buff03 S_Fire06 S_Sword17 S_Bow01 S_Bow03
+S_Bow12 S_Wind01 P_Green01 S_Wind02 S_Wind04 S_Bow11 S_Bow08 I_Torch01 I_Bottle03 I_Torch02 S_Shadow08 S_Shadow11 S_Shadow13
+S_Magic04 S_Magic01 S_Magic07
 """.split()))
 
 

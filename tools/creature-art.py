@@ -20,6 +20,7 @@ SHEETS = {
     "centella": ("relampin", 2),  # recruit: the grown-up storm fox
     "guijo": ("pebb", 1),  # recruit: the quarry's stone guardian
     "moheda": ("capuchon", 1),  # recruit: the pump houses' mushroom scholar
+    "unisona": ("unisona", 1),  # crossover: the Star story creature
 }
 # look: (Evolvlings guardian, icy)
 BOSSES = {"mira-broken": ("mira", True)}
