@@ -90,3 +90,18 @@ describe("levers", () => {
     expect(linked(SPILLWAY, 1).every((p) => tileAt(SPILLWAY, p)!.terrain === "bridge")).toBe(true);
   });
 });
+
+describe("the Sap Mines", () => {
+  it("every start spot is free floor, and each map has machinery to work", async () => {
+    const { REGIONS, HEART_ARENA } = await import("../src/data/region");
+    const { TERRAIN } = await import("../src/engine/grid");
+    const mines = REGIONS.find((r) => r.id === "mines")!;
+    for (const a of [...mines.arenas, HEART_ARENA]) {
+      for (const p of [a.hero, ...a.allies, ...a.foes]) {
+        const t = tileAt(a.map, p)!;
+        expect(TERRAIN[t.terrain].walkable && !t.prop, `${a.map.id} ${p.x},${p.y}`).toBe(true);
+      }
+      expect(hasLevers(a.map), a.map.id).toBe(true);
+    }
+  });
+});

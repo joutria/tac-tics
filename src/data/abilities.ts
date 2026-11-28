@@ -126,6 +126,12 @@ export const ABILITIES: Record<string, Ability> = {
   // Recruits of M3. Guijo: stone protector who holds a spot and shields allies.
   slam: { id: "slam", element: "stone", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 8, max: 11, stat: "str" } },
   bulwark: { id: "bulwark", element: "stone", ap: 3, range: [0, 2], los: false, target: "ally", area: "single", cooldown: 2, perTurn: 1, status: { id: "shield", turns: 2, power: 12 } },
+  // The Sap mines' foes and their guardian.
+  cinder: { id: "cinder", element: "fire", ap: 3, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 2, damage: { min: 5, max: 7, stat: "str" }, status: { id: "burn", turns: 1, power: 2 } },
+  blast: { id: "blast", element: "fire", ap: 4, range: [2, 4], los: true, target: "any", area: "square1", cooldown: 3, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, status: { id: "burn", turns: 1, power: 2 } },
+  rockfall: { id: "rockfall", element: "stone", ap: 4, range: [2, 5], los: false, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, status: { id: "slow", turns: 1, power: 1 } },
+  forgeBreath: { id: "forgeBreath", element: "fire", ap: 4, range: [1, 4], los: true, target: "any", area: "square1", cooldown: 2, perTurn: 1, damage: { min: 6, max: 9, stat: "mag" }, status: { id: "burn", turns: 2, power: 3 } },
+  moltenCore: { id: "moltenCore", element: "fire", ap: 3, range: [0, 0], los: false, target: "ally", area: "single", cooldown: 3, perTurn: 1, status: { id: "shield", turns: 2, power: 15 } },
   tremor: { id: "tremor", element: "stone", ap: 4, range: [1, 2], los: false, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 3, max: 5, stat: "str" }, status: { id: "slow", turns: 1, power: 1 } },
   // Centella reuses the Relampín's spark and jolt, and darts past a foe's Lock.
   dash: { id: "dash", element: "bolt", ap: 2, range: [1, 3], los: true, target: "emptyTile", area: "single", cooldown: 2, perTurn: 1, teleport: true },

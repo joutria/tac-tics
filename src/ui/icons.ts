@@ -923,7 +923,7 @@ const ABILITY_PACK: Partial<Record<string, PackIcon>> = {
   puff: "S_Poison09", helpUp: "S_Holy06", ray: "S_Light01", flare: "S_Light02", prism: "I_Diamond", blink: "S_Magic02", mend: "P_Blue01",
   glow: "S_Holy04", ember: "S_Fire03", blaze: "S_Fire02", bite: "I_Fang", stomp: "S_Earth04", snare: "S_Poison06", splash: "S_Water03",
   undertow: "S_Water02", spark: "S_Thunder01", jolt: "S_Thunder04", chill: "S_Ice02", freeze: "S_Ice07", frostbite: "S_Ice03",
-  shatter: "S_Ice04", glare: "S_Water06", slam: "S_Earth01", bulwark: "E_Metal04", tremor: "S_Earth07", dash: "S_Thunder06",
+  shatter: "S_Ice04", glare: "S_Water06", slam: "S_Earth01", bulwark: "E_Metal04", tremor: "S_Earth07", cinder: "S_Fire04", blast: "S_Fire05", rockfall: "S_Earth02", forgeBreath: "S_Fire06", moltenCore: "E_Metal05", dash: "S_Thunder06",
   spores: "S_Poison07", wilt: "S_Poison04", sapCap: "I_C_Mushroom", halo: "S_Holy07", dawn: "S_Holy05", sear: "S_Light04",
   dazzle: "S_Thunder03", sidestep: "S_Wind05", graceGlow: "S_Holy08", verdict: "S_Sword06", cleansingFlare: "S_Holy02",
   sapRay: "S_Poison08", sanctuary: "S_Holy09", purge: "S_Holy10", brand: "S_Fire08", sapBloom: "S_Poison05", sapCapRich: "S_Poison01",

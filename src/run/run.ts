@@ -187,7 +187,7 @@ export const isLastRegion = (run: RunState) => (run.region ?? 0) >= REGIONS.leng
     last one's middle was, since the party has grown too. */
 export const REGION_DEPTH = 2;
 /** How deep a node is for scaling foes and rewards: later regions continue from the earlier ones. */
-export const depthOf = (run: RunState, node: RunNode) => node.layer + (run.region ?? 0) * REGION_DEPTH;
+export const depthOf = (run: RunState, node: RunNode) => node.layer + (run.region ?? 0) * REGION_DEPTH + (regionOf(run).depth ?? 0);
 
 /** A save from before regions existed: it was in the first one. */
 export function upgradeRun(saved: RunState): RunState {

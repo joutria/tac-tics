@@ -6,7 +6,7 @@ Tac-tics shares its world with [Evolvlings](https://github.com/joutria/Evolvling
 
 | What | Where it is used | Author | Licence |
 | --- | --- | --- | --- |
-| [Ninja Adventure Asset Pack](https://pixel-boy.itch.io/ninja-adventure-asset-pack) (tilesets, monsters) | Placeholder isometric tiles in `public/art/iso/` (angled from the Evolvlings maps by `tools/iso-tiles.py`) and the creature sheets in `public/art/creatures/` (from Evolvlings: the foes, and Unísona) | Pixel-boy and AAA | CC0 1.0 (no attribution required; credited anyway) |
+| [Ninja Adventure Asset Pack](https://pixel-boy.itch.io/ninja-adventure-asset-pack) (tilesets, monsters) | Placeholder isometric tiles in `public/art/iso/` (angled from the Evolvlings maps by `tools/iso-tiles.py`) and the creature sheets in `public/art/creatures/` (from Evolvlings: the foes, the guardians Mira and Forja (tinted), and Unísona) | Pixel-boy and AAA | CC0 1.0 (no attribution required; credited anyway) |
 | [Idylwild's Chromatic Campfires](https://opengameart.org/content/idylwilds-chromatic-campfires) | Flames (burning tiles, crates, trees and the camp fire), fire smoke and steam columns in `public/art/fx/` (`flame`, `smoke`, `steam`) | Idylwild | CC0 1.0 |
 | [Animated tree and water](https://opengameart.org/content/animated-tree-and-water) | Rippling water (`public/art/fx/water.png`, recoloured to the Ninja Adventure water and angled to a diamond) | abetusk | CC0 1.0 |
 | [Fire Smoke Animations](https://opengameart.org/content/fire-smoke-animations) | Small smoke and steam puffs (`public/art/fx/puff.png`, whitened) | Reactorcore | CC0 1.0 |

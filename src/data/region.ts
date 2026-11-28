@@ -9,6 +9,7 @@ import { MEADOW } from "./maps/meadow";
 import { RUINS } from "./maps/ruins";
 import { SHORE, SPILLWAY } from "./maps/reservoir";
 import { HOLLOW } from "./maps/hollow";
+import { FORGE, HEART, MINESHAFT } from "./maps/mines";
 import { TEST_UNITS } from "./units";
 import type { Element } from "./elements";
 import type { Line } from "./rivals";
@@ -84,6 +85,8 @@ export interface Region {
   brute?: Species;
   /** Companions met here, by map layer. */
   recruits: RecruitSpot[];
+  /** Extra depth its foes fight at, on top of the usual climb per region: the last region's foes are the toughest. */
+  depth?: number;
   /** Layer of the region's Floodgate, if it has one (a choice node that floods one path and freezes the other). */
   floodgate?: number;
 }
@@ -147,6 +150,38 @@ const BROKEN_MIRA: Species = {
   res: { ice: 40, water: 30 }, abilities: ["glare", "shatter", "freeze"], ai: "caster", marked: true,
 };
 
+/* The Sap Mines (region 3): creatures of the furnaces and the deep galleries, from the Evolvlings crater and caves
+   (art in public/art/creatures/, tools/creature-art.py). A little tougher than the reservoir's, as the last
+   region should be. */
+const MINE_NATIVES: Species[] = [
+  { name: "Tiznajo", team: "foes", element: "fire", look: "tiznajo", hp: 40, ap: 6, mp: 4, speed: 50, jump: 1, str: 12, mag: 0, agi: 16,
+    res: { fire: 25 }, abilities: ["cinder", "bite"], ai: "skirmisher", marked: true },
+  { name: "Topacio", team: "foes", element: "stone", look: "topacio", hp: 52, ap: 6, mp: 3, speed: 32, jump: 1, str: 13, mag: 0, agi: 6,
+    res: { stone: 30 }, abilities: ["slam", "tremor"], ai: "bruiser", marked: true },
+  { name: "Petardín", team: "foes", element: "fire", look: "petardin", hp: 36, ap: 6, mp: 3, speed: 44, jump: 1, str: 0, mag: 14, agi: 12,
+    res: { fire: 25 }, abilities: ["ember", "blast"], ai: "caster", marked: true },
+  { name: "Colmillón", team: "foes", element: "stone", look: "colmillon", hp: 54, ap: 6, mp: 3, speed: 30, jump: 1, str: 14, mag: 0, agi: 6,
+    res: { stone: 25, fire: 10 }, abilities: ["bite", "stomp"], ai: "bruiser", marked: true },
+  { name: "Calavero", team: "foes", element: "stone", look: "calavero", hp: 38, ap: 6, mp: 3, speed: 40, jump: 1, str: 0, mag: 14, agi: 10,
+    res: { stone: 25 }, abilities: ["rockfall", "ember"], ai: "caster", marked: true },
+];
+
+/** The mines' brute: the anvil beast that guards the lower galleries. */
+const ANVIL: Species = {
+  name: "Yunquerón", team: "foes", element: "fire", look: "yunqueron", size: 2, hp: 104, ap: 6, mp: 3, speed: 32, jump: 1, str: 18, mag: 0, agi: 4,
+  res: { fire: 25, stone: 15 }, abilities: ["cinder", "stomp"], ai: "bruiser",
+};
+
+/** Forja, the forge's guardian, blackened by the Sap where it wells up. The run's last boss, in its own lair. */
+const BLACKENED_FORJA: Species = {
+  name: "Forja", team: "foes", element: "fire", look: "forja-sap", hp: 108, ap: 7, mp: 2, speed: 40, jump: 1, str: 10, mag: 24, agi: 6,
+  res: { fire: 45, stone: 15 }, abilities: ["forgeBreath", "ember", "moltenCore"], ai: "caster", marked: true,
+};
+export const HEART_ARENA: Arena = {
+  map: HEART, hero: { x: 4, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 5, y: 8 }, { x: 4, y: 9 }],
+  foes: [{ x: 4, y: 1 }, { x: 2, y: 2 }, { x: 7, y: 2 }, { x: 5, y: 4 }],
+};
+
 export const REGIONS: Region[] = [
   { id: "town", name: { es: "El pueblo arrasado por la Savia", en: "The Sap-ruined town" }, arenas: ARENAS, species: SPECIES, boss: BOSS, natives: TOWN_NATIVES, brute: OGRE,
     recruits: [{ layer: 1, talk: "remanso.meet" }, { layer: 3, talk: "guijo.meet" }] },
@@ -163,6 +198,20 @@ export const REGIONS: Region[] = [
     boss: { species: 0, hp: 1, stat: 0, mp: 0, name: { es: "Mira Quebrada", en: "Broken Mira" }, unit: BROKEN_MIRA },
     recruits: [{ layer: 1, talk: "centella.meet" }, { layer: 3, talk: "moheda.meet" }],
     floodgate: 2,
+  },
+  {
+    id: "mines", name: { es: "Las Minas de la Savia", en: "The Sap Mines" },
+    arenas: [
+      { map: MINESHAFT, hero: { x: 4, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 5, y: 8 }, { x: 4, y: 9 }], foes: [{ x: 2, y: 1 }, { x: 6, y: 0 }, { x: 8, y: 2 }, { x: 5, y: 3 }], giant: { x: 4, y: 0 } },
+      { map: FORGE, hero: { x: 4, y: 8 }, allies: [{ x: 3, y: 8 }, { x: 5, y: 8 }, { x: 4, y: 9 }], foes: [{ x: 2, y: 1 }, { x: 7, y: 1 }, { x: 5, y: 2 }, { x: 7, y: 3 }], giant: { x: 4, y: 0 } },
+    ],
+    // The first region's foes, scorched by the furnaces: Fire instead of their element, and a burning claw.
+    species: SPECIES,
+    variant: { element: "fire", name: { es: "{name} de Ascua", en: "Ember {name}" }, res: { fire: 20 }, hp: 10, stat: 3, abilities: ["cinder"] },
+    natives: MINE_NATIVES, brute: ANVIL,
+    boss: { species: 0, hp: 1, stat: 0, mp: 0, name: { es: "Forja Ennegrecida", en: "Blackened Forja" }, unit: BLACKENED_FORJA, arena: HEART_ARENA },
+    recruits: [],
+    depth: 4,
   },
 ];
 
