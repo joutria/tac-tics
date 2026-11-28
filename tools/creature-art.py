@@ -27,6 +27,8 @@ SHEETS = {
     "colmillon": ("colmillon", 1),  # the Sap mines: tusked tunneller
     "calavero": ("calavero", 0),  # the Sap mines: skull-capped rock caster
     "yunqueron": ("yunqueron", 1),  # the Sap mines' brute: the anvil beast, drawn 2x2
+    "eco": ("ecolito", 1),  # recruit: the mines' stone miner who sealed a shaft
+    "ceniza": ("fogonero", 0),  # recruit: Forja's last stoker
 }
 # look: (Evolvlings guardian, tint): "ice" is frozen and cracked, "sap" blackened by the Sap with glowing seams.
 BOSSES = {"mira-broken": ("mira", "ice"), "forja-sap": ("forja", "sap")}

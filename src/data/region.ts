@@ -210,7 +210,7 @@ export const REGIONS: Region[] = [
     variant: { element: "fire", name: { es: "{name} de Ascua", en: "Ember {name}" }, res: { fire: 20 }, hp: 10, stat: 3, abilities: ["cinder"] },
     natives: MINE_NATIVES, brute: ANVIL,
     boss: { species: 0, hp: 1, stat: 0, mp: 0, name: { es: "Forja Ennegrecida", en: "Blackened Forja" }, unit: BLACKENED_FORJA, arena: HEART_ARENA },
-    recruits: [],
+    recruits: [{ layer: 1, talk: "eco.meet" }, { layer: 3, talk: "ceniza.meet" }],
     depth: 4,
   },
 ];

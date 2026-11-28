@@ -463,6 +463,8 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
       if (next.shards >= ALTAR.shards) next.offers.push({ kind: "altar" });
       // Past the town, the camps hold survivors of the storm fire Centella lit.
       if ((next.region ?? 0) >= 1) seeIt(next, "centella");
+      // In the mines' camps, the miners who got out of the shaft Eco sealed.
+      if ((next.region ?? 0) >= 2) seeIt(next, "eco");
     } else if (node.kind === "shop") {
       const by = help?.kind === "discount" ? next.spared!.find((f) => f.id === help.foe)!.name : undefined;
       next.offers.push({ kind: "shop", stock: shopStock(next, nodeId), ...(by ? { discount: by } : {}) });
@@ -568,6 +570,8 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   if (node.kind === "rival" && next.rivals.find((r) => r.id === node.rival)?.cause.kind === "escaped" && saw("remanso")) seeIt(next, "remanso");
   if ((deeds.allyBledOut || fellNow) && saw("guijo")) seeIt(next, "guijo");
   if (deeds.sapRemedy && saw("moheda")) seeIt(next, "moheda");
+  // The soot on the mines' Ember foes comes from Ceniza's own forge.
+  if ((next.region ?? 0) >= 2 && saw("ceniza")) seeIt(next, "ceniza");
 
   // Spoils: every foe put down (not the ones that got away), scaled by depth and the kind of node.
   const mult = (1 + REWARD.perLayer * depthOf(next, node)) * (node.kind === "boss" ? REWARD.bossMult : node.kind === "elite" ? REWARD.eliteMult : node.kind === "rival" ? REWARD.rivalMult : 1);
