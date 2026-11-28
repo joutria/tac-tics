@@ -32,6 +32,9 @@ STONE = {
     "frost": [(76, 92, 116), (108, 128, 154), (150, 172, 196), (204, 220, 236)],
 }
 MOSS = [(84, 102, 38), (116, 163, 52), (173, 188, 58)]
+VEIN = [(150, 70, 30), (232, 142, 46), (255, 210, 110)]   # Sap seams glinting in the mines' rock
+SAP_CRYSTAL = [(92, 40, 30), (176, 78, 34), (236, 140, 52), (255, 216, 130)]
+SAP_DEEP = [(60, 32, 70), (112, 56, 120), (170, 98, 168), (226, 168, 220)]
 SNOW = [(168, 196, 222), (226, 238, 248), (255, 255, 255)]
 LEAF = {
     "summer": [(84, 102, 38), (116, 163, 52), (173, 188, 58), (214, 222, 110)],   # the pack's tree
@@ -156,6 +159,8 @@ def rock(shape, pal, cover=None, seed=0, cracks=2, size="l"):
                 c = MOSS[min(2, tone)] if tone else MOSS[0]
             if cover == "snow" and up > 0.45:
                 c = SNOW[2 if tone >= 2 else 1]
+            if cover == "vein" and rnd.random() < 0.06 and tone:
+                c = VEIN[min(2, tone)]
             px[x, y] = rgba(c)
     # Cracks: short dark lines down the lit faces, a lighter edge beside them.
     for _ in range(cracks):
@@ -313,6 +318,33 @@ def bare(bark, seed=0, twigs=None):
 
 
 # ---- What each region gets ----------------------------------------------------------------------------------------
+def crystal(pal, shards, seed=0):
+    """A cluster of Sap crystals (the mines' "trees"): tall faceted shards from one foot, lit on the left face."""
+    rnd = random.Random(seed)
+    im = Image.new("RGBA", (TW_, TH_), (0, 0, 0, 0))
+    px = im.load()
+    for dx, h, w, lean in shards:
+        bx = TBX + dx
+        for y in range(TBY - h, TBY + 1):
+            t = (y - (TBY - h)) / max(1, h)           # 0 at the tip, 1 at the foot
+            half = max(0.6, w * min(1.0, t * 2.2))
+            cx = bx + lean * (1 - t) * h / 3
+            for x in range(int(cx - half), int(cx + half) + 1):
+                if not (0 <= x < TW_):
+                    continue
+                left = x < cx
+                tone = 2 if left else 1
+                if abs(x - cx) < 0.8:
+                    tone = 3 if t < 0.5 else 2
+                if y > TBY - 2:
+                    tone = 0
+                if rnd.random() < 0.03:
+                    tone = 3
+                px[x, y] = rgba(pal[tone])
+    im = outline(im)
+    return with_shadow(im, TBX, TBY - 0.5, 9, 3)
+
+
 def sets():
     # Each rock comes in every size (rock-<region>-<n>-<size>.png).
     specs = {
@@ -322,6 +354,8 @@ def sets():
                   ("tall", STONE["frost"], "snow", 14), ("lump", STONE["grey"], None, 15)],
         "hollow": [("round", STONE["slate"], "moss", 21), ("split", STONE["slate"], None, 22), ("lump", STONE["green"], "moss", 23),
                    ("tall", STONE["slate"], None, 24)],
+        "mine": [("round", STONE["slate"], "vein", 31), ("split", STONE["grey"], "vein", 32), ("slab", STONE["slate"], None, 33),
+                 ("tall", STONE["grey"], "vein", 34), ("lump", STONE["sand"], None, 35)],
     }
     rocks = {r: [{z: rock(sh, pal, cov, seed=sd, size=z) for z in ROCK_K} for sh, pal, cov, sd in v] for r, v in specs.items()}
     trees = {
@@ -334,6 +368,10 @@ def sets():
                   bare(GREYBARK, seed=15)],
         "hollow": [broadleaf(LEAF["sickly"], "round", roots=None, seed=21), broadleaf(LEAF["plum"], "tall", roots=None, seed=22),
                    bare(BARK, seed=23, twigs=LEAF["plum"]), broadleaf(LEAF["sickly"], "wide", roots=None, seed=24)],
+        "mine": [crystal(SAP_CRYSTAL, [(0, 26, 3.5, 0), (-6, 16, 2.5, -1), (6, 19, 2.5, 1)], seed=31),
+                 crystal(SAP_CRYSTAL, [(-2, 20, 3, -0.5), (4, 28, 3.5, 0.5), (-8, 11, 2, -1)], seed=32),
+                 crystal(SAP_DEEP, [(0, 22, 3.5, 0), (-5, 14, 2.5, -1), (5, 12, 2, 1)], seed=33),
+                 bare(GREYBARK, seed=34)],
     }
     return rocks, trees
 

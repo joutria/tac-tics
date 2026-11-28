@@ -9,7 +9,7 @@ import { roundOf, type BattleState, type Facing, type Unit } from "../engine/sta
 import { iconCanvas, splitIcons, type IconId } from "../ui/icons";
 import { drawPuddle } from "./puddle";
 import { drawBurst, drawFallingLeaf, drawFireTile, drawFx, drawSteamTile, drawWater, loopFrame, type Burst } from "./fx";
-import { sceneryFor } from "./scenery";
+import { biomeOf, sceneryFor } from "./scenery";
 
 /** Fire that never goes out (camp fires on travel scenes) is drawn as a camp fire: stones, logs and a live flame. */
 const CAMPFIRE_AT = 1e11;
@@ -587,7 +587,8 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
           ctx.drawImage(img["side-left"]!, c.x - TW / 2, c.y + lvl * LEVEL);
           ctx.drawImage(img["side-right"]!, c.x, c.y + lvl * LEVEL);
         }
-        const top = img[`top-${tile.terrain}`];
+        // In the mines a Sap crystal grows out of bare rock, not grass.
+        const top = img[tile.terrain === "tree" && biomeOf(m.id) === "mine" ? "top-dirt" : `top-${tile.terrain}`];
         if (tile.terrain === "water" && drawWater(ctx, img, c.x, c.y, opt.time)) { /* rippling water from the fx sheet */ }
         else if (top) ctx.drawImage(top, c.x - TW / 2, c.y - TH / 2);
         else {
@@ -665,7 +666,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
         ctx.globalAlpha = 1;
         // A burning tree: flames all through the crown and smoke above it.
         if (onFire) { groundFire(ctx, img, c, opt.time, p); burningObject(ctx, img, c, opt.time, p.x * 3 + p.y, -30); }
-        if (!onFire) drawFallingLeaf(ctx, img, c.x, c.y, opt.time, p.x * 11 + p.y * 5);
+        if (!onFire && biomeOf(m.id) !== "mine") drawFallingLeaf(ctx, img, c.x, c.y, opt.time, p.x * 11 + p.y * 5);
       }
       const here = places.some((pl) => !pl.moving && pl.slot.x === p.x && pl.slot.y === p.y);
       if (tile.terrain === "tallgrass") tallGrass(ctx, c, p.x * 7 + p.y * 3, opt.time, false, flat);

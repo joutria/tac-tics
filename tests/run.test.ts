@@ -281,7 +281,7 @@ describe("difficulty", () => {
 
 describe("regions", () => {
   it("moves on to the next region after a boss, with a fresh map and stronger, renamed foes", () => {
-    expect(REGIONS.length).toBe(2);
+    expect(REGIONS.length).toBe(3);
     let run = newRun("regions");
     while (!run.over && run.region === 0) {
       run = answer(run);
@@ -301,11 +301,33 @@ describe("regions", () => {
       expect(foe.element).toBe("ice");
       expect(foe.abilities).toContain("frostbite");
     }
-    while (!run.over) {
+    while (!run.over && run.region === 1) {
       run = answer(run);
       run = enterNode(run, nextNodes(run)[0]!.id, "en");
       if (run.battle) {
         if (run.map.nodes[run.battle.node]!.kind === "boss") expect(run.battle.setup.units.some((u) => u.name === "Broken Mira")).toBe(true);
+        run = finishBattle(run, end(run, "win"));
+      }
+    }
+    // The third region: the Sap Mines, with Ember foes and Blackened Forja in her own lair at the end.
+    expect(run.over).toBeNull();
+    expect(run.region).toBe(2);
+    run = answer(run);
+    const mine = battleSetup(run, nextNodes(run)[0]!.id, "en");
+    const mineNatives = (REGIONS[2]!.natives ?? []).map((sp) => sp.name);
+    for (const foe of mine.units.filter((u) => u.team === "foes" && !u.rival)) {
+      if (mineNatives.includes(foe.name)) continue;
+      expect(foe.name.startsWith("Ember ")).toBe(true);
+      expect(foe.element).toBe("fire");
+    }
+    while (!run.over) {
+      run = answer(run);
+      run = enterNode(run, nextNodes(run)[0]!.id, "en");
+      if (run.battle) {
+        if (run.map.nodes[run.battle.node]!.kind === "boss") {
+          expect(run.battle.setup.units.some((u) => u.name === "Blackened Forja")).toBe(true);
+          expect(run.battle.setup.map.id).toBe("heart");
+        }
         run = finishBattle(run, end(run, "win"));
       }
     }

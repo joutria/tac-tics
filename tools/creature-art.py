@@ -21,9 +21,15 @@ SHEETS = {
     "guijo": ("pebb", 1),  # recruit: the quarry's stone guardian
     "moheda": ("capuchon", 1),  # recruit: the pump houses' mushroom scholar
     "unisona": ("unisona", 1),  # crossover: the Star story creature
+    "tiznajo": ("tiznajo", 0),  # the Sap mines: soot imp from the furnaces
+    "topacio": ("topacio", 0),  # the Sap mines: stone miner
+    "petardin": ("petardin", 0),  # the Sap mines: blasting-powder imp
+    "colmillon": ("colmillon", 1),  # the Sap mines: tusked tunneller
+    "calavero": ("calavero", 0),  # the Sap mines: skull-capped rock caster
+    "yunqueron": ("yunqueron", 1),  # the Sap mines' brute: the anvil beast, drawn 2x2
 }
-# look: (Evolvlings guardian, icy)
-BOSSES = {"mira-broken": ("mira", True)}
+# look: (Evolvlings guardian, tint): "ice" is frozen and cracked, "sap" blackened by the Sap with glowing seams.
+BOSSES = {"mira-broken": ("mira", "ice"), "forja-sap": ("forja", "sap")}
 
 
 def row(evo, name, stage):
@@ -45,14 +51,35 @@ def icy(im):
     return out
 
 
-def boss(evo, name, ice):
+def sapped(im):
+    """Blackened by the Sap: dark violet over the colours, the brightest pixels kept as amber seams."""
+    px = im.load()
+    out = im.copy()
+    po = out.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b, a = px[x, y]
+            if not a:
+                continue
+            lum = (r * 3 + g * 6 + b) / 10
+            if lum > 200:
+                po[x, y] = (255, 196, 90, a)
+            else:
+                k = lum / 255
+                po[x, y] = (int(40 + 120 * k), int(22 + 60 * k), int(52 + 90 * k), a)
+    return out
+
+
+def boss(evo, name, tint):
     g = Image.open(os.path.join(evo, "art", "guardians", name + ".png")).convert("RGBA")
-    cell = g.crop((0, 0, 96, 96)).resize((64, 64), Image.NEAREST)
-    if ice:
-        cell = icy(cell)
+    frames = [g.crop((i * 96, 0, i * 96 + 96, 96)).resize((64, 64), Image.NEAREST) for i in range(max(1, g.width // 96))]
+    if tint == "ice":
+        frames = [icy(f) for f in frames[:1]]
+    elif tint == "sap":
+        frames = [sapped(f) for f in frames]
     sheet = Image.new("RGBA", (640, 64))
     for i in range(10):
-        sheet.paste(cell, (i * 64, 0))
+        sheet.paste(frames[(i // 2) % len(frames)], (i * 64, 0))
     return sheet
 
 
@@ -63,6 +90,6 @@ if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     for look, (name, stage) in SHEETS.items():
         row(evo, name, stage).save(os.path.join(OUT, look + ".png"))
-    for look, (name, ice) in BOSSES.items():
-        boss(evo, name, ice).save(os.path.join(OUT, look + ".png"))
+    for look, (name, tint) in BOSSES.items():
+        boss(evo, name, tint).save(os.path.join(OUT, look + ".png"))
     print("wrote", ", ".join(list(SHEETS) + list(BOSSES)))

@@ -53,12 +53,23 @@ export const PIECES: Record<string, Piece[]> = {
     ["w0 w0 w0 b0 w0 w0 w0", "w0 i0 w0 b0 w0 w0 i0", "w0 w0 w0 b0 w0 w0 w0", "g0 g0 g0 d0 g0 g0 g0"],
     ["d1 r1 d1 d1 d1 r1 d1", "d1 d1 d1 d1 d1 d1 d1", "d1 r1 d1 d1 d1C r1 d1", "d0 d0 d0 d0 d0 d0 d0"],
   ],
+  mines: [
+    ["d1 d1 d0 d0 d0 d1 d1", "d2 d1 d0 d0 d0 d1 d2", "d2 t1 d0 d0 d0 t1 d2", "d1 d1 d0 d0 d0 d1 d1"],
+    ["d0 d0 r0 d0 d0 d0 t0", "d0 d0 d0 d0 r0 d0 d0", "t0 d0 d0 d0 d0 d0 r0", "d0 r0 d0 d0 d0 d0 d0"],
+    ["d0 d0 d0 d0 d0 d0 d0", "w0 w0 w0 b0 w0 w0 w0", "w0 w0 w0 b0 w0 w0 w0", "d0 t0 d0 d0 d0 d0 d0"],
+    ["d0 d0C d0 d0 d0 d0B d0", "d0 d0 d0 d0 d0 d0 d0", "d0B d0 d0 d0 d0 d0C d0C", "d0 d0 d0 d0 d0 d0 d0"],
+    ["d2 d2 d1 d0 d1 d2 d2", "d2 d1 d1 d0 d1 d1 d2", "d1 d1 d0 d0 d0 d1 d1", "d1 d0 d0 d0 d0 d0 d1"],
+    ["t0 d0 t0 d0 t0 d0 t0", "d0 d0 d0 d0 d0 d0 d0", "d0 t0 d0 d0 d0 t0 d0", "d0 d0 d0 d0 d0 d0 d0"],
+    ["d0o d0o d0 d0 d0 d0 d0", "d0o d0 d0 d0 d0 r0 d0", "d0 d0 d0 d0 d0 d0o d0o", "d0 d0 d0 d0 d0 d0o d0"],
+    ["w0 w0 d0 d0 d0 w0 w0", "w0 d0 d0 d0 d0 d0 w0", "w0 w0 d0 d0 d0 w0 w0", "w0 w0 w0 d0 w0 w0 w0"],
+  ],
 };
 
 /** What fills the three side columns, per region: tiles and how often each comes up. */
 const SCENERY: Record<string, [string, number][]> = {
   town: [["g0", 10], ["t0", 3], ["r0", 1], ["g1", 2], ["d0", 1], ["t1", 1]],
   reservoir: [["w0", 8], ["g0", 4], ["i0", 2], ["t0", 1], ["r0", 1]],
+  mines: [["d1", 6], ["d2", 4], ["d0", 3], ["t1", 2], ["r1", 1], ["w0", 1]],
 };
 
 /** Where the party sets out from, and where a path that is not a fight ends. The party stands around `stand`. */

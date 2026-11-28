@@ -1,10 +1,10 @@
 /* Which rock and tree pictures the board shows. Each region has its own set (tools/scenery-art.py draws them): the
    town's green woods with the odd autumn tree, the frozen reservoir's snowy pines and stones, the Sap Hollow's
-   sickly and Sap-purple growth. Each rock or tree picks one by where it stands (sceneryLook), so a map looks the
+   sickly and Sap-purple growth, the mines' veined rock and Sap crystals. Each rock or tree picks one by where it stands (sceneryLook), so a map looks the
    same every time; a rock keeps its picture when it rolls. Rocks come in three sizes, each with its own pictures. */
 import { rockSizeOf, sceneryLook, type Pos, type RockSize, type Tile } from "../engine/grid";
 
-export type Biome = "town" | "frost" | "hollow";
+export type Biome = "town" | "frost" | "hollow" | "mine";
 
 /** A picture and the pixel (at 1x) that sits on the tile's centre. */
 interface Look { key: string; ax: number; ay: number }
@@ -23,11 +23,13 @@ export const ROCKS: Record<Biome, Record<RockSize, Look[]>> = {
   town: bySize("town", 5, { m: [PACK_ROCK] }),
   frost: bySize("frost", 5),
   hollow: bySize("hollow", 4),
+  mine: bySize("mine", 5),
 };
 export const TREES: Record<Biome, Look[]> = {
   town: [PACK_TREE, PACK_TREE, ...trees("town", 7)],
   frost: trees("frost", 5),
   hollow: trees("hollow", 4),
+  mine: trees("mine", 4),
 };
 
 /** Every picture above, for loadImages. */
@@ -37,6 +39,7 @@ export const SCENERY_IMAGES: string[] = [...new Set([...Object.values(ROCKS).fla
 export function biomeOf(mapId: string): Biome {
   if (/hollow/.test(mapId)) return "hollow";
   if (/shore|spillway|reservoir/.test(mapId)) return "frost";
+  if (/mine|shaft|forge|seam|heart/.test(mapId)) return "mine";
   return "town";
 }
 
