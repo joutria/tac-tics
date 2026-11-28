@@ -105,3 +105,29 @@ describe("the Sap Mines", () => {
     }
   });
 });
+
+describe("foes and levers", () => {
+  const WALL = [
+    "d0 d0 d0 d0 d0",
+    "d0 d0L1 d0 d0 d0",
+    "d3 d3 d0O1 d3 d3",
+    "d0 d0 d0 d0 d0",
+    "d0 d0 d0 d0 d0",
+  ];
+  const fight = (ai: "caster" | "bruiser") => createBattle({ seed: "wall", map: parseMap("wall", WALL), units: [
+    unit({ id: "foe", team: "foes", pos: { x: 1, y: 0 }, speed: 90, ai, abilities: ["bite"] }),
+    unit({ id: "hero", team: "heroes", pos: { x: 2, y: 4 }, speed: 10 }),
+  ] });
+
+  it("a cautious foe shuts the only gate between it and the party", async () => {
+    const { planTurn } = await import("../src/engine/ai");
+    const cmds = planTurn(fight("caster"));
+    expect(cmds.some((c) => c.t === "cast" && c.ability === "pull")).toBe(true);
+  });
+
+  it("a bruiser leaves the way open, to get at the party", async () => {
+    const { planTurn } = await import("../src/engine/ai");
+    const cmds = planTurn(fight("bruiser"));
+    expect(cmds.some((c) => c.t === "cast" && c.ability === "pull")).toBe(false);
+  });
+});
