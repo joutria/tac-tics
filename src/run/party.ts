@@ -99,6 +99,8 @@ export function readDeeds(setup: BattleSetup, commands: Command[]): Deeds {
         if (h.revived) seen.helpUp++;
         if (h.spared) seen.spare++;
         if (h.heal > 0) seen.heal++;
+        // An attack that caught a friend (the caster's own area spares the caster).
+        if (was.team === "heroes" && was.id !== caster.id && h.damage > 0) seen.friendlyFire++;
         if (was.team === "heroes") continue;
         if (was.life === "downed" && h.died) seen.finishDowned++;
         // A Sap courier (a catch goal, engine/goals.ts) runs from the start: stopping it is the job, not a cruelty.

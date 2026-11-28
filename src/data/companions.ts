@@ -26,10 +26,12 @@ export type Deed =
   /** A yielding or downed foe spared (in the fight, or after the win). */
   | "spare"
   /** A yielding foe downed or killed anyway, or finished after the win. */
-  | "finishYielding";
+  | "finishYielding"
+  /** A party member hit one of the party with an attack (an area that caught a friend). */
+  | "friendlyFire";
 
 export const DEEDS: Deed[] = ["helpUp", "heal", "finishDowned", "killFleeing", "letEscape", "allyBledOut", "noneDowned",
-  "rivalBeaten", "rivalEscaped", "quickWin", "shardsGained", "spendShards", "destroyShards", "sapRemedy", "jobBeacon", "jobBlaze", "spare", "finishYielding"];
+  "rivalBeaten", "rivalEscaped", "quickWin", "shardsGained", "spendShards", "destroyShards", "sapRemedy", "jobBeacon", "jobBlaze", "spare", "finishYielding", "friendlyFire"];
 
 export const QUICK_WIN_ROUNDS = 4;
 
@@ -169,6 +171,67 @@ export const COMPANIONS: Record<string, Companion> = {
       betrays: { es: "Moheda descorcha un frasco que brilla. «Veamos qué te hace la Savia a ti».", en: "Moheda uncorks a jar that glows. \"Let's see what the Sap does to you.\"" },
     },
     forbiddenWarning: { es: "Moheda no perdonará que quemes los fragmentos", en: "Moheda won't forgive burning the shards" },
+  },
+
+  /* The Sap Mines' companions (region 3). Lines are drafts for Jose to review.
+     Eco: an Ecolito, a stone miner of the deep galleries. When the Sap came up a shaft, he sealed it with the
+     night shift still below, to keep it from the rest. He has not stopped being careful since. */
+  eco: {
+    id: "eco",
+    spec: {
+      id: "eco", name: "Eco", team: "heroes", element: "stone", look: "eco",
+      hp: 52, ap: 6, mp: 3, mana: 22, speed: 36, jump: 1, str: 11, mag: 4, agi: 6, res: { stone: 30, fire: 10 },
+      abilities: ["slam", "bulwark", "tremor"], quick: "hurl",
+    },
+    reacts: { noneDowned: 3, helpUp: 2, heal: 1, quickWin: -1, allyBledOut: -4, friendlyFire: -15 },
+    likeCapPerBattle: 8,
+    forbidden: ["friendlyFire"],
+    soft: ["quickWin"],
+    remarks: {
+      noneDowned: { es: "Eco cuenta cabezas dos veces. «Todos. Así se sale de una galería».", en: "Eco counts heads twice. \"Everyone. That's how you walk out of a gallery.\"" },
+      helpUp: { es: "Eco: «Arriba. Despacio. El suelo no se va a ir a ninguna parte».", en: "Eco: \"Up. Slowly. The floor isn't going anywhere.\"" },
+      heal: { es: "Eco asiente, serio. «Primero se curan las heridas. Luego se cava».", en: "Eco nods, serious. \"First you see to the wounds. Then you dig.\"" },
+      quickWin: { es: "Eco: «Demasiado deprisa. Las prisas tiran techos».", en: "Eco: \"Too fast. Hurry is what brings roofs down.\"" },
+      allyBledOut: { es: "Eco se queda mirando el sitio vacío. No dice nada en mucho rato.", en: "Eco stares at the empty place. He says nothing for a long time." },
+      friendlyFire: { es: "Eco se pone entre tú y los demás. «A los nuestros no. Nunca. Así empezó todo ahí abajo».", en: "Eco steps between you and the others. \"Not our own. Never. That's how it all started down there.\"" },
+    },
+    escalation: {
+      cold: { es: "Eco camina al final del grupo, vigilando tus manos.", en: "Eco walks at the back of the group, watching your hands." },
+      refuses: { es: "Eco: «Busca a otro que se ponga delante. Yo ya enterré a bastantes».", en: "Eco: \"Find someone else to stand in front. I've buried enough.\"" },
+      leaves: { es: "Por la mañana, el sitio de Eco está vacío. Ha apuntalado la entrada del campamento antes de irse.", en: "By morning, Eco's place is empty. He shored up the camp's entrance before he went." },
+      betrays: { es: "Eco golpea la pared y el techo cruje sobre vosotros. «Hay cosas que es mejor sellar».", en: "Eco strikes the wall and the roof groans above you. \"Some things are better sealed.\"" },
+    },
+    forbiddenWarning: { es: "Eco no perdonará que golpees a uno de los tuyos", en: "Eco won't forgive hitting one of your own" },
+  },
+
+  /* Ceniza: a Fogonero, the last stoker of the forge-temple where Forja was kept. She fed its fire every day of
+     her life. She hates the Sap as only a priest can, and she does not know yet that her fire is what draws it up. */
+  ceniza: {
+    id: "ceniza",
+    spec: {
+      id: "ceniza", name: "Ceniza", team: "heroes", element: "fire", look: "ceniza",
+      hp: 40, ap: 6, mp: 3, mana: 24, speed: 48, jump: 1, str: 2, mag: 15, agi: 12, res: { fire: 30 },
+      abilities: ["ember", "blaze", "emberMend"], quick: "dip",
+    },
+    reacts: { destroyShards: 6, jobBlaze: 3, rivalBeaten: 2, noneDowned: 1, shardsGained: -2, spendShards: -20 },
+    likeCapPerBattle: 8,
+    forbidden: ["spendShards"],
+    soft: ["shardsGained"],
+    remarks: {
+      destroyShards: { es: "Ceniza echa los fragmentos al fuego ella misma y canta algo antiguo mientras arden.", en: "Ceniza throws the shards into the fire herself, and sings something old while they burn." },
+      jobBlaze: { es: "Ceniza: «Por fin alguien que entiende el fuego. No es para calentarse. Es para limpiar».", en: "Ceniza: \"At last, someone who understands fire. It isn't for warmth. It's for cleansing.\"" },
+      rivalBeaten: { es: "Ceniza sopla las brasas que deja el rival. «Una mancha menos en la montaña».", en: "Ceniza blows on the embers the rival left. \"One less stain on the mountain.\"" },
+      noneDowned: { es: "Ceniza: «La fragua quiere a todos en pie. Bien».", en: "Ceniza: \"The forge wants everyone standing. Good.\"" },
+      shardsGained: { es: "Ceniza mira los fragmentos en tu bolsa como quien mira una herida. «Quémalos pronto».", en: "Ceniza looks at the shards in your bag the way you'd look at a wound. \"Burn them soon.\"" },
+      spendShards: { es: "Ceniza se aparta de ti. «Has pagado con lo que ennegreció a Forja. Con eso».", en: "Ceniza steps away from you. \"You paid with what blackened Forja. With that.\"" },
+    },
+    escalation: {
+      cold: { es: "Ceniza aviva su propio fuego, lejos del tuyo.", en: "Ceniza tends her own fire, away from yours." },
+      refuses: { es: "Ceniza: «No pelearé al lado de quien comercia con la Savia».", en: "Ceniza: \"I won't fight beside someone who trades in the Sap.\"" },
+      leaves: { es: "Ceniza se ha ido antes del alba. Su fuego aún humea, cubierto de ceniza, como ella lo dejaría.", en: "Ceniza is gone before dawn. Her fire still smokes, banked with ash, the way she would leave it." },
+      betrays: { es: "Ceniza levanta las llamas entre vosotros. «La fragua purifica. Empezando por ti».", en: "Ceniza raises the flames between you. \"The forge cleanses. Starting with you.\"" },
+    },
+    forbiddenWarning: { es: "Ceniza no perdonará que pagues con fragmentos de Savia", en: "Ceniza won't forgive paying with Sap shards" },
   },
 
   /* Crossover characters from Evolvlings (data/crossover.ts), opened at the camp by late milestones.
@@ -328,6 +391,34 @@ export const TALKS: Record<string, Talk> = {
       { text: { es: "«Guardaremos los fragmentos.»", en: "\"We'll keep the shards.\"" }, reply: { es: "Moheda: «Sensato. Nos vamos a llevar bien. Casi siempre».", en: "Moheda: \"Sensible. We will get along. Mostly.\"" }, approval: 10, reveals: true, joins: true },
       { text: { es: "«La Savia arrasó el pueblo. No prometo nada.»", en: "\"The Sap razed the town. I promise nothing.\"" }, reply: { es: "Moheda: «Honesto. Entonces tomaré notas sobre ti también».", en: "Moheda: \"Honest. Then I'll take notes on you too.\"" }, approval: -10, reveals: true, joins: true },
       { text: { es: "«Sigue con tus frascos.»", en: "\"Stay with your jars.\"" }, reply: { es: "Moheda: «Lo haré. Ellos no discuten».", en: "Moheda: \"I will. They don't argue.\"" }, approval: 0, joins: false },
+    ],
+  },
+  "eco.meet": {
+    id: "eco.meet",
+    companion: "eco",
+    lines: [
+      { es: "En la boca de una galería, una criatura de piedra golpea la pared con los nudillos y escucha. Golpea otra vez.", en: "At the mouth of a gallery, a stone creature knocks on the wall and listens. It knocks again." },
+      { es: "Eco: «Escucho la roca. Te dice dónde va a ceder. Si vais abajo, os hace falta alguien que la oiga».", en: "Eco: \"I listen to the rock. It tells you where it's going to give. If you're going down, you need someone who can hear it.\"" },
+      { es: "Eco: «Una condición. En mis galerías nadie golpea a los suyos. Ni sin querer. Un golpe de más y se viene todo abajo».", en: "Eco: \"One condition. In my galleries nobody strikes their own. Not even by accident. One stray blow and it all comes down.\"" },
+    ],
+    choices: [
+      { text: { es: "«Cuidaremos dónde golpeamos.»", en: "\"We'll watch where we strike.\"" }, reply: { es: "Eco: «Bien. Pisad donde piso yo».", en: "Eco: \"Good. Step where I step.\"" }, approval: 10, reveals: true, joins: true },
+      { text: { es: "«En una pelea no siempre se elige.»", en: "\"In a fight you don't always get to choose.\"" }, reply: { es: "Eco: «Siempre se elige. Ya lo aprenderás. Voy, para que no lo aprendas como yo».", en: "Eco: \"You always choose. You'll learn. I'm coming, so you don't learn it the way I did.\"" }, approval: -10, reveals: true, joins: true },
+      { text: { es: "«Sigue escuchando la roca.»", en: "\"Keep listening to the rock.\"" }, reply: { es: "Eco vuelve a golpear la pared. No se despide.", en: "Eco knocks on the wall again. He doesn't say goodbye." }, approval: 0, joins: false },
+    ],
+  },
+  "ceniza.meet": {
+    id: "ceniza.meet",
+    companion: "ceniza",
+    lines: [
+      { es: "En la fragua abandonada, un fuego pequeño sigue ardiendo. Lo cuida una criatura de llamas con un fuelle viejo.", en: "In the abandoned forge, a small fire still burns. A creature of flame tends it with an old bellows." },
+      { es: "Ceniza: «Forja era la guardiana de esta montaña. La Savia la ennegreció y ahora quema lo que antes templaba. Voy a devolverla a la luz, o a apagarla yo misma».", en: "Ceniza: \"Forja was this mountain's guardian. The Sap blackened her, and now she burns what she used to temper. I'll bring her back to the light, or put her out myself.\"" },
+      { es: "Ceniza: «Iré con vosotros hasta ella. Pero la Savia no se usa. Ni para comprar, ni para nada. Quien paga con Savia, la alimenta».", en: "Ceniza: \"I'll go with you to her. But the Sap is not used. Not to buy, not for anything. Whoever pays with Sap, feeds it.\"" },
+    ],
+    choices: [
+      { text: { es: "«No pagaremos con Savia.»", en: "\"We won't pay with Sap.\"" }, reply: { es: "Ceniza: «Entonces el fuego va con vosotros». Cubre su hoguera de ceniza para que aguante.", en: "Ceniza: \"Then the fire goes with you.\" She banks her fire with ash so it will last." }, approval: 10, reveals: true, joins: true },
+      { text: { es: "«Usaremos lo que haga falta para llegar.»", en: "\"We'll use whatever it takes to get there.\"" }, reply: { es: "Ceniza: «Lo que haga falta… Así habló el que cavó demasiado hondo. Iré, y te vigilaré».", en: "Ceniza: \"Whatever it takes… That's how the one who dug too deep talked. I'll come, and I'll watch you.\"" }, approval: -10, reveals: true, joins: true },
+      { text: { es: "«Cuida tu fuego.»", en: "\"Tend your fire.\"" }, reply: { es: "Ceniza: «Siempre». Y vuelve al fuelle.", en: "Ceniza: \"Always.\" And she goes back to the bellows." }, approval: 0, joins: false },
     ],
   },
   "tila.meet": {
@@ -518,5 +609,45 @@ export const QUESTS: Record<string, Quest> = {
     // Before she has seen the cost: she can still take the risk herself instead of passing it on.
     alt: { choices: { alt: { text: { es: "«Prueba la última muestra en ti, no en el paciente.»", en: "\"Test the last sample on yourself, not on the patient.\"" }, reply: { es: "Moheda se bebe la muestra despacio y anota cada síntoma. El paciente vive. Ella queda más débil el resto del viaje.", en: "Moheda drinks the sample slowly and notes every symptom. The patient lives. She stays weaker for the rest of the run." } } } },
     unlocks: { hold: { combo: "myceliumNet", poisonWard: 1, line: { es: "Combo desbloqueado: Red de Micelio (Guijo con Moheda). El grupo resiste algo mejor el veneno.", en: "Combo unlocked: Mycelium Net (Guijo with Moheda). The party resists poison a little better." } } },
+  },
+  eco: {
+    companion: "eco",
+    doubleLeaves: true,
+    lines: [
+      { es: "El pozo que Eco selló. Desde dentro llegan golpes, débiles, con ritmo: alguien de la cuadrilla de noche sigue vivo ahí abajo.", en: "The shaft Eco sealed. From inside comes knocking, faint, steady: someone from the night shift is still alive down there." },
+      { es: "Eco: «Si abro, la Savia sube. Si no abro… los dejé ahí una vez. Fue lo prudente. Fue lo prudente».", en: "Eco: \"If I open it, the Sap comes up. If I don't… I left them there once. It was the careful thing. It was the careful thing.\"" },
+    ],
+    notReady: { es: "Eco pone la mano en el sello y la retira. «Todavía no. No sé si la roca aguantará».", en: "Eco puts his hand on the seal and draws it back. \"Not yet. I don't know if the rock will hold.\"" },
+    choices: {
+      sacrifice: { text: { es: "«Ábrelo, Eco. Nosotros contenemos la Savia.»", en: "\"Open it, Eco. We'll hold back the Sap.\"" }, reply: { es: "Eco quita la primera piedra. Luego otra. Salen tres mineros, flacos, vivos. La Savia sube detrás y el grupo la quema en la boca del pozo.", en: "Eco pulls out the first stone. Then another. Three miners come out, thin, alive. The Sap rises behind them and the party burns it at the shaft's mouth." } },
+      hold: { text: { es: "«Déjalo sellado. No podemos arriesgarnos.»", en: "\"Leave it sealed. We can't risk it.\"" }, reply: { es: "Eco asiente y se aleja del pozo. Los golpes siguen un rato. Luego paran.", en: "Eco nods and walks away from the shaft. The knocking goes on for a while. Then it stops." } },
+      double: { text: { es: "«Sella también las otras galerías. Todas.»", en: "\"Seal the other galleries too. All of them.\"" }, reply: { es: "Eco: «Sí. Todas. Así no sube nada». Se queda en la mina, sellando, y no vuelve con el grupo.", en: "Eco: \"Yes. All of them. Then nothing comes up.\" He stays in the mine, sealing, and doesn't come back to the group." } },
+    },
+    seen: { es: "En el campamento, una minera con las uñas rotas le habla a Eco. Salió cavando del pozo que él selló, a los nueve días. Los demás no tuvieron fuerza. Eco no la mira a la cara.", en: "At camp, a miner with broken nails speaks to Eco. She dug her way out of the shaft he sealed, after nine days. The others weren't strong enough. Eco can't look at her." },
+    endings: {
+      good: { es: "Eco vuelve a las galerías y las reabre una a una, con los mineros que sacó. Sigue golpeando la roca antes de cada paso. Ahora también abre.", en: "Eco goes back to the galleries and reopens them one by one, with the miners he brought out. He still knocks on the rock before every step. Now he opens it too." },
+      regular: { es: "La mina queda en silencio y segura. Eco la vigila desde la entrada. A veces apoya la oreja en la roca, por si acaso.", en: "The mine stays quiet and safe. Eco watches it from the entrance. Sometimes he puts his ear to the rock, just in case." },
+      bad: { es: "Eco sella la montaña entera desde dentro. Los del valle dicen que, de noche, se le oye golpear. Cada vez más lejos.", en: "Eco seals the whole mountain from the inside. The valley folk say that at night you can hear him knocking. Further away each time." },
+    },
+  },
+  ceniza: {
+    companion: "ceniza",
+    doubleLeaves: true,
+    lines: [
+      { es: "El templo de la fragua, bajo la montaña. El fuego que Ceniza ha cuidado toda su vida arde en el centro. Bajo él, la roca suda Savia: el calor la hace subir.", en: "The forge-temple under the mountain. The fire Ceniza has tended all her life burns at its centre. Beneath it the rock sweats Sap: the heat is drawing it up." },
+      { es: "Ceniza: «Mi fuego… Yo la alimentaba. Cada día que avivé la fragua, la subí un poco más hacia Forja».", en: "Ceniza: \"My fire… I was feeding it. Every day I stoked the forge, I drew it a little closer to Forja.\"" },
+    ],
+    notReady: { es: "Ceniza se interpone entre el grupo y el fuego. «No. Es lo único que queda del templo».", en: "Ceniza stands between the party and the fire. \"No. It's all that's left of the temple.\"" },
+    choices: {
+      sacrifice: { text: { es: "«Déjalo apagarse, Ceniza.»", en: "\"Let it go out, Ceniza.\"" }, reply: { es: "Ceniza deja el fuelle en el suelo. El fuego tarda mucho en morir. Ella se queda hasta la última brasa, y la Savia deja de subir.", en: "Ceniza sets the bellows down. The fire takes a long time to die. She stays to the last ember, and the Sap stops rising." } },
+      hold: { text: { es: "«Mantenlo vivo. Pararemos la Savia en la fuente.»", en: "\"Keep it alive. We'll stop the Sap at its source.\"" }, reply: { es: "Ceniza cubre el fuego de ceniza para que arda bajo. La roca sigue sudando, más despacio.", en: "Ceniza banks the fire with ash so it burns low. The rock keeps sweating, more slowly." } },
+      double: { text: { es: "«Avívalo. Que arda tan fuerte que queme la Savia.»", en: "\"Stoke it. Burn it so hot it burns the Sap away.\"" }, reply: { es: "Ceniza trabaja el fuelle hasta que la fragua ruge. Sus llamas se vuelven negras en las puntas. Se queda alimentándola y no os sigue.", en: "Ceniza works the bellows until the forge roars. Her flames turn black at the tips. She stays to feed it and doesn't follow you." } },
+    },
+    seen: { es: "Las criaturas de ascua de las galerías llevan hollín en el pelaje. Ceniza lo frota entre los dedos y lo reconoce: es hollín de su fragua.", en: "The ember creatures of the galleries have soot in their fur. Ceniza rubs it between her fingers and knows it: it's soot from her forge." },
+    endings: {
+      good: { es: "Ceniza enciende un fuego nuevo en el valle, pequeño, sobre piedra limpia. Enseña a templar a los mineros. Nunca lo aviva más de lo que hace falta.", en: "Ceniza lights a new fire in the valley, small, on clean stone. She teaches the miners to temper steel. She never stokes it more than it needs." },
+      regular: { es: "El fuego del templo arde bajo, cubierto de ceniza. Ceniza lo vigila cada noche y cuenta las gotas que suben.", en: "The temple fire burns low, banked with ash. Ceniza watches it every night and counts the drops that rise." },
+      bad: { es: "La fragua del templo ruge todavía. Lo que la cuida ya no se parece a Ceniza, y sus llamas son negras.", en: "The temple forge still roars. Whatever tends it doesn't look like Ceniza any more, and its flames are black." },
+    },
   },
 };

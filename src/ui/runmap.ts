@@ -257,6 +257,11 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     title.textContent = offer.discount ? `${t(lang, "shopTitle")} · ${t(lang, "shopDiscount", { name: offer.discount })}` : t(lang, "shopTitle");
     list.classList.add("shop");
     const purse = document.createElement("p"); purse.className = "purse"; purse.textContent = `🪙 ${run.coins}   ◆ ${run.shards}`; list.append(purse);
+    for (const m of fielded(run)) {
+      const c = COMPANIONS[m.id]!;
+      if (!m.known || !c.forbidden.includes("spendShards") || !offer.stock.some((id) => priceIn(run, id).currency === "shards")) continue;
+      const w = document.createElement("p"); w.className = "say down"; w.textContent = `⚠ ${c.forbiddenWarning[lang]}`; list.append(w);
+    }
     for (const id of offer.stock) {
       const p = priceIn(run, id);
       const cost = p.currency === "coins" ? `🪙 ${p.amount}` : `◆ ${p.amount}`;

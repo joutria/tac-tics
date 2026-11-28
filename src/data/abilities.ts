@@ -131,6 +131,7 @@ export const ABILITIES: Record<string, Ability> = {
   blast: { id: "blast", element: "fire", ap: 4, range: [2, 4], los: true, target: "any", area: "square1", cooldown: 3, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, status: { id: "burn", turns: 1, power: 2 } },
   rockfall: { id: "rockfall", element: "stone", ap: 4, range: [2, 5], los: false, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 4, max: 6, stat: "mag" }, status: { id: "slow", turns: 1, power: 1 } },
   forgeBreath: { id: "forgeBreath", element: "fire", ap: 4, range: [1, 4], los: true, target: "any", area: "square1", cooldown: 2, perTurn: 1, damage: { min: 6, max: 9, stat: "mag" }, status: { id: "burn", turns: 2, power: 3 } },
+  emberMend: { id: "emberMend", element: "fire", ap: 3, range: [0, 3], los: true, target: "ally", area: "single", cooldown: 1, perTurn: 1, heal: { min: 6, max: 8 } },
   moltenCore: { id: "moltenCore", element: "fire", ap: 3, range: [0, 0], los: false, target: "ally", area: "single", cooldown: 3, perTurn: 1, status: { id: "shield", turns: 2, power: 15 } },
   tremor: { id: "tremor", element: "stone", ap: 4, range: [1, 2], los: false, target: "any", area: "cross1", cooldown: 3, perTurn: 1, damage: { min: 3, max: 5, stat: "str" }, status: { id: "slow", turns: 1, power: 1 } },
   // Centella reuses the Relampín's spark and jolt, and darts past a foe's Lock.

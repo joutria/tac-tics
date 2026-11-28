@@ -1329,6 +1329,13 @@ function tooltip(at: Pos | null, ev?: { clientX: number; clientY: number }) {
       if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("killFleeing")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
     }
   }
+  // Eco's line: an attack whose area catches a party member crosses it.
+  if (target.team === "heroes") {
+    for (const m of journey.party) {
+      const c = COMPANIONS[m.id]!;
+      if (m.known && (m.status === "with" || m.status === "leaving") && c.forbidden.includes("friendlyFire")) lines.push(`<b class="down">⚠ ${c.forbiddenWarning[lang]}</b>`);
+    }
+  }
   // A foe's temper: how it is likely to play (rush in, work round the back, hold a spot, or hang back).
   if (target.temper && target.team === "foes") lines.push(`<b>${t(lang, `temper.${target.temper}` as TextKey)}</b> · ${t(lang, `temper.${target.temper}.d` as TextKey)}`);
   if (target.guard) lines.push(`<span style="color:#8fd0ff">🛡 ${t(lang, "guard")}</span> · ${t(lang, "guardingInfo")}`);

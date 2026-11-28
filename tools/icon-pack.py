@@ -20,7 +20,7 @@ URL = "https://opengameart.org/sites/default/files/496_RPG_icons.zip"
 CELL = 34
 
 USED = sorted(set("""
-S_Fire04 S_Fire05 S_Earth02 S_Fire06 E_Metal05
+S_Fire04 S_Fire05 S_Earth02 S_Fire06 E_Metal05 S_Fire01
 S_Physic01 S_Wind07 S_Fire07 S_Bow09 S_Water04 S_Earth05 S_Thunder05 S_Poison09 S_Holy06 S_Light01 S_Light02 I_Diamond
 S_Magic02 P_Blue01 S_Holy04 S_Fire03 S_Fire02 I_Fang S_Earth04 S_Poison06 S_Water03 S_Water02 S_Thunder01 S_Thunder04
 S_Ice02 S_Ice07 S_Ice03 S_Ice04 S_Water06 S_Earth01 E_Metal04 S_Earth07 S_Thunder06 S_Poison07 S_Poison04 I_C_Mushroom
