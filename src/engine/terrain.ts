@@ -28,7 +28,7 @@
    - Swimmers (src/engine/swim.ts): bolts chain to them, charged water shocks them more often, ice freezes them in,
      and the water puts out their Burn. */
 import type { Ability } from "../data/abilities";
-import { NEIGHBOURS, TERRAIN, cellsOf, coversPos, grassy, manhattan, placeLook, rockSizeOf, standable, tileAt, type Pos, type RockSize, type Tile } from "./grid";
+import { NEIGHBOURS, TERRAIN, cellsOf, movable, coversPos, grassy, manhattan, placeLook, rockSizeOf, standable, tileAt, type Pos, type RockSize, type Tile } from "./grid";
 import { rngNext } from "./rng";
 import { absorb, addStatus } from "./status";
 import type { BattleState, Unit } from "./state";
@@ -52,7 +52,8 @@ export const SAP_REGEN = { id: "regen", turns: 2, power: 3 } as const;
 export const SAP_REACH = 2;
 
 export type TerrainFx =
-  | { fx: "ignite" | "douse" | "freeze" | "melt" | "explode" | "break" | "flare" | "steam" | "charge" | "calm" | "cleanse" | "sink" | "impact" | "regrow"; at: Pos }
+  | { fx: "ignite" | "douse" | "freeze" | "melt" | "explode" | "break" | "flare" | "steam" | "charge" | "calm" | "cleanse" | "sink" | "impact" | "regrow"
+    | "pull" | "gateOpen" | "gateShut" | "bridgeDown" | "bridgeUp"; at: Pos }
   | { fx: "slide"; at: Pos; to: Pos }
   | { fx: "chain"; at: Pos };
 
@@ -147,7 +148,7 @@ export function touchTile(s: BattleState, ab: Ability, from: Pos, p: Pos, fx: Te
   if (!t) return;
   if (t.prop === "barrel" && (ab.damage || ab.element === "fire")) { explode(s, p, fx, hits, hurt); return; }
   // Any push moves an object: crates and barrels as far as the push, rocks roll on.
-  if (t.prop && ab.push && !ab.damage) { slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
+  if (movable(t.prop) && ab.push && !ab.damage) { slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
   if (t.prop === "rock") { if (ab.push) slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
   if (t.prop === "crate") {
     if (ab.push) { slideProp(s, from, p, ab.push, fx, hits, hurt, str); return; }
@@ -348,6 +349,8 @@ export function updateTiles(s: BattleState) {
       if (t.terrain === "bridge") {
         if (unitOn(s, p)) continue;
         t.terrain = "water";
+        // A burnt drawbridge is gone: its lever no longer moves it.
+        if (t.link?.kind === "drawbridge") delete t.link;
       } else if (t.prop === "crate") { delete t.prop; delete t.propHp; if (grassy(t)) { t.terrain = "dirt"; t.scorchedAt = s.clock; } }
       else if (t.terrain === "tree") { t.terrain = "dirt"; t.scorchedAt = s.clock; t.deco = "stump"; }
       else if (grassy(t)) { t.terrain = "dirt"; t.scorchedAt = s.clock; }

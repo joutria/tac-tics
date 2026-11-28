@@ -366,6 +366,39 @@ const MUSHROOM = pad([
   "....kttttnnk....",
   "....kkkkkkkk....",
 ]);
+const MOON = pad([
+  "................",
+  ".....kkkk.......",
+  "...kkpppk.......",
+  "..kpppPk........",
+  "..kppPk.........",
+  ".kppPk..........",
+  ".kppPk......k...",
+  ".kppPk.....kwk..",
+  ".kppPk......k...",
+  ".kpppPk.........",
+  "..kpppPkk....k..",
+  "..kppppppkkkkpk.",
+  "...kkppppppppk..",
+  ".....kkkkkkkk...",
+]);
+const WIND = pad([
+  "................",
+  "..........kkk...",
+  ".........kccck..",
+  "..kkkkkkkkk.kck.",
+  ".kcccccccccckck.",
+  "..kkkkkkkkkcck..",
+  "...........kk...",
+  ".kkkkkkkkkkkk...",
+  "kcccccccccccck..",
+  ".kkkkkkkkkkkcck.",
+  "....kk......kck.",
+  "...kcck....kcck.",
+  "...kck.kkkkcck..",
+  "....kccccccck...",
+  ".....kkkkkkk....",
+]);
 const DIAMOND = pad([
   "................",
   "................",
@@ -858,6 +891,7 @@ export const ICONS = {
   shield: SHIELD, push: PUSH, quick: CHEVRONS, jump: recolor(flipV(DOWN), { r: "g", R: "G" }), throw: CRATE, crate: CRATE, barrel: BARREL, rock: ROCK,
   // Elements.
   light: SUN, fire: FLAME, water: DROP, plant: LEAF, stone: ROCK, bolt: BOLT, ice: FLAKE, mush: MUSHROOM, neutral: DIAMOND,
+  air: WIND, shadow: MOON, star: recolor(STAR, { y: "c", Y: "b" }),
   // Statuses.
   burn: FLAME, poison: SKULL, regen: recolor(HEART, { r: "g", R: "G" }), slow: recolor(HOURGLASS, { y: "c", w: "b" }), stun: TWINKLE,
   weaken: DOWN,
@@ -878,7 +912,7 @@ export type IconId = keyof typeof ICONS;
     pictures for the DOM, where there is room for them. The battle board keeps the hand-drawn 16x16 icons above. */
 const PACK_FOR: Partial<Record<IconId, PackIcon>> = {
   light: "S_Light02", fire: "S_Fire03", water: "S_Water07", plant: "I_Leaf", stone: "I_Rock01", bolt: "S_Thunder01", ice: "S_Ice02",
-  mush: "I_C_Mushroom", neutral: "I_Opal",
+  mush: "I_C_Mushroom", neutral: "I_Opal", air: "S_Wind03", shadow: "S_Shadow02", star: "S_Shadow04",
   burn: "S_Fire02", poison: "S_Poison01", regen: "S_Holy02", slow: "S_Wind03", stun: "S_Light01", weaken: "S_Buff12",
   hp: "S_Holy01", heal: "S_Holy03", shield: "E_Metal04", range: "S_Bow09", quick: "S_Thunder06",
   coin: "I_GoldCoin", shard: "I_Jade", map: "I_Map", wait: "I_Clock", battle: "S_Magic08", shop: "I_GoldCoin", quest: "I_Scroll",
@@ -894,6 +928,11 @@ const ABILITY_PACK: Partial<Record<string, PackIcon>> = {
   dazzle: "S_Thunder03", sidestep: "S_Wind05", graceGlow: "S_Holy08", verdict: "S_Sword06", cleansingFlare: "S_Holy02",
   sapRay: "S_Poison08", sanctuary: "S_Holy09", purge: "S_Holy10", brand: "S_Fire08", sapBloom: "S_Poison05", sapCapRich: "S_Poison01",
   lighthouseWall: "E_Gold01", thunderhead: "S_Thunder07", myceliumNet: "S_Earth06",
+  cleave: "S_Sword16", charge: "S_Sword01", kindle: "S_Fire01", warcry: "S_Buff02", rampart: "S_Buff01", rescue: "S_Buff03",
+  inferno: "S_Fire06", finisher: "S_Sword17", arrow: "S_Bow01", volley: "S_Bow03", pin: "S_Bow12", gust: "S_Wind01", salve: "P_Green01",
+  tailwind: "S_Wind02", smokeScreen: "S_Wind04", markedShot: "S_Bow11", arrowRain: "S_Bow08", lantern: "I_Torch01", oilFlask: "I_Bottle03",
+  lastLantern: "I_Torch02", nightCut: "S_Shadow08", shadowStep: "S_Shadow11", charcoal: "S_Shadow13", firstNote: "S_Magic04",
+  duet: "S_Magic01", unison: "S_Magic07",
 };
 /** Each item's pack icon (data/gear.ts ITEMS), for the shop, rewards and gear screens. */
 export const ITEM_PACK: Partial<Record<string, PackIcon>> = {
@@ -909,7 +948,7 @@ export const PERK_PACK: Partial<Record<string, PackIcon>> = {
 /** Other run screens: rewards that are not items, the three difficulties, gear slots left empty, a job, a talk. */
 export const RUN_PACK = {
   coins: "I_GoldCoin", shards: "I_Jade", heal: "P_Red01", easy: "I_Clover", normal: "W_Sword002", hard: "S_Shadow14", tier: "S_Poison05",
-  weapon: "W_Sword001", armour: "A_Clothing02", charm: "Ac_Medal02", job: "W_Book05", chest: "I_Chest02",
+  weapon: "W_Sword001", armour: "A_Clothing02", charm: "Ac_Medal02", job: "W_Book05", chest: "I_Chest02", heroes: "A_Armour01",
 } as const satisfies Record<string, PackIcon>;
 export const pk = (name: PackIcon | undefined, fallback: IconId = "gear"): MenuIcon => (name ? `pk:${name}` : fallback);
 

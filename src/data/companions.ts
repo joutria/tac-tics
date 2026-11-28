@@ -170,6 +170,95 @@ export const COMPANIONS: Record<string, Companion> = {
     },
     forbiddenWarning: { es: "Moheda no perdonará que quemes los fragmentos", en: "Moheda won't forgive burning the shards" },
   },
+
+  /* Crossover characters from Evolvlings (data/crossover.ts), opened at the camp by late milestones.
+     Tila: the lamplighter of the Dim Quarter, who stole oil to light the streets for everyone, and never asked who
+     paid for the light that was missing. She hates seeing a light put out. */
+  tila: {
+    id: "tila",
+    spec: {
+      id: "tila", name: "Tila", team: "heroes", element: "light", look: "tila",
+      hp: 42, ap: 6, mp: 4, mana: 20, speed: 54, jump: 2, str: 6, mag: 12, agi: 16, res: { light: 20, shadow: 10 },
+      abilities: ["lantern", "oilFlask", "lastLantern"], quick: "zip",
+    },
+    reacts: { spare: 4, helpUp: 3, heal: 1, spendShards: 2, noneDowned: 2, finishDowned: -3, finishYielding: -20 },
+    likeCapPerBattle: 8,
+    forbidden: ["finishYielding"],
+    remarks: {
+      spare: { es: "Tila: «Eso es. Que se lleve su farol a casa».", en: "Tila: \"That's it. Let it carry its lantern home.\"" },
+      helpUp: { es: "Tila sopla sobre la mecha de su farol, como si así ayudara a levantarse.", en: "Tila blows on her lantern's wick, as if that helps someone stand." },
+      heal: { es: "Tila reparte lo que queda de aceite entre las vendas. No se guarda nada.", en: "Tila shares out what's left of the oil among the bandages. She keeps nothing back." },
+      spendShards: { es: "Tila: «Bien. Lo que brilla es para gastarlo, no para guardarlo en un frasco».", en: "Tila: \"Good. What shines is for spending, not for keeping in a jar.\"" },
+      noneDowned: { es: "Tila cuenta las luces del grupo con el dedo. Están todas encendidas.", en: "Tila counts the party's lights with a finger. They're all still lit." },
+      finishDowned: { es: "Tila aparta la vista. «Ya estaba apagado».", en: "Tila looks away. \"It had already gone out.\"" },
+      finishYielding: { es: "Tila: «Tenía la bandera en alto. Era su último farol, y lo soplaste».", en: "Tila: \"Its flag was up. That was its last lantern, and you blew it out.\"" },
+    },
+    escalation: {
+      cold: { es: "Tila camina al final del grupo y no enciende su farol.", en: "Tila walks at the back of the group and doesn't light her lantern." },
+      refuses: { es: "Tila: «No pienso apagar a nadie que se rinde. Ni aunque me lo pidas».", en: "Tila: \"I won't put out anyone who yields. Not even if you ask.\"" },
+      leaves: { es: "Por la mañana, el farol de Tila no está. Solo un rastro de gotas brillantes hacia el norte.", en: "By morning Tila's lantern is gone. Only a trail of glowing drops leading north." },
+      betrays: { es: "Tila alza su farol entre tú y el camino. «En mi barrio, a los que apagan luces se les echa».", en: "Tila raises her lantern between you and the road. \"In my quarter, people who put out lights get thrown out.\"" },
+    },
+    forbiddenWarning: { es: "Tila no perdonará que remates a quien se rinde", en: "Tila won't forgive finishing someone who yields" },
+  },
+
+  /* Nim: the boy from the night side who dug under the Albor fence and draws maps of everything "so nothing gets
+     lost". He believes everyone should be free to cross. */
+  nim: {
+    id: "nim",
+    spec: {
+      id: "nim", name: "Nim", team: "heroes", element: "shadow", look: "nim",
+      hp: 40, ap: 6, mp: 4, mana: 18, speed: 56, jump: 2, str: 10, mag: 4, agi: 18, res: { shadow: 25 },
+      abilities: ["nightCut", "shadowStep", "charcoal"], quick: "puff",
+    },
+    reacts: { noneDowned: 4, letEscape: 3, helpUp: 2, spare: 2, allyBledOut: -8, killFleeing: -20 },
+    likeCapPerBattle: 8,
+    forbidden: ["killFleeing"],
+    remarks: {
+      noneDowned: { es: "Nim dibuja a todo el grupo en una piedra. No falta nadie en el mapa.", en: "Nim draws the whole party on a stone. Nobody is missing from the map." },
+      letEscape: { es: "Nim marca en su mapa por dónde se fue. «Sabe salir. Eso también hay que apuntarlo».", en: "Nim marks on his map where it went. \"It knows the way out. That's worth writing down too.\"" },
+      helpUp: { es: "Nim: «Bien. Te había dibujado de pie. Tenía que seguir siendo verdad».", en: "Nim: \"Good. I'd drawn you standing. It had to stay true.\"" },
+      spare: { es: "Nim no dice nada, pero borra la cruz que había puesto en su mapa.", en: "Nim says nothing, but rubs out the cross he'd put on his map." },
+      allyBledOut: { es: "Nim mira su mapa mucho rato. Luego tacha un nombre.", en: "Nim stares at his map for a long time. Then he crosses out a name." },
+      killFleeing: { es: "Nim: «Ya estaba cruzando. Lo tenía dibujado al otro lado».", en: "Nim: \"It was already crossing. I'd drawn it on the other side.\"" },
+    },
+    escalation: {
+      cold: { es: "Nim deja de enseñarte sus mapas.", en: "Nim stops showing you his maps." },
+      refuses: { es: "Nim: «A los que huyen no los toco. Ese camino ya es suyo».", en: "Nim: \"I won't touch the ones who run. That road is theirs now.\"" },
+      leaves: { es: "Nim deja un mapa junto al fuego, con vuestro camino dibujado. Él ya no sale en él.", en: "Nim leaves a map by the fire with your road drawn on it. He isn't on it anymore." },
+      betrays: { es: "Nim te cierra el paso con una sonrisa torcida. «Conozco todos los atajos. Tú no».", en: "Nim blocks your way with a crooked smile. \"I know every shortcut. You don't.\"" },
+    },
+    forbiddenWarning: { es: "Nim no perdonará que caces a quien huye", en: "Nim won't forgive cutting down someone running away" },
+  },
+
+  /* Unísona: the Star story creature, born when Tila and Nim sang their peoples' lullabies at once on the Ford. She
+     only comes along while both of them travel with the party. */
+  unisona: {
+    id: "unisona",
+    spec: {
+      id: "unisona", name: "Unísona", team: "heroes", element: "star", look: "unisona",
+      hp: 46, ap: 6, mp: 3, mana: 22, speed: 48, jump: 1, str: 4, mag: 12, agi: 12, res: { light: 10, shadow: 10 },
+      abilities: ["firstNote", "duet", "unison"],
+    },
+    reacts: { helpUp: 3, heal: 2, spare: 2, noneDowned: 2, finishDowned: -3, allyBledOut: -6 },
+    likeCapPerBattle: 7,
+    forbidden: [],
+    remarks: {
+      helpUp: { es: "Unísona tararea dos notas y quien estaba en el suelo las sigue hasta ponerse en pie.", en: "Unísona hums two notes, and whoever was on the ground follows them back up." },
+      heal: { es: "Unísona canta bajito mientras curan las heridas.", en: "Unísona sings softly while the wounds are tended." },
+      spare: { es: "Unísona canta un trozo de nana al que se va. Se aleja más tranquilo.", en: "Unísona sings a scrap of lullaby to the one leaving. It goes calmer." },
+      noneDowned: { es: "Unísona da una vuelta alrededor del grupo, contando voces. Están todas.", en: "Unísona circles the party, counting voices. They're all there." },
+      finishDowned: { es: "Unísona deja de cantar un rato.", en: "Unísona stops singing for a while." },
+      allyBledOut: { es: "Unísona canta una sola nota, muy larga, hasta que se le acaba el aire.", en: "Unísona sings a single note, very long, until she runs out of air." },
+    },
+    escalation: {
+      cold: { es: "Unísona canta solo cuando Tila y Nim están cerca.", en: "Unísona only sings when Tila and Nim are close." },
+      refuses: { es: "Unísona se esconde detrás de Tila cuando le pides algo.", en: "Unísona hides behind Tila when you ask her for anything." },
+      leaves: { es: "Unísona se va de noche. A lo lejos se oye media nana.", en: "Unísona leaves in the night. Half a lullaby carries from far away." },
+      betrays: { es: "Unísona canta una nota que duele en los dientes.", en: "Unísona sings a note that hurts your teeth." },
+    },
+    forbiddenWarning: { es: "Unísona dejará de cantar", en: "Unísona will stop singing" },
+  },
 };
 
 /** Approval thresholds (plan doc): cold under 0, refuses some orders under -30, leaves under -60. */
@@ -239,6 +328,48 @@ export const TALKS: Record<string, Talk> = {
       { text: { es: "«Guardaremos los fragmentos.»", en: "\"We'll keep the shards.\"" }, reply: { es: "Moheda: «Sensato. Nos vamos a llevar bien. Casi siempre».", en: "Moheda: \"Sensible. We will get along. Mostly.\"" }, approval: 10, reveals: true, joins: true },
       { text: { es: "«La Savia arrasó el pueblo. No prometo nada.»", en: "\"The Sap razed the town. I promise nothing.\"" }, reply: { es: "Moheda: «Honesto. Entonces tomaré notas sobre ti también».", en: "Moheda: \"Honest. Then I'll take notes on you too.\"" }, approval: -10, reveals: true, joins: true },
       { text: { es: "«Sigue con tus frascos.»", en: "\"Stay with your jars.\"" }, reply: { es: "Moheda: «Lo haré. Ellos no discuten».", en: "Moheda: \"I will. They don't argue.\"" }, approval: 0, joins: false },
+    ],
+  },
+  "tila.meet": {
+    id: "tila.meet",
+    companion: "tila",
+    lines: [
+      { es: "En una calle del pueblo donde no queda nadie, un farol está encendido. Debajo, una muchacha con una aceitera abrazada mira la llama.", en: "In a street of the town where nobody is left, one lantern is lit. Under it, a young woman hugging an oil can watches the flame." },
+      { es: "Tila: «Vi esta luz desde el valle y bajé. Pensé que alguien la había encendido para que lo encontraran. Pero aquí no hay nadie».", en: "Tila: \"I saw this light from the valley and came down. I thought someone lit it so they'd be found. But there's nobody here.\"" },
+      { es: "Tila: «Iré contigo. Pero una cosa: a quien alza la bandera blanca no se le apaga. Ni aunque esté marcado».", en: "Tila: \"I'll come with you. But one thing: whoever raises the white flag doesn't get put out. Not even if they're marked.\"" },
+    ],
+    choices: [
+      { text: { es: "«Nadie que se rinda. Te lo prometo.»", en: "\"Nobody who yields. I promise.\"" }, reply: { es: "Tila sonríe y enciende un segundo farol con el primero. «Entonces somos dos luces».", en: "Tila smiles and lights a second lantern from the first. \"Then we're two lights.\"" }, approval: 10, reveals: true, joins: true },
+      { text: { es: "«Aquí la Savia engaña. No prometo nada.»", en: "\"The Sap lies here. I promise nothing.\"" }, reply: { es: "Tila: «Ya. Eso decían en Albor de los ladrones. Iré igual, para vigilarte».", en: "Tila: \"Sure. That's what they said about thieves in Albor. I'll come anyway, to keep an eye on you.\"" }, approval: -10, reveals: true, joins: true },
+      { text: { es: "«Vuelve a tu barrio. Allí te necesitan.»", en: "\"Go back to your quarter. They need you there.\"" }, reply: { es: "Tila: «Puede. Pero esta luz se queda encendida». Y se queda con ella.", en: "Tila: \"Maybe. But this light stays lit.\" And she stays with it." }, approval: 0, joins: false },
+    ],
+  },
+  "nim.meet": {
+    id: "nim.meet",
+    companion: "nim",
+    lines: [
+      { es: "Sobre la presa, un chico con los codos rotos dibuja con carbón en una piedra plana. Ha dibujado el embalse entero, y a ti llegando.", en: "On top of the dam, a boy with torn elbows draws with charcoal on a flat stone. He has drawn the whole reservoir, and you arriving." },
+      { es: "Nim: «Tú. Sales en el mapa desde hace un rato. Si dibujo algo, no se pierde».", en: "Nim: \"You. You've been on the map for a while. If I draw something, it doesn't get lost.\"" },
+      { es: "Nim: «Voy contigo, si quieres. Pero a los que huyen se les deja cruzar. Todo el mundo tiene derecho a una salida».", en: "Nim: \"I'll come, if you want. But the ones who run get to cross. Everyone has a right to a way out.\"" },
+    ],
+    choices: [
+      { text: { es: "«Que crucen. Tú dibújalos al otro lado.»", en: "\"Let them cross. You draw them on the other side.\"" }, reply: { es: "Nim guarda la piedra bajo la chaqueta. «Vale. Te dibujo a ti también»", en: "Nim tucks the stone under his jacket. \"Fine. I'll draw you too.\"" }, approval: 10, reveals: true, joins: true },
+      { text: { es: "«El que huye vuelve con más fuerza.»", en: "\"Whoever runs comes back stronger.\"" }, reply: { es: "Nim: «Eso decía el guarda de la verja». Viene igual, sin mirarte.", en: "Nim: \"That's what the gate warden used to say.\" He comes anyway, without looking at you." }, approval: -10, reveals: true, joins: true },
+      { text: { es: "«Termina tu mapa.»", en: "\"Finish your map.\"" }, reply: { es: "Nim: «Siempre lo termino». Y vuelve a dibujar.", en: "Nim: \"I always do.\" And he goes back to drawing." }, approval: 0, joins: false },
+    ],
+  },
+  "unisona.meet": {
+    id: "unisona.meet",
+    companion: "unisona",
+    lines: [
+      { es: "En la orilla, Tila canta una nana del lado del día y Nim, sin querer, la del lado de la noche. Las dos notas se encuentran.", en: "On the shore, Tila sings a lullaby from the day side and Nim, without meaning to, the one from the night side. The two notes meet." },
+      { es: "Una criatura pequeña sale del agua, brillando como una estrella. Tila y Nim se miran: la conocen.", en: "A small creature climbs out of the water, shining like a star. Tila and Nim look at each other: they know her." },
+      { es: "Unísona tararea las dos canciones a la vez y se queda mirándote, esperando.", en: "Unísona hums both songs at once and stays looking at you, waiting." },
+    ],
+    choices: [
+      { text: { es: "«Ven. Cantaremos todos.»", en: "\"Come. We'll all sing.\"" }, reply: { es: "Unísona se sube al hombro de Tila y le tira del pelo a Nim. Ya es del grupo.", en: "Unísona climbs onto Tila's shoulder and tugs Nim's hair. She's part of the party now." }, approval: 10, joins: true },
+      { text: { es: "«Este camino no es para cantar.»", en: "\"This road isn't one for singing.\"" }, reply: { es: "Unísona os sigue igual, a unos pasos, en silencio.", en: "Unísona follows anyway, a few steps behind, silent." }, approval: -10, joins: true },
+      { text: { es: "«Quédate en el agua. Aquí estás a salvo.»", en: "\"Stay in the water. You're safe here.\"" }, reply: { es: "Unísona se hunde despacio, cantando, hasta que solo queda la luz.", en: "Unísona sinks slowly, singing, until only the light is left." }, approval: 0, joins: false },
     ],
   },
 };

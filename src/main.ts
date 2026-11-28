@@ -24,7 +24,9 @@ import { STATUS } from "./engine/status";
 import { CRIT_CHANCE } from "./engine/combat";
 import { charged } from "./engine/terrain";
 import { rivalName, rivalTaunt, rivalTitle } from "./run/rivals";
-import { carriedNemesis, carriedReturn, closeRun, hasMilestone, keepsakeOf, keepsakesOpen, kitOf, newLegacy, type Legacy } from "./run/legacy";
+import { carriedNemesis, carriedReturn, closeRun, guestsOpen, hasMilestone, keepsakeOf, keepsakesOpen, kitOf, newLegacy, starterPicked, type Legacy } from "./run/legacy";
+import { STARTERS } from "./data/starters";
+import { CROSSOVER } from "./data/crossover";
 import { EPITHETS } from "./data/rivals";
 import { KITS, LORE, MILESTONE_HINT } from "./data/camp";
 import { buy, choose, enterNode, fielded, finishBattle, helpLine, heroOf, leaveShop, newRun, nextNodes, regionOf, rulesOf, RUN_VERSION, shopHeal, upgradeRun, wear, wearTwin, type RunState } from "./run/run";
@@ -36,6 +38,7 @@ import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, iconTile, nodeLabel, renderRunMap } from "./ui/runmap";
 import { goalStatus, goalUnit, roundsLeft, type GoalKind } from "./engine/goals";
+import { hasLevers } from "./engine/levers";
 import { COURIER, SURVIVORS } from "./data/goals";
 import { LEVEL_CAP, xpToNext } from "./data/gear";
 import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, pk, RUN_PACK, type IconId } from "./ui/icons";
@@ -151,7 +154,7 @@ let atCamp = false;
 /** The lore page open at the camp. */
 let campPage: string | null = null;
 /** Which camp station is open (null: the camp itself, with its stations). */
-let campTab: "kits" | "keeps" | "lore" | "chronicle" | null = null;
+let campTab: "heroes" | "kits" | "keeps" | "lore" | "chronicle" | null = null;
 /** While true, the map shows the play log panel. */
 let statsOpen = false;
 /** When the battle on screen started, for the play log (0 for a battle resumed from a save). */
@@ -193,13 +196,25 @@ function closeLegacy() {
 function pickDifficulty(d: Difficulty, tier = 0) {
   sfx("select");
   const legacy = loadLegacy();
-  journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy), { returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy), tier });
+  journey = newRun(`${Date.now()}`, d, carriedNemesis(legacy), kitOf(legacy), {
+    returning: carriedReturn(legacy), keepsake: keepsakeOf(legacy), tier, starter: starterPicked(legacy).id, guests: guestsOpen(legacy).map((c) => c.companion),
+  });
   choosingDifficulty = false;
   record(logRunStart(PLAYER, journey));
   showMap();
 }
 
 function saveLegacy(f: (l: Legacy) => void) { const l = loadLegacy(); f(l); safeSet(LEGACY_KEY, JSON.stringify(l)); }
+
+/** A camp card with a portrait on its left: a face picture, or (`sheet`) the first frame of a creature's sheet. */
+function withFace(card: HTMLElement, src: string | null, sheet = false) {
+  if (!src) return;
+  const pic = document.createElement("span");
+  pic.className = sheet ? "face sheet" : "face";
+  pic.style.backgroundImage = `url("${import.meta.env.BASE_URL}${src}")`;
+  card.classList.add("faced");
+  card.prepend(pic);
+}
 
 /** The camp between runs: what the hero has done so far, the starting kits it opened, and the journal pages. */
 function renderCamp(panel: HTMLElement) {
@@ -225,6 +240,29 @@ function renderCamp(panel: HTMLElement) {
     b.dataset.kit = k.id;
     b.onclick = () => { sfx("equip"); saveLegacy((l) => { l.kit = k.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-kit="${k.id}"]`)?.focus(); };
     kits.append(b);
+  }
+  // Starting heroes (data/starters.ts): pick who leads the next journey. Below them, the crossover characters from
+  // Evolvlings (data/crossover.ts): read only, they wait on the road once open.
+  const heroes = el("div", "cards"), lead = starterPicked(legacy), guests = guestsOpen(legacy);
+  for (const st of Object.values(STARTERS)) {
+    const open = hasMilestone(legacy, st.needs);
+    const b = card(open, !!st.needs && fresh.has(st.needs), st.name[lang], st.desc[lang], st.needs ? MILESTONE_HINT[st.needs][lang] : "");
+    withFace(b, open ? lookFace(st.spec.look) : null);
+    if (st.id === lead.id) { b.classList.add("worn"); b.setAttribute("aria-pressed", "true"); }
+    b.dataset.starter = st.id;
+    b.onclick = () => { sfx("equip"); saveLegacy((l) => { l.starter = st.id; }); showMap(); document.querySelector<HTMLButtonElement>(`[data-starter="${st.id}"]`)?.focus(); };
+    heroes.append(b);
+  }
+  const visitors = el("h4", "", t(lang, "campGuests"));
+  heroes.append(visitors);
+  for (const c of CROSSOVER) {
+    const open = guests.includes(c);
+    const b = card(open, open && c.needs.some((m) => fresh.has(m)), c.name[lang], c.desc[lang], c.needs.map((m) => MILESTONE_HINT[m][lang]).join(" "));
+    b.classList.add("guest"); b.dataset.guest = c.companion;
+    const look = COMPANIONS[c.companion]!.spec.look;
+    withFace(b, open ? lookFace(look) ?? lookArt(look) : null, !lookFace(look));
+    if (open) b.tabIndex = -1;
+    heroes.append(b);
   }
   const lore = el("div", "cards");
   for (const page of LORE) {
@@ -254,7 +292,7 @@ function renderCamp(panel: HTMLElement) {
   if (campTab) {
     const backBtn = el("button", "", t(lang, "menuBack"));
     backBtn.onclick = () => { sfx("select"); campTab = null; showMap(); };
-    const [head, body] = campTab === "kits" ? [t(lang, "campKits"), kits] : campTab === "keeps" ? [t(lang, "campKeepsakes"), keeps]
+    const [head, body] = campTab === "heroes" ? [t(lang, "campHeroes"), heroes] : campTab === "kits" ? [t(lang, "campKits"), kits] : campTab === "keeps" ? [t(lang, "campKeepsakes"), keeps]
       : campTab === "chronicle" ? [t(lang, "chronicle"), chronicleOf(legacy)] : [t(lang, "campLore"), lore];
     title.textContent = head;
     panel.replaceChildren(title, body, backBtn);
@@ -262,7 +300,7 @@ function renderCamp(panel: HTMLElement) {
     return;
   }
   const stations = el("div", "stations");
-  const station = (id: "kits" | "keeps" | "lore" | "chronicle", ic: string, name: string, now: string, news: number) => {
+  const station = (id: "heroes" | "kits" | "keeps" | "lore" | "chronicle", ic: string, name: string, now: string, news: number) => {
     const b = el("button", "station");
     b.innerHTML = `${iconTile(pk(ic as never), news ? "rare" : "common")}<b></b><small></small>${news ? `<em class="badge">${news}</em>` : ""}`;
     b.querySelector("b")!.textContent = name; b.querySelector("small")!.textContent = now;
@@ -271,6 +309,8 @@ function renderCamp(panel: HTMLElement) {
   };
   const newKits = KITS.filter((k) => k.needs && fresh.has(k.needs)).length, newLore = LORE.filter((p) => fresh.has(p.needs)).length;
   const keepName = keepsakesOpen(legacy).find((p) => p.id === worn)?.name[lang];
+  const newHeroes = Object.values(STARTERS).filter((x) => x.needs && fresh.has(x.needs)).length + guests.filter((c) => c.needs.some((m) => fresh.has(m))).length;
+  station("heroes", RUN_PACK.heroes, t(lang, "campHeroes"), lead.name[lang], newHeroes);
   station("kits", RUN_PACK.chest, t(lang, "campKits"), kit.name[lang], newKits);
   station("keeps", RUN_PACK.charm, t(lang, "campKeepsakes"), keepName ?? t(lang, "campNone"), 0);
   station("lore", RUN_PACK.job, t(lang, "campLore"), t(lang, "campPages", { n: LORE.filter((p) => hasMilestone(legacy, p.needs)).length, of: LORE.length }), newLore);
@@ -731,7 +771,8 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
     }
     for (const f of ev.fx) {
       const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡",
-        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "", regrow: "🌿" }[f.fx];
+        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "", regrow: "🌿",
+        pull: "", gateOpen: `⇡ ${t(lang, "gateOpened")}`, gateShut: `⇣ ${t(lang, "gateShut")}`, bridgeDown: `⇣ ${t(lang, "bridgeDown")}`, bridgeUp: `⇡ ${t(lang, "bridgeUp")}` }[f.fx];
       const loud = f.fx === "explode" || f.fx === "flare";
       if (word) floaters.push({ pos: { ...f.at }, text: word, color: loud ? "#ffb347" : "#e8f4ff", born: now + (loud ? 0 : 100) });
       const puff = ({ douse: "smoke", break: "smoke", explode: "smoke", steam: "steam", melt: "steam", freeze: "steam" } as const)[f.fx as string];
@@ -994,7 +1035,8 @@ function pageOf(id: string): CmdPage {
 const PAGES = ["", "magic", "skills", "quick"] as const;
 /** The order abilities are listed in the menu (and picked with the number keys): page by page, as the menu shows them. */
 function menuOrder(u: Unit): string[] {
-  const all = unitAbilities(u);
+  // Pull only shows on maps with a lever.
+  const all = unitAbilities(u).filter((id) => id !== "pull" || hasLevers(state.map));
   return PAGES.flatMap((pg) => all.filter((id) => pageOf(id) === pg));
 }
 
@@ -1525,6 +1567,9 @@ function tileInfo(at: Pos): string[] {
   const out: string[] = [];
   if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
+  if (tile.link?.kind === "lever") out.push(`<b>${t(lang, "lever")}</b> · ${t(lang, "leverInfo")}`);
+  if (tile.link?.kind === "gate") out.push(`<b>${t(lang, "gate")}</b> · ${t(lang, tile.link.open ? "gateOpenInfo" : "gateInfo")}`);
+  if (tile.link?.kind === "drawbridge") out.push(`<b>${t(lang, "drawbridge")}</b> · ${t(lang, "drawbridgeInfo")}`);
   if (tile.prop === "rock") out.push(`<b>${t(lang, "rockName")}</b> · ${t(lang, ({ s: "rockS", m: "rockM", l: "rockL" } as const)[rockSizeOf(tile)])} ${t(lang, "rockInfo")}`);
   if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, tile.prop || tile.terrain === "tree" ? "burningObjInfo" : "fireInfo")}`);
   if (tile.scorchedAt !== undefined) out.push(t(lang, "scorchedInfo"));
@@ -2475,9 +2520,9 @@ function frame(time: number) {
 
 async function start() {
   const base = import.meta.env.BASE_URL;
-  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", ...SCENERY_IMAGES];
+  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", "obj-lever", "obj-lever-on", ...SCENERY_IMAGES];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
-  const looks = [...TEST_UNITS, ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : []), ...(r.brute ? [r.brute] : [])]), ...SURVIVORS, COURIER];
+  const looks = [...TEST_UNITS, ...Object.values(STARTERS).map((s) => s.spec), ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : []), ...(r.brute ? [r.brute] : [])]), ...SURVIVORS, COURIER];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}${lookArt(u.look)}`;
   for (const u of looks) { const f = lookFace(u.look); if (f) srcs[`face-${u.look}`] = `${base}${f}`; }
   Object.assign(srcs, fxSources(base));

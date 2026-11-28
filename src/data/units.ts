@@ -4,11 +4,12 @@ import type { UnitSpec } from "../engine/state";
 
 /** The party's looks, drawn as humanoid characters (with face portraits) in public/art/heroes/ (built by tools/hero-art.py); every other
     look is a creature sheet in public/art/creatures/. */
-export const HERO_LOOKS = new Set(["lumo", "remolin", "guijo", "centella", "moheda"]);
+export const HERO_LOOKS = new Set(["lumo", "remolin", "guijo", "centella", "moheda", "vanguard", "scout", "tila", "nim"]);
 
 /** Humanoid foes (JS Actors fighters, ratfolk, Pipoya goblins and survivors, the ogre and troll brutes) in public/art/folk/, built by tools/folk-art.py. */
 export const FOLK_LOOKS = new Set(["brasa", "pena", "malva", "marea", "ratero", "trasgo", "trasgo-chaman", "ogro", "trol", "aldeano", "anciana"]);
-/** Looks that also have a drawn face portrait, <look>-face.png next to their sheet. */
+/** Looks that also have a drawn face portrait, <look>-face.png next to their sheet. Creature sheets borrowed from
+    Evolvlings (unisona) have none. */
 const FACED = new Set([...HERO_LOOKS, "brasa", "pena", "malva", "marea"]);
 
 const lookDir = (look: string) => (HERO_LOOKS.has(look) ? "heroes" : FOLK_LOOKS.has(look) ? "folk" : "creatures");

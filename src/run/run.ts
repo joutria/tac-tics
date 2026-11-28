@@ -7,7 +7,7 @@
    Like a battle, a run is deterministic: the map, every battle's seed and foes, every reward and every rival come
    from the run seed and what happened before. The run save keeps the current battle's own save inside it. */
 import { ITEMS, PERKS, REWARD, SHOP, type Rarity } from "../data/gear";
-import { DEPTH_HP, DEPTH_STAT, HERO, rulesFor, SAP_TIERS, REGIONS, regionalSpecies, type Difficulty, type Region, type Species } from "../data/region";
+import { DEPTH_HP, DEPTH_STAT, rulesFor, SAP_TIERS, REGIONS, regionalSpecies, type Difficulty, type Region, type Species } from "../data/region";
 import { rngInt, rngNext, seedFrom } from "../engine/rng";
 import { cellsOf, coversPos, standable, tileAt, type GridMap, type Pos } from "../engine/grid";
 import type { BattleSave } from "../engine/save";
@@ -15,7 +15,9 @@ import type { BattleSetup, BattleState, UnitSpec } from "../engine/state";
 import { equip, gainXp, heroSpec, newProgress, take, type HeroProgress } from "./hero";
 import { aheadOf, choices, generateMap, MAP_LAYERS, placeFloodgate, placeQuest, placeRival, setFloodgate, type RunMap, type RunNode } from "./map";
 import { COMPANIONS, LESSON_APPROVAL, QUESTS, TALKS, type Lesson } from "../data/companions";
-import { JOB_LAYER, type Job } from "../data/jobs";
+import { JOB_LAYER, JOBS, type Job, type Lean } from "../data/jobs";
+import { starterOf, type StarterId } from "../data/starters";
+import { CROSSOVER } from "../data/crossover";
 import type { Line } from "../data/rivals";
 import { memberSpec, newMember, react, readDeeds, readyForLesson, type Deeds, type Member } from "./party";
 import { activeRivals, afterBattle, readStyle, rivalFromCompanion, rivalSpec, runEnder, type Rival } from "./rivals";
@@ -95,8 +97,8 @@ export interface RunState {
   /** What the last battle gave, for the screen. */
   spoils?: { coins: number; xp: number; shards: number; levels: number; align?: Align };
   over: null | "won" | "lost";
-  /** How the run has played, towards the hero's job: Beacon protects and spares, Blaze finishes. */
-  leanings?: Record<Job, number>;
+  /** How the run has played, towards the hero's job: the "beacon" lean protects and spares, "blaze" finishes. */
+  leanings?: Record<Lean, number>;
   /** Foes the party spared this run. They never become rivals, and they come back to help (see `helpAt`). */
   spared?: SparedFoe[];
   /** The hero's alignment meters, Mercy/Severity and Purity/Sap, each -100..100 (run/alignment.ts). */
@@ -113,6 +115,11 @@ export interface RunState {
   poisonWard?: number;
   /** The starting kit the run set out with (data/camp.ts). */
   kit?: string;
+  /** The starting hero leading the run (data/starters.ts); absent in saves from before there was a choice: the
+      hero of Light. */
+  starter?: StarterId;
+  /** Crossover characters (data/crossover.ts) the camp has opened: they wait on the maps as recruits. */
+  guests?: string[];
   /** A lost run: the rival (its id in `rivals`) who ended it. It becomes the next run's nemesis (run/legacy.ts). */
   endedBy?: string;
 }
@@ -129,14 +136,17 @@ export interface SparedFoe {
 }
 
 /** What else a run takes from the legacy (run/legacy.ts): a companion back as a rival, and a keepsake perk. */
-export interface Bonds { returning?: Rival; keepsake?: string; tier?: number }
+export interface Bonds { returning?: Rival; keepsake?: string; tier?: number; starter?: StarterId; guests?: string[] }
 
 /** A new run. `nemesis` is the rival who ended the last one (legacy.ts carriedNemesis): it waits on the map. */
 export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?: Rival, kit?: Kit, bonds: Bonds = {}): RunState {
+  const guests = (bonds.guests ?? []).filter((id) => CROSSOVER.some((c) => c.companion === id));
   const run: RunState = {
-    version: RUN_VERSION, seed, difficulty, region: 0, map: regionMap(seed, 0), at: null, path: [], heroHp: HERO.hp, hero: newProgress(),
-    coins: 0, shards: 0, rivals: [], party: [], remarks: [], offers: [], over: null,
+    version: RUN_VERSION, seed, difficulty, region: 0, map: regionMap(seed, 0, guests), at: null, path: [], heroHp: starterOf(bonds.starter).spec.hp,
+    hero: newProgress(), coins: 0, shards: 0, rivals: [], party: [], remarks: [], offers: [], over: null,
   };
+  if (bonds.starter && bonds.starter !== "light") run.starter = bonds.starter;
+  if (guests.length) run.guests = guests;
   if (nemesis) {
     run.rivals.push(structuredClone(nemesis));
     placeRival(run.map, null, nemesis.id, `${seed}:nemesis`, NEMESIS.layer);
@@ -162,9 +172,12 @@ export function newRun(seed: string, difficulty: Difficulty = "normal", nemesis?
 
 /** The first region keeps the plain seed, so runs started before regions existed keep their maps. */
 const regionSeed = (seed: string, region: number) => (region ? `${seed}:region:${region}` : seed);
-/** A region's node map, with its Floodgate if it has one. */
-function regionMap(seed: string, region: number): RunMap {
-  const r = REGIONS[region]!, map = generateMap(regionSeed(seed, region), r.recruits);
+/** A region's node map, with its Floodgate if it has one, and the crossover characters the camp opened waiting on it
+    as recruits (after the region's own, so maps without guests stay as they were). */
+export function regionMap(seed: string, region: number, guests: string[] = []): RunMap {
+  const r = REGIONS[region]!;
+  const extra = CROSSOVER.filter((c) => c.region === region && guests.includes(c.companion)).map((c) => ({ layer: c.layer, talk: c.talk }));
+  const map = generateMap(regionSeed(seed, region), [...r.recruits, ...extra]);
   if (r.floodgate !== undefined) placeFloodgate(map, r.floodgate, regionSeed(seed, region));
   return map;
 }
@@ -188,7 +201,9 @@ export function upgradeRun(saved: RunState): RunState {
 }
 
 /** The hero as it fights: worn twins swap in only while the meters (and level and job) allow them. */
-export const heroOf = (run: RunState) => heroSpec(HERO, run.hero, (tw, abilities) => !twinBar(run, tw, abilities));
+export const heroOf = (run: RunState) => heroSpec(heroBase(run), run.hero, (tw, abilities) => !twinBar(run, tw, abilities));
+/** The starting hero's base spec, before levels, perks and gear. */
+export const heroBase = (run: Pick<RunState, "starter">): UnitSpec => starterOf(run.starter).spec;
 /** Companions who fight in the next battle. */
 export const fielded = (run: RunState) => run.party.filter((m) => m.status === "with" || m.status === "leaving").slice(0, MAX_FIELDED);
 export const memberMaxHp = (run: RunState, m: Member) => memberSpec(m, run.hero.level, { x: 0, y: 0 }).hp;
@@ -456,7 +471,11 @@ export function enterNode(run: RunState, nodeId: number, lang: "es" | "en"): Run
       const talk = TALKS[node.recruit]!;
       // Not while they wait ahead as a rival: once spared, they can be asked along again.
       const away = activeRivals(next.rivals).some((r) => r.returned === talk.companion);
-      if (COMPANIONS[talk.companion] && !away && !next.party.some((m) => m.id === talk.companion)) next.offers.push({ kind: "talk", id: node.recruit });
+      // A crossover character who only comes with friends (Unísona with Tila and Nim) stays away without them.
+      const guest = CROSSOVER.find((c) => c.talk === node.recruit);
+      const short = guest?.withParty?.some((id) => !next.party.some((m) => m.id === id && (m.status === "with" || m.status === "leaving")));
+      if (short) { if (guest!.missing) next.remarks.push(guest!.missing); }
+      else if (COMPANIONS[talk.companion] && !away && !next.party.some((m) => m.id === talk.companion)) next.offers.push({ kind: "talk", id: node.recruit });
     } else if (node.quest) {
       const m = next.party.find((x) => x.id === node.quest);
       if (m && m.status === "with" && !m.lesson) next.offers.push({ kind: "quest", companion: m.id });
@@ -539,7 +558,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
     next.remarks.push(...remarks);
     if (m.status === "turned") {
       const spec = memberSpec(m, next.hero.level, u.pos);
-      next.rivals.push(rivalFromCompanion(spec, HERO.name, readStyle(b.setup, b.commands), `${next.seed}:${b.node}`));
+      next.rivals.push(rivalFromCompanion(spec, heroBase(next).name, readStyle(b.setup, b.commands), `${next.seed}:${b.node}`));
     }
   }
 
@@ -557,7 +576,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
   const held = goal?.kind === "survive" && goalDone === "met" ? end.units.filter((u) => u.team === "foes" && u.life === "up" && !u.runner).length * GOAL.surviveStandingShare : 0;
   const counted = beaten.filter((u) => !u.runner).length + held;
   const purse = goal?.kind === "catch" && goalDone === "met" ? Math.round(REWARD.purse * GOAL.catchCoins * (1 + REWARD.perLayer * depthOf(next, node))) : 0;
-  const goalShards = goal?.kind === "catch" && goalDone === "met" ? GOAL.catchShards : 0;
+  const goalShards = goalDone !== "met" ? 0 : goal?.kind === "catch" ? GOAL.catchShards : goal?.kind === "survive" ? GOAL.surviveShards : 0;
   const coins = Math.round(counted * REWARD.coinsPerFoe * mult * rulesOf(next).coins * (node.flood === "frozen" ? FLOOD.frozenCoins : 1)) + purse;
   const xp = Math.round(counted * REWARD.xpPerFoe * mult);
   next.coins += coins; next.shards += shards + goalShards;
@@ -599,7 +618,7 @@ export function finishBattle(run: RunState, battleEnd: BattleState): RunState {
     if (isLastRegion(next)) { next.over = "won"; next.offers = []; return next; }
     // On to the next region: a fresh map, the party and everything carried, and a breather.
     next.region = (next.region ?? 0) + 1;
-    next.map = regionMap(next.seed, next.region);
+    next.map = regionMap(next.seed, next.region, next.guests);
     next.at = null; next.path = [];
     next.heroHp = Math.min(heroMaxHp(next), next.heroHp + Math.round(heroMaxHp(next) * REGION_REST));
     for (const m of fielded(next)) m.hp = Math.min(memberMaxHp(next, m), m.hp + Math.round(memberMaxHp(next, m) * REGION_REST));
@@ -629,7 +648,7 @@ function giftOptions(run: RunState, node: RunNode): RewardOption[] {
 }
 
 /** Companions travelling with the party react to something done on the run map. */
-function lean(run: RunState, by: Record<Job, number>) {
+function lean(run: RunState, by: Record<Lean, number>) {
   const l = run.leanings ?? { beacon: 0, blaze: 0 };
   run.leanings = { beacon: l.beacon + by.beacon, blaze: l.blaze + by.blaze };
 }
@@ -639,7 +658,8 @@ function offerJob(run: RunState) {
   if (run.hero.job || (run.region ?? 0) > 0 || run.at === null || run.offers.some((o) => o.kind === "job")) return;
   if (run.map.nodes[run.at]!.layer < JOB_LAYER) return;
   const l = run.leanings ?? { beacon: 0, blaze: 0 };
-  const options: Job[] = l.beacon > l.blaze ? ["beacon"] : l.blaze > l.beacon ? ["blaze"] : ["beacon", "blaze"];
+  const jobs = starterOf(run.starter).jobs;
+  const options: Job[] = l.beacon > l.blaze ? [jobs.beacon] : l.blaze > l.beacon ? [jobs.blaze] : [jobs.beacon, jobs.blaze];
   run.offers.push({ kind: "job", options });
 }
 
@@ -710,7 +730,7 @@ function witness(run: RunState, deeds: Partial<Deeds>) {
     // Turning on the party away from a battle: the rival remembers no fighting style yet.
     if ((m.status as Member["status"]) === "turned") {
       const spec = memberSpec(m, run.hero.level, { x: 0, y: 0 });
-      run.rivals.push(rivalFromCompanion(spec, HERO.name, NO_STYLE, `${run.seed}:${run.region ?? 0}:${run.path.length}`));
+      run.rivals.push(rivalFromCompanion(spec, heroBase(run).name, NO_STYLE, `${run.seed}:${run.region ?? 0}:${run.path.length}`));
       placeRival(run.map, run.at, spec.id, `${run.seed}:${run.region ?? 0}:${run.path.length}:${spec.id}`);
     }
   }
@@ -780,7 +800,7 @@ export function choose(run: RunState, index: number): RunState {
     const before = heroMaxHp(next);
     next.hero.job = job;
     next.heroHp += heroMaxHp(next) - before;
-    witness(next, job === "beacon" ? { jobBeacon: 1 } : { jobBlaze: 1 });
+    witness(next, JOBS[job].lean === "beacon" ? { jobBeacon: 1 } : { jobBlaze: 1 });
     return next;
   }
   if (offer.kind === "quest") {
@@ -887,7 +907,7 @@ export function wearTwin(run: RunState, base: string, on: boolean): RunState {
   const tw = twinOf(base);
   if (!tw) throw new Error(`${base} has no twin`);
   if (run.battle) throw new Error("twins can only be swapped between stops");
-  const abilities = heroSpec(HERO, run.hero).abilities;
+  const abilities = heroSpec(heroBase(run), run.hero).abilities;
   if (on && twinBar(run, tw, abilities)) throw new Error(`${tw.twin} is not open`);
   const next = structuredClone(run);
   const list = (next.hero.twins ?? []).filter((x) => x !== base);

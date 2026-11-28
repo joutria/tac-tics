@@ -508,6 +508,11 @@
   @media (prefers-reduced-motion: reduce) { #splash .pips i { animation: none; background: #ffd96b; } }
   /* Camp stations: three big tiles, each a place at the fire, with a badge for what is new. */
   /* The chronicle: rows to read, not to press. */
+  #runPanel .card.faced { display: grid; grid-template-columns: 40px 1fr; column-gap: 10px; align-items: center; }
+  #runPanel .card.faced .face { grid-row: span 2; width: 40px; height: 40px; background: center / cover no-repeat; image-rendering: pixelated; border-radius: 4px; }
+  #runPanel .card.faced .face.sheet { background-size: 400px 40px; background-position: 0 0; }
+  #runPanel .card.faced.guest:disabled .face { filter: grayscale(1); }
+  #runPanel .cards > h4 { margin: 10px 12px 2px; font-size: 13px; font-weight: 400; color: var(--accent); letter-spacing: 0.5px; }
   #runPanel .chronicle h4 { margin: 8px 12px 2px; font-size: 13px; font-weight: 400; color: var(--accent); letter-spacing: 0.5px; }
   #runPanel .cards.chronicle .card.row { justify-content: flex-start; text-align: left; width: 100%; flex-direction: row; align-items: center; gap: 10px; padding: 6px 12px; cursor: default; }
   #runPanel .chronicle .card.row::before { content: none; }

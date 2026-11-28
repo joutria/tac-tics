@@ -39,6 +39,10 @@ PICKS = {
     "guijo": ("Soldier Roland/Roland_char.png", 4, "Soldier Roland/Faces/Roland_helm_face_neutral.png"),         # Guijo: helmed soldier in mail
     "centella": ("Ranger Ruby/Ruby_char.png", 0, "Ranger Ruby/Faces/Ruby_face_neutral.png"),                     # Centella: ranger
     "moheda": ("all-class Lyuba/Lyuba_char.png", 6, "all-class Lyuba/Faces/mage/Lyuba_face_mage_neutral.png"),   # Moheda: mage in a crimson hood
+    "vanguard": ("Fighter Helena/Helena_char.png", 0, "Fighter Helena/Faces/Helena_face_neutral.png"),           # starting hero: the Vanguard
+    "scout": ("Fighter VASILY/Vasily_char.png", 0, "Fighter VASILY/Faces/V_face_neutral.png"),                  # starting hero: the Scout
+    "tila": ("Soldier Molly/Molly_char.png", 0, "Soldier Molly/faces/Molly_face_neutral.png"),                  # crossover: Tila, the lamplighter
+    "nim": ("Mage NATHAN/Nathan_char.png", 0, "Mage NATHAN/Faces/N_face_neutral.png"),                          # crossover: Nim, who draws maps
 }
 
 

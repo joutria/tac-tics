@@ -11,13 +11,13 @@ import { NEMESIS, returnLine } from "../run/legacy";
 import { APPROVAL, COMPANIONS, QUESTS, TALKS } from "../data/companions";
 import { JOBS } from "../data/jobs";
 import type { GoalKind } from "../engine/goals";
-import { ALTAR, goalAt, questView, fielded, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
+import { ALTAR, goalAt, questView, fielded, heroBase, heroMaxHp, regionOf, memberMaxHp, nextNodes, priceIn, type RewardOption, type RunState } from "../run/run";
 import { endingOf, readyForLesson, type Member } from "../run/party";
 import { ALIGN, ALIGNMENTS, type Align, type Meter } from "../data/alignment";
 import { TWINS } from "../data/twins";
 import { alignOf, alignmentOf, heroEnding, lockWarning, twinBar } from "../run/alignment";
 import { heroSpec, sheetStats, statSources } from "../run/hero";
-import { HERO, REGIONS, SAP_TIERS } from "../data/region";
+import { REGIONS, SAP_TIERS } from "../data/region";
 import { abilityIcon, icon, ICONS, ITEM_PACK, PERK_PACK, pk, RUN_PACK, type IconId } from "./icons";
 
 export const NODE_ICON: Record<NodeKind, string> = { battle: "⚔", elite: "☠", rest: "🔥", shop: "🪙", recruit: "☺", rival: "★", quest: "❖", boss: "♛", floodgate: "💧" };
@@ -269,7 +269,7 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     title.textContent = t(lang, "gear");
     // The character sheet, like FFTA's status screen: the face, name, job and level with HP and XP bars; the stats as
     // a grid; the abilities as icons. Then the slots, the meters and the twin cards they open.
-    const spec = heroSpec(HERO, run.hero), maxHp = heroMaxHp(run), lv = run.hero.level;
+    const spec = heroSpec(heroBase(run), run.hero), maxHp = heroMaxHp(run), lv = run.hero.level;
     const sheet = document.createElement("div"); sheet.className = "sheet";
     const face = act.face?.(spec.look) ?? "";
     const bar = (cls: string, a: number, b: number, label: string) =>
@@ -280,7 +280,7 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     const stats = document.createElement("div"); stats.className = "stats";
     // Each stat as a row, like a League tooltip: the value, what it is made of (base, levels, perks, gear) and what
     // it does, so the player sees why a number grew and what it buys.
-    const src = statSources(HERO, run.hero);
+    const src = statSources(heroBase(run), run.hero);
     const row = (k: string, value: string, parts: string, what: string) =>
       `<div class="srow s-${k}"><b>${t(lang, k as "str")}</b><em>${value}</em><small>${parts}</small><p>${what}</p></div>`;
     stats.innerHTML = sheetStats().map((k) => {
@@ -299,7 +299,7 @@ function renderPanel(panel: HTMLElement, run: RunState, lang: Lang, act: MapActi
     list.append(meters);
     const warn = lockWarning(run);
     if (warn) { const w = document.createElement("p"); w.className = "say down"; w.textContent = `⚠ ${t(lang, "lockWarn", { side: t(lang, `side.${warn.side}`) })}`; list.append(w); }
-    const own = heroSpec(HERO, run.hero).abilities;
+    const own = heroSpec(heroBase(run), run.hero).abilities;
     const twins = TWINS.filter((tw) => own.includes(tw.base));
     if (twins.length) {
       const h = document.createElement("h3"); h.textContent = t(lang, "twins");
