@@ -15,7 +15,7 @@
    once a turn, for everyone, and cannot move heavy units such as bosses. */
 import { ABILITIES, type Ability } from "../data/abilities";
 import { elementMultiplier } from "../data/elements";
-import { bodyGap, cellsOf, coversPos, HIDE_RANGE, inside, manhattan, NEIGHBOURS, nearestCell, Pos, samePos, standable, swimmable, TERRAIN, tileAt, type Terrain, type Tile } from "./grid";
+import { bodyGap, cellsOf, coversPos, HIDE_RANGE, inside, manhattan, movable, NEIGHBOURS, nearestCell, Pos, samePos, standable, swimmable, TERRAIN, tileAt, type Terrain, type Tile } from "./grid";
 import { swimProblem } from "./swim";
 import { rngInt, rngNext } from "./rng";
 import { takenFactor, yielding } from "./escape";
@@ -25,6 +25,7 @@ import { hasLineOfSight } from "./sight";
 import { actionCost, manaCost, RULES } from "./rules";
 import { canStep } from "./movement";
 import { burning, chainBolt, explode, giveFire, soak, takeFire, touchTile, type TerrainFx, type TerrainHit } from "./terrain";
+import { pullLever, pullProblem } from "./levers";
 import { bodiesInWay, isFoe, nearestOf, sizeOf, unitAt, unitGap, type BattleState, type Unit } from "./state";
 
 /* Pacing (FFTA-style, 2026-11-21): positional bonuses are a nudge, not a kill switch. Standing high, hitting
@@ -96,7 +97,7 @@ export interface Hit {
 /** Everyone can Shove and Help up; the party can also Spare a yielding foe. */
 /** Quick actions every unit has; each character may also have one of its own (UnitSpec.quick). Foes do not Throw
     for now: in AI runs it cut the Normal clear rate from 27% to 18%. */
-export const QUICK_SHARED = ["shove", "jump", "throw", "dip"];
+export const QUICK_SHARED = ["shove", "jump", "throw", "dip", "pull"];
 export const unitAbilities = (u: Unit) => [...u.abilities, "helpUp", ...(u.team === "heroes" ? ["spare"] : []),
   // Giants do not Jump.
   ...QUICK_SHARED.filter((q) => (u.team === "heroes" || q !== "throw") && (sizeOf(u) <= 1 || q !== "jump")), ...(u.quick ? [u.quick] : [])];
@@ -171,10 +172,10 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, at
   if (other && hiddenFrom(s, u, other, at)) return "hidden in tall grass";
   if (ab.los && d > 0 && !hasLineOfSight(s.map, from, target, bodiesInWay(s, [u.id], target))) return "no line of sight";
   switch (ab.target) {
-    case "foe": if ((!other || !isFoe(u, other)) && !(tileAt(s.map, target)?.prop && (ab.damage || ab.push))) return "needs an enemy";
+    case "foe": if ((!other || !isFoe(u, other)) && !(movable(tileAt(s.map, target)?.prop) && (ab.damage || ab.push))) return "needs an enemy";
       if (ab.shove && other && (other.heavy || pushTiles(ab, u, other) <= 0)) return "too heavy to shove";
       break;
-    case "unit": if (ab.push && !other && tileAt(s.map, target)?.prop) break;
+    case "unit": if (ab.push && !other && movable(tileAt(s.map, target)?.prop)) break;
       if (!other || other.life !== "up") return "needs a unit"; if (ab.push && (other.heavy || pushTiles(ab, u, other) <= 0)) return "too heavy to shove"; break;
     case "prop": { const p = tileAt(s.map, target)?.prop; if (p !== "crate" && p !== "barrel") return "needs a crate or barrel"; break; }
     case "ally": { const t = coversPos(at, sizeOf(u), target) ? u : other; if (!t || isFoe(u, t) || t.life !== "up") return "needs a standing ally"; break; }
@@ -188,6 +189,7 @@ export function castProblem(s: BattleState, u: Unit, id: string, target: Pos, at
       if (ab.step && !canStep(s.map, from, target, u.jump)) return "too steep";
       break;
     }
+    case "lever": { const why = pullProblem(s, target); if (why) return why; break; }
     case "any": break;
   }
   if (ab.dip && !cellsOf(at, sizeOf(u)).some((c) => dipSource(s, c))) return "needs fire or Sap next to you";
@@ -307,6 +309,7 @@ function resolveCastNow(s: BattleState, caster: Unit, ab: Ability, target: Pos, 
   const from = nearestOf(caster, target);
   if (ab.teleport) { caster.pos = { ...target }; return hits; }
   if (ab.aim) { caster.aiming = true; return hits; }
+  if (ab.pull) { pullLever(s, target, fx); return hits; }
   if (ab.dip) { caster.dipped = cellsOf(caster.pos, sizeOf(caster)).map((c) => dipSource(s, c)).find(Boolean) ?? false; return hits; }
   if (ab.spare) {
     const u = unitAt(s, target);
@@ -484,8 +487,8 @@ export function fallDamage(s: BattleState, pusher: Unit, target: Unit, levels: n
 }
 
 /** What a pushed unit slams into, and how hard each kind hits (times PUSH_HIT per tile it could not travel). */
-export type Blocker = "edge" | "rock" | "tree" | "water" | "step" | "crate" | "barrel" | "unit";
-export const SLAM: Record<Exclude<Blocker, "step">, number> = { edge: 1, rock: 1.5, tree: 1.5, water: 0.5, crate: 1, barrel: 1, unit: 1 };
+export type Blocker = "edge" | "rock" | "tree" | "water" | "step" | "crate" | "barrel" | "unit" | "lever" | "gate";
+export const SLAM: Record<Exclude<Blocker, "step">, number> = { edge: 1, rock: 1.5, tree: 1.5, water: 0.5, crate: 1, barrel: 1, unit: 1, lever: 1, gate: 1.25 };
 /** A step up hits harder the taller it is: +25% per level of the wall. */
 export const STEP_SLAM_PER_LEVEL = 0.25;
 /** A unit something is slammed into takes this share of the slam. */

@@ -26,11 +26,14 @@ export const TERRAIN: Record<Terrain, TerrainInfo> = {
   bridge: { walkable: true, blocksSight: false, sightHeight: 0 },
 };
 
-/** Things standing on a tile that can be hit, pushed or set off (src/engine/terrain.ts). */
-export type Prop = "barrel" | "crate" | "rock";
+/** Things standing on a tile (src/engine/terrain.ts). Barrels, crates and rocks can be hit, pushed or set off; a
+    lever and a closed gate are fixed in place (src/engine/levers.ts): they only block the way. */
+export type Prop = "barrel" | "crate" | "rock" | "lever" | "gate";
+/** Props that pushes, throws and attacks can move or break. */
+export const movable = (p: Prop | undefined): p is "barrel" | "crate" | "rock" => p === "barrel" || p === "crate" || p === "rock";
 /** A rock never breaks: it only rolls when pushed. Every rock on a map is one (Jose: push the scenery's rocks, not
     separate boulders), standing on bare dirt that shows once it rolls away. */
-export const PROP_HP: Record<Prop, number> = { barrel: 1, crate: 12, rock: 99 };
+export const PROP_HP: Record<Prop, number> = { barrel: 1, crate: 12, rock: 99, lever: 99, gate: 99 };
 /** How big a rock is (Jose: rocks of varied sizes). Small stones roll far, hit lightly and are too low to hide
     behind; big boulders barely roll but hit hard and flatten crates (src/engine/terrain.ts ROCK). */
 export type RockSize = "s" | "m" | "l";
@@ -74,6 +77,10 @@ export interface Tile {
   /** Timeline time the ground burnt (drawn darker, with ash). Scorched ground does not catch fire again until it
       regrows: a water attack on it, or REGROW_TICKS next to water (src/engine/terrain.ts). */
   scorchedAt?: number;
+  /** Levers, gates and drawbridges (src/engine/levers.ts): pulling a lever flips every gate and drawbridge of its
+      group. A lever's `open` is which way it leans; a gate is open (no prop) or closed (prop "gate"); a drawbridge
+      is lowered (terrain "bridge") or raised (terrain "water"). */
+  link?: { group: number; kind: "lever" | "gate" | "drawbridge"; open: boolean };
   /** Outside the map's shape: kept so the grid stays whole, but never drawn (the route map's island). */
   offMap?: boolean;
 }
@@ -89,8 +96,8 @@ export const swimmable = (t: Tile | undefined): t is Tile => !!t && t.terrain ==
 /** Levels above the ground that block sight on this tile. */
 export function sightBlock(t: Tile): number {
   const info = TERRAIN[t.terrain];
-  // A small stone is too low to hide behind.
-  const prop = !t.prop || (t.prop === "rock" && rockSizeOf(t) === "s") ? 0 : 1;
+  // A small stone is too low to hide behind; a lever is a post and a gate is bars, both see-through.
+  const prop = !t.prop || (t.prop === "rock" && rockSizeOf(t) === "s") || t.prop === "lever" || t.prop === "gate" ? 0 : 1;
   return Math.max(info.blocksSight ? info.sightHeight : 0, prop, t.steamUntil !== undefined ? 2 : 0);
 }
 
@@ -127,6 +134,8 @@ export const manhattan = (a: Pos, b: Pos) => Math.abs(a.x - b.x) + Math.abs(a.y 
  * g grass, h tall grass, d dirt, w water, r rock (a pushable rock on dirt; add s, m or l to fix its size, else its
  * place picks one), t tree, i ice, b bridge. Optional extra
  * characters: B barrel or C crate (an object), o oil, s Sap, S a Sap source (a surface). Example row: "g0 g0 d1 r1 g0B d0o g0S".
+ * Or a link and its group digit (src/engine/levers.ts): L lever, G closed gate, O open gate, D raised drawbridge
+ * (on water), U lowered drawbridge (on a bridge). Example: "d0L1 d0G1 w0D1".
  */
 export function parseMap(id: string, rows: string[]): GridMap {
   const letters: Record<string, Terrain> = { g: "grass", h: "tallgrass", d: "dirt", w: "water", r: "dirt", t: "tree", i: "ice", b: "bridge" };
@@ -137,6 +146,19 @@ export function parseMap(id: string, rows: string[]): GridMap {
       const h = Number(cell.slice(1, 2));
       const extra = cell.slice(2);
       const isRock = cell[0] === "r";
+      const linked = /^([LGODU])(\d)$/.exec(extra);
+      if (linked && terrain) {
+        const [, k, g] = linked, group = Number(g);
+        const kind = k === "L" ? "lever" : k === "D" || k === "U" ? "drawbridge" : "gate";
+        const open = k === "O" || k === "U";
+        const want = kind === "drawbridge" ? (open ? "bridge" : "water") : null;
+        if (!Number.isInteger(h) || h < 0 || h > 3 || (want ? terrain !== want : !TERRAIN[terrain].walkable))
+          throw new Error(`map ${id}: bad tile "${cell}" at ${x},${y}`);
+        const tile: Tile = { terrain, h, link: { group, kind, open } };
+        if (kind === "lever") { tile.prop = "lever"; tile.propHp = PROP_HP.lever; }
+        if (kind === "gate" && !open) { tile.prop = "gate"; tile.propHp = PROP_HP.gate; }
+        return tile;
+      }
       const prop = isRock ? "rock" : [...extra].map((c) => props[c]).find(Boolean);
       const surface: Surface | undefined = isRock ? undefined : extra.includes("o") ? "oil" : /[sS]/.test(extra) ? "sap" : undefined;
       if (!terrain || !Number.isInteger(h) || h < 0 || h > 3 || (isRock ? !/^[sml]?$/.test(extra)

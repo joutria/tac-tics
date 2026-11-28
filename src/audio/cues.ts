@@ -49,6 +49,7 @@ export function cuesFor(events: BattleEvent[]): Cue[] {
         if (f.fx === "explode" || f.fx === "flare") add("boom", 60);
         else if (f.fx === "break") add("break", 60);
         else if (f.fx === "ignite") add("fire", 60);
+        else if (f.fx === "gateOpen" || f.fx === "gateShut" || f.fx === "bridgeUp" || f.fx === "bridgeDown") add("break", 120);
       }
       if (ev.hits.some((h) => h.crit)) add("crit", HIT_DELAY);
       else if (ev.hits.some((h) => h.damage > 0)) add("hurt", HIT_DELAY);

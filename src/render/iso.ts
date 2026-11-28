@@ -634,6 +634,7 @@ export function drawBattle(ctx: CanvasRenderingContext2D, s: BattleState, img: I
       if ((tile.fireUntil ?? 0) >= CAMPFIRE_AT) drawCampfire(ctx, img, c, opt.time, p.x * 7 + p.y);
       else if (onFire && !tile.prop && tile.terrain !== "tree") groundFire(ctx, img, c, opt.time, p);
       if (tile.prop && !(flat && tile.prop === "rock")) drawProp(ctx, img, tile, c, m.id, p);
+      else if (tile.link?.kind === "gate") drawGate(ctx, c, true);
       // A burning crate: the flames and smoke go over the crate.
       if (onFire && tile.prop) { burningObject(ctx, img, c, opt.time, p.x * 3 + p.y, -14); }
       if (tile.steamUntil !== undefined) {
@@ -1053,6 +1054,18 @@ function drawScenery(ctx: CanvasRenderingContext2D, img: Images, look: { key: st
 function drawProp(ctx: CanvasRenderingContext2D, img: Images, tile: Tile, c: { x: number; y: number }, mapId: string, p: Pos) {
   const prop = tile.prop!, hp = tile.propHp ?? 0;
   if (prop === "rock") { drawScenery(ctx, img, sceneryFor("rock", mapId, tile, p), c); return; }
+  if (prop === "gate") { drawGate(ctx, c, false); return; }
+  if (prop === "lever") {
+    // CC0 lever (tools/lever-art.py): its mound's foot at sprite (7, 11), drawn at 3x so it reads at a glance.
+    // Pulled, the stick leans the other way.
+    const sprite = img[tile.link?.open ? "obj-lever-on" : "obj-lever"];
+    if (!sprite) return;
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(sprite, Math.round(c.x - 7 * 3), Math.round(c.y + 4 - 11 * 3), sprite.width * 3, sprite.height * 3);
+    ctx.restore();
+    return;
+  }
   const sprite = prop === "barrel" ? img["obj-barrel"] : img[hp < PROP_HP.crate ? "obj-crate-hurt" : "obj-crate"];
   if (!sprite) return;
   ctx.save();
@@ -1060,5 +1073,32 @@ function drawProp(ctx: CanvasRenderingContext2D, img: Images, tile: Tile, c: { x
   // Crate: base diamond centre at sprite (12, 16); barrel: base at (9, 15). Sprites are 1x, drawn at 2x.
   const [ax, ay] = prop === "barrel" ? [9, 15] : [12, 16];
   ctx.drawImage(sprite, Math.round(c.x - ax * 2), Math.round(c.y + 1 - ay * 2), sprite.width * 2, sprite.height * 2);
+  ctx.restore();
+}
+
+/** A portcullis across the tile: two stone posts and iron bars between them. Open, only the posts stand, with the bars
+    drawn up into a stub at the top, so the player can still see a gate is there and can close again. */
+function drawGate(ctx: CanvasRenderingContext2D, c: { x: number; y: number }, open: boolean) {
+  const left = c.x - 22, right = c.x + 22, foot = c.y + 4, top = c.y - 34;
+  ctx.save();
+  // Posts.
+  for (const x of [left, right]) {
+    ctx.fillStyle = "#6f6a62"; ctx.fillRect(x - 4, top - 4, 8, foot - top + 4);
+    ctx.fillStyle = "#9a948a"; ctx.fillRect(x - 4, top - 4, 3, foot - top + 4);
+    ctx.fillStyle = "#3f3b36"; ctx.fillRect(x + 3, top - 4, 1, foot - top + 4);
+  }
+  // Lintel.
+  ctx.fillStyle = "#5c5750"; ctx.fillRect(left - 4, top - 8, right - left + 8, 5);
+  ctx.fillStyle = "#8a847a"; ctx.fillRect(left - 4, top - 8, right - left + 8, 2);
+  const bottom = open ? top + 6 : foot;
+  // Bars, then the cross bands.
+  for (let x = left + 7; x <= right - 6; x += 6) {
+    ctx.fillStyle = "#2e3036"; ctx.fillRect(x - 1, top - 3, 3, bottom - top + 3);
+    ctx.fillStyle = "#8d939e"; ctx.fillRect(x - 1, top - 3, 1, bottom - top + 3);
+    if (!open) { ctx.fillStyle = "#2e3036"; ctx.fillRect(x - 2, foot - 3, 5, 3); }
+  }
+  ctx.fillStyle = "#3a3d44";
+  if (open) ctx.fillRect(left + 4, bottom - 2, right - left - 8, 3);
+  else for (const y of [top + 8, top + 22]) { ctx.fillRect(left + 4, y, right - left - 8, 3); ctx.fillStyle = "#5d626c"; ctx.fillRect(left + 4, y, right - left - 8, 1); ctx.fillStyle = "#3a3d44"; }
   ctx.restore();
 }

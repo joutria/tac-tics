@@ -7,7 +7,7 @@
 import { inWater, nativeSwimmer, swimProblem } from "./swim";
 import { ABILITIES, type Ability } from "../data/abilities";
 import { abilityAvailable, areaTiles, damagePreview, directionBonus, guardAbility, hiddenFrom, maxRange, previewEffects, pushOutcome, pushTiles, stuck, throwOutcome, unitAbilities } from "./combat";
-import { bodyGap, cellsOf, coversPos, manhattan, NEIGHBOURS, nearestCell, Pos, samePos, sightBlock, tileAt } from "./grid";
+import { bodyGap, cellsOf, coversPos, manhattan, movable, NEIGHBOURS, nearestCell, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain";
 import { reachable } from "./movement";
 import { cowering, isBorder, yielding } from "./escape";
@@ -209,7 +209,7 @@ function actionValue(s: BattleState, u: Unit, ab: Ability, from: Pos, target: Po
     if (!hit) return 0;
     return isFoe(u, hit) ? Math.min(o.damage, hit.hp) + (o.damage >= hit.hp ? 25 : 0) : -(o.damage * 1.5 + 5);
   }
-  if (ab.push && ab.area === "single" && tileAt(s.map, target)?.prop && !unitAt(s, target)) return objectPushValue(s, u, ab, from, target);
+  if (ab.push && ab.area === "single" && movable(tileAt(s.map, target)?.prop) && !unitAt(s, target)) return objectPushValue(s, u, ab, from, target);
   let flared = false;
   const seen = new Set<string>(); // a giant under several tiles of the area counts once
   for (const p of areaTiles(ab, target)) {
@@ -295,8 +295,8 @@ function candidateTargets(s: BattleState, ab: Ability): Pos[] {
     if (ab.area === "square1") for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const p = { x: o.pos.x + dx, y: o.pos.y + dy }; spots.set(key(p), p); }
     else if (ab.area !== "single") for (const d of NEIGHBOURS) { const p = { x: o.pos.x + d.x, y: o.pos.y + d.y }; spots.set(key(p), p); }
   }
-  if (ab.throwProp) s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
-  if (ab.push && ab.area === "single") s.map.tiles.forEach((t, i) => { if (t.prop) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
+  if (ab.throwProp) s.map.tiles.forEach((t, i) => { if (t.prop === "crate" || t.prop === "barrel") { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
+  if (ab.push && ab.area === "single") s.map.tiles.forEach((t, i) => { if (movable(t.prop)) { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   if (ab.damage) s.map.tiles.forEach((t, i) => { if (t.prop === "barrel") { const p = { x: i % s.map.w, y: Math.floor(i / s.map.w) }; spots.set(key(p), p); } });
   return [...spots.values()];
 }
@@ -344,6 +344,8 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
   for (const id of unitAbilities(u)) {
     if (abilityAvailable(u, id)) continue;
     const ab = ABILITIES[id]!;
+    // Levers are the party's trick for now: the AI walks around gates but never pulls them.
+    if (ab.pull) continue;
     const targets = candidateTargets(s, ab);
     for (const sp of spots) {
       if (swimProblem(s.map, u, ab, sp.p)) continue;
@@ -351,7 +353,7 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
         if (!reaches(s, ab, sp.p, t, [u.id], sizeOf(u))) continue;
         const occupant = unitAt(s, t);
         if (occupant && hiddenFrom(s, u, occupant, sp.p)) continue;
-        const pushable = !occupant && !!ab.push && ab.area === "single" && !!tileAt(s.map, t)?.prop;
+        const pushable = !occupant && !!ab.push && ab.area === "single" && movable(tileAt(s.map, t)?.prop);
         if (ab.target === "foe" && !pushable && (!occupant || !isFoe(u, occupant))) continue;
         if (ab.target === "ally" && (!occupant || isFoe(u, occupant) || occupant.life !== "up")) continue;
         if (ab.target === "downedAlly" && (!occupant || isFoe(u, occupant) || !(occupant.life === "downed" || (ab.revive && occupant.id !== u.id && stuck(occupant))))) continue;

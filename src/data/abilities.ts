@@ -6,7 +6,7 @@ import type { Element } from "./elements";
 import type { Status } from "../engine/status";
 
 export type Area = "single" | "cross1" | "square1";
-export type TargetKind = "foe" | "ally" | "downedAlly" | "any" | "emptyTile" | "yielding" | "prop" | "unit";
+export type TargetKind = "foe" | "ally" | "downedAlly" | "any" | "emptyTile" | "yielding" | "prop" | "unit" | "lever";
 
 export interface Ability {
   id: string;
@@ -37,6 +37,8 @@ export interface Ability {
   throwProp?: boolean;
   /** Dip: next to fire, the caster's next attack sets its targets burning. */
   dip?: boolean;
+  /** Pull: flips the lever next to the caster, and its gates and drawbridges (src/engine/levers.ts). */
+  pull?: boolean;
   /** Aim: the caster's next ability reaches 1 tile further. */
   aim?: boolean;
   /** Target loses all MP on its next turn. */
@@ -75,6 +77,7 @@ export const ABILITIES: Record<string, Ability> = {
   shove: { id: "shove", element: "neutral", ap: 0, range: [1, 1], los: false, target: "foe", area: "single", cooldown: 0, perTurn: 1, push: 1, shove: true, quick: true },
   jump: { id: "jump", element: "neutral", ap: 0, range: [1, 2], los: false, target: "emptyTile", area: "single", cooldown: 0, perTurn: 1, teleport: true, jump: true, quick: true },
   throw: { id: "throw", element: "neutral", ap: 0, range: [1, 1], los: false, target: "prop", area: "single", cooldown: 0, perTurn: 1, throwProp: true, quick: true },
+  pull: { id: "pull", element: "neutral", ap: 0, range: [1, 1], los: false, target: "lever", area: "single", cooldown: 0, perTurn: 1, pull: true, quick: true },
   dip: { id: "dip", element: "fire", ap: 0, range: [0, 0], los: false, target: "ally", area: "single", cooldown: 0, perTurn: 1, dip: true, quick: true },
   // One per character:
   aim: { id: "aim", element: "light", ap: 0, range: [0, 0], los: false, target: "ally", area: "single", cooldown: 0, perTurn: 1, aim: true, quick: true },

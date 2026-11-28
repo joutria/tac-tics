@@ -38,6 +38,7 @@ import { routeGrid, type RouteGrid } from "./ui/worldmap";
 import { DIFFICULTY, REGIONS, SAP_TIERS, type Difficulty } from "./data/region";
 import { alignShiftText, iconTile, nodeLabel, renderRunMap } from "./ui/runmap";
 import { goalStatus, goalUnit, roundsLeft, type GoalKind } from "./engine/goals";
+import { hasLevers } from "./engine/levers";
 import { COURIER, SURVIVORS } from "./data/goals";
 import { LEVEL_CAP, xpToNext } from "./data/gear";
 import { abilityIcon, icon, iconCanvas, iconize, ICONS, iconUrl, loadPackIcons, pk, RUN_PACK, type IconId } from "./ui/icons";
@@ -770,7 +771,8 @@ function showEvents(events: BattleEvent[], was: Map<string, Pos>) {
     }
     for (const f of ev.fx) {
       const word = { ignite: "🔥", douse: "💨", freeze: "❄", melt: "💧", explode: `💥 ${t(lang, "boom")}`, break: `✕ ${t(lang, "broken")}`, slide: "", chain: "⚡",
-        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "", regrow: "🌿" }[f.fx];
+        flare: `🔥 ${t(lang, "flare")}`, steam: "☁", charge: "⚡", calm: "💧", cleanse: "✦", sink: "💧", impact: "", regrow: "🌿",
+        pull: "", gateOpen: `⇡ ${t(lang, "gateOpened")}`, gateShut: `⇣ ${t(lang, "gateShut")}`, bridgeDown: `⇣ ${t(lang, "bridgeDown")}`, bridgeUp: `⇡ ${t(lang, "bridgeUp")}` }[f.fx];
       const loud = f.fx === "explode" || f.fx === "flare";
       if (word) floaters.push({ pos: { ...f.at }, text: word, color: loud ? "#ffb347" : "#e8f4ff", born: now + (loud ? 0 : 100) });
       const puff = ({ douse: "smoke", break: "smoke", explode: "smoke", steam: "steam", melt: "steam", freeze: "steam" } as const)[f.fx as string];
@@ -1033,7 +1035,8 @@ function pageOf(id: string): CmdPage {
 const PAGES = ["", "magic", "skills", "quick"] as const;
 /** The order abilities are listed in the menu (and picked with the number keys): page by page, as the menu shows them. */
 function menuOrder(u: Unit): string[] {
-  const all = unitAbilities(u);
+  // Pull only shows on maps with a lever.
+  const all = unitAbilities(u).filter((id) => id !== "pull" || hasLevers(state.map));
   return PAGES.flatMap((pg) => all.filter((id) => pageOf(id) === pg));
 }
 
@@ -1564,6 +1567,9 @@ function tileInfo(at: Pos): string[] {
   const out: string[] = [];
   if (tile.prop === "barrel") out.push(`<b>${t(lang, "barrel")}</b> · ${t(lang, "barrelInfo")}`);
   if (tile.prop === "crate") out.push(`<b>${t(lang, "crate")}</b> · ${t(lang, "crateInfo", { n: tile.propHp ?? 0 })}`);
+  if (tile.link?.kind === "lever") out.push(`<b>${t(lang, "lever")}</b> · ${t(lang, "leverInfo")}`);
+  if (tile.link?.kind === "gate") out.push(`<b>${t(lang, "gate")}</b> · ${t(lang, tile.link.open ? "gateOpenInfo" : "gateInfo")}`);
+  if (tile.link?.kind === "drawbridge") out.push(`<b>${t(lang, "drawbridge")}</b> · ${t(lang, "drawbridgeInfo")}`);
   if (tile.prop === "rock") out.push(`<b>${t(lang, "rockName")}</b> · ${t(lang, ({ s: "rockS", m: "rockM", l: "rockL" } as const)[rockSizeOf(tile)])} ${t(lang, "rockInfo")}`);
   if ((tile.fireUntil ?? 0) > state.clock) out.push(`🔥 ${t(lang, tile.prop || tile.terrain === "tree" ? "burningObjInfo" : "fireInfo")}`);
   if (tile.scorchedAt !== undefined) out.push(t(lang, "scorchedInfo"));
@@ -2514,7 +2520,7 @@ function frame(time: number) {
 
 async function start() {
   const base = import.meta.env.BASE_URL;
-  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", ...SCENERY_IMAGES];
+  const tiles = ["top-grass", "top-tallgrass", "top-dirt", "top-water", "top-tree", "top-ice", "top-bridge", "side-left", "side-right", "obj-crate", "obj-crate-hurt", "obj-barrel", "obj-lever", "obj-lever-on", ...SCENERY_IMAGES];
   const srcs: Record<string, string> = Object.fromEntries(tiles.map((k) => [k, `${base}art/iso/${k}.png`]));
   const looks = [...TEST_UNITS, ...Object.values(STARTERS).map((s) => s.spec), ...Object.values(COMPANIONS).map((c) => c.spec), ...REGIONS.flatMap((r) => [...(r.natives ?? []), ...(r.boss.unit ? [r.boss.unit] : []), ...(r.brute ? [r.brute] : [])]), ...SURVIVORS, COURIER];
   for (const u of looks) srcs[`unit-${u.look}`] = `${base}${lookArt(u.look)}`;

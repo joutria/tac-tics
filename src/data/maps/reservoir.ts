@@ -16,16 +16,17 @@ export const SHORE = parseMap("shore", [
   "g1 g1 g0 g0 g0 g0 g0 g0 g1 g1",
 ]);
 
-/** Below the cracked dam: a spillway pond with two bridges up to the dam's ledge. */
+/** Below the cracked dam: a spillway pond with two bridges up to the dam's ledge. The east one is a drawbridge,
+    lowered, worked by a lever on the bank: raise it to cut the way, lower it to open it again. */
 export const SPILLWAY = parseMap("spillway", [
   "d1 d1 d1 d1 r1 d1 d1 d1 d1 d1",
   "d1 d1B d1o d1 d1 d1 d1C d1 d1 d1",
   "d0o d0 d0 d0 d0 d0 d0 d0 d0 d0",
   "g0 w0 w0 d0 w0 w0 d0 w0 w0 g0",
-  "g0 i0 w0 b0 w0 w0 b0 w0 i0 g0",
-  "g0 w0 w0 b0 w0 w0 b0 w0 w0 g0",
-  "g0 g0 w0 b0 i0 i0 b0 w0 g0 g0",
-  "g0 g0 g0 g0 g0C g0 g0 g0 g0B g0",
+  "g0 i0 w0 b0 w0 w0 b0U1 w0 i0 g0",
+  "g0 w0 w0 b0 w0 w0 b0U1 w0 w0 g0",
+  "g0 g0 w0 b0 i0 i0 b0U1 w0 g0 g0",
+  "g0 g0 g0 g0 g0C g0 g0 g0L1 g0B g0",
   "g1 t0 h0 h0 h0 g0 r0 g0 g0 g1",
   "g1 g0 g0 g0 g0 g0 g0 g0 t0 g1",
 ]);
