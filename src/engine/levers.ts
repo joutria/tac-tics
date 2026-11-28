@@ -4,7 +4,8 @@
    - a gate closed is iron bars (prop "gate"): nobody walks through, but sight and spells pass. Open, it is floor.
    - a drawbridge raised leaves open water; lowered, it is a bridge (which burns like any bridge).
    A gate or drawbridge with someone on it stays as it is: a gate does not shut on a body, a bridge does not rise
-   under one. Like everything in the engine, this is deterministic. */
+   under one. Like everything in the engine, this is deterministic. Foes pull levers too (ai.ts leverValue): the
+   cautious ones to cut the party off, the bruisers to open a way to it. */
 import { tileAt, type GridMap, type Pos, PROP_HP } from "./grid";
 import type { BattleState } from "./state";
 import type { TerrainFx } from "./terrain";

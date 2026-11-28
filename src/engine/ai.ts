@@ -10,6 +10,7 @@ import { abilityAvailable, areaTiles, damagePreview, directionBonus, guardAbilit
 import { bodyGap, cellsOf, coversPos, manhattan, movable, NEIGHBOURS, nearestCell, Pos, samePos, sightBlock, tileAt } from "./grid";
 import { BLAST_DAMAGE, OIL_BLAST, burning, charged, flareArea } from "./terrain";
 import { reachable } from "./movement";
+import { pullLever } from "./levers";
 import { cowering, isBorder, yielding } from "./escape";
 import { hasLineOfSight } from "./sight";
 import { actionCost, manaCost, RULES } from "./rules";
@@ -313,6 +314,36 @@ function enemyReachMap(s: BattleState, u: Unit): Map<string, Pos[]> {
 
 interface Plan { value: number; moveTo: Pos | null; ability: string | null; target: Pos | null }
 
+/** How many (unit, foe) pairs on each side can close to striking distance within two turns' walk. */
+function reachPairs(s: BattleState, side: Unit): { ours: number; theirs: number } {
+  let ours = 0, theirs = 0;
+  const up = s.units.filter((o) => o.life === "up" && onMap(o));
+  for (const h of up) {
+    const ends = new Set<string>([key(h.pos)]);
+    for (const r of reachable(s.map, h.pos, { ...moveRules(s, h), mp: h.maxMp * 2 }).values()) ends.add(key(r.path[r.path.length - 1]!));
+    for (const o of up) {
+      if (!isFoe(h, o)) continue;
+      const near = cellsOf(o.pos, sizeOf(o)).some((c) => NEIGHBOURS.some((d) => ends.has(key({ x: c.x + d.x, y: c.y + d.y }))));
+      if (!near) continue;
+      if (isFoe(h, side)) theirs++; else ours++;
+    }
+  }
+  return { ours, theirs };
+}
+
+/** What pulling the lever at `at` is worth to `u`: a gate shut or a bridge raised in the party's face, or a way
+    opened to it, counted as pairs that can (or no longer can) come to blows. Bruisers want ways opened, everyone
+    else would rather cut the enemy off. */
+export const LEVER_PAIR_VALUE = 4;
+function leverValue(s: BattleState, u: Unit, at: Pos): number {
+  const before = reachPairs(s, u);
+  const after = structuredClone(s);
+  pullLever(after, at, []);
+  const now = reachPairs(after, u);
+  const bold = u.ai === "bruiser" ? 1.2 : 0.8;
+  return LEVER_PAIR_VALUE * ((now.ours - before.ours) * bold - (now.theirs - before.theirs) * (2 - bold));
+}
+
 /** The best next step for the active unit: a move and a cast, or a final reposition (ability null). */
 export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
   const u = activeUnit(s);
@@ -344,8 +375,22 @@ export function bestStep(s: BattleState, opts: AiOptions = {}): Plan {
   for (const id of unitAbilities(u)) {
     if (abilityAvailable(u, id)) continue;
     const ab = ABILITIES[id]!;
-    // Levers are the party's trick for now: the AI walks around gates but never pulls them.
-    if (ab.pull) continue;
+    if (ab.pull) {
+      // A lever: worth the same from any tile next to it, so it is weighed once per lever.
+      s.map.tiles.forEach((t, i) => {
+        if (t.link?.kind !== "lever") return;
+        const at = { x: i % s.map.w, y: Math.floor(i / s.map.w) };
+        let worth: number | null = null;
+        for (const sp of spots) {
+          if (manhattan(sp.p, at) !== 1 || !reaches(s, ab, sp.p, at, [u.id], sizeOf(u))) continue;
+          worth ??= leverValue(s, u, at);
+          if (worth <= 0) return;
+          const v = worth + bestAfter(sp.p, u.mp - sp.cost);
+          if (v > plan.value && v > idle) plan = { value: v, moveTo: samePos(sp.p, u.pos) ? null : sp.p, ability: id, target: at };
+        }
+      });
+      continue;
+    }
     const targets = candidateTargets(s, ab);
     for (const sp of spots) {
       if (swimProblem(s.map, u, ab, sp.p)) continue;
