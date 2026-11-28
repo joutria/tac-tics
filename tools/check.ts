@@ -12,6 +12,7 @@ import { ITEMS, PERKS } from "../src/data/gear";
 import { COMPANIONS, TALKS } from "../src/data/companions";
 import { EPITHETS, TAUNTS, TITLES } from "../src/data/rivals";
 import { HELP_LINES } from "../src/data/mercy";
+import { CHIMES, COMPANION_LINES, NEMESIS_OPENERS, OPENERS, REPLIES, RETURNED_OPENERS } from "../src/data/parley";
 import { ALIGNMENTS, GRID, HERO_ENDINGS, SIDE_NAMES } from "../src/data/alignment";
 import { TWINS } from "../src/data/twins";
 import { EMOJI_ICON, ICONS, PALETTE } from "../src/ui/icons";
@@ -31,6 +32,15 @@ for (const [where, line] of [...EPITHETS.map((l, i) => [`epithet ${i}`, l] as co
   if (!line.es || !line.en) fail(`rival ${where}: empty in a language`);
   const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join();
   if (vars(line.es) !== vars(line.en)) fail(`rival ${where}: placeholders differ between languages`);
+}
+
+// Words before a fight: filled in both languages, placeholders match.
+const talkLines = [OPENERS, CHIMES, REPLIES, COMPANION_LINES, { nemesis: NEMESIS_OPENERS, returned: RETURNED_OPENERS }]
+  .flatMap((group) => Object.entries(group).flatMap(([k, lines]) => (lines ?? []).map((l, i) => [`${k} ${i}`, l] as const)));
+for (const [where, line] of talkLines) {
+  if (!line.es || !line.en) fail(`parley ${where}: empty in a language`);
+  const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join();
+  if (vars(line.es) !== vars(line.en)) fail(`parley ${where}: placeholders differ between languages`);
 }
 
 // Abilities: every one has a name and description in both languages, sane numbers, and every unit's exist.

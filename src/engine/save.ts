@@ -13,6 +13,8 @@ export interface BattleSave {
   rewindsUsed?: number;
   /** The party has been placed (or the player skipped placing it): the fight is under way. Screen only. */
   placed?: boolean;
+  /** The words before the fight have been said (run/parley.ts). Screen only. */
+  talked?: boolean;
 }
 
 export function replay(setup: BattleSetup, commands: Command[]): BattleState {

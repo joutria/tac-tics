@@ -447,6 +447,41 @@
   #banner.on { animation: bannerIn 2.4s ease-out forwards; }
   @keyframes bannerIn { 0% { opacity: 0; transform: translateX(-40px); } 15% { opacity: 1; transform: none; } 75% { opacity: 1; } 100% { opacity: 0; transform: translateX(30px); } }
   body.titleopen #banner { display: none; }
+  /* Words before a fight (run/parley.ts): an FFTA dialogue window low on the screen, the speaker's face in a frame
+     (party on the left, foes on the right with a red name plate), the line typing out. A tap goes on; Skip ends it. */
+  #parley { position: fixed; left: 50%; transform: translateX(-50%); bottom: max(12px, env(safe-area-inset-bottom)); z-index: 6; display: none;
+    width: min(620px, calc(100vw - 24px)); box-sizing: border-box; padding: 10px 12px 12px; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: start; cursor: pointer; }
+  body.talking #parley { display: grid; }
+  body.talking #deployBar, body.talking #menu, body.talking #system, body.talking #hint, body.talking #act, body.talking #target, body.talking #goal { display: none; }
+  #parley .face { grid-row: span 2; width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; background: #2a262c;
+    box-shadow: inset 0 0 0 2px var(--frame), 0 0 0 2px #140c1c; }
+  #parley .face img { width: 60px; height: 60px; image-rendering: pixelated; object-fit: contain; }
+  #parley .who { justify-self: start; padding: 1px 10px; background: #2c4a86; box-shadow: inset 0 0 0 1px var(--frame); color: #e8f0ff; font-size: 15px; }
+  #parley p { margin: 0; min-height: 2.9em; font-size: 16px; line-height: 1.45; }
+  #parley .tag { grid-column: 2; color: var(--accent); font-size: 13px; }
+  #parley .tag:empty { display: none; }
+  #parley.foes { grid-template-columns: 1fr auto; }
+  #parley.foes .face { grid-column: 2; grid-row: 1 / span 2; }
+  #parley.foes .who { grid-column: 1; grid-row: 1; justify-self: end; background: #7a2420; }
+  #parley.foes p { grid-column: 1; grid-row: 2; }
+  #parley.foes .tag { grid-column: 1; }
+  #parley .more { position: absolute; right: 10px; bottom: 4px; color: var(--accent); font-size: 12px; animation: parleyBob 0.8s ease-in-out infinite alternate; }
+  #parley.foes .more { right: auto; left: 10px; }
+  @keyframes parleyBob { to { transform: translateY(3px); } }
+  #parleySkip { position: fixed; right: max(10px, env(safe-area-inset-right)); top: calc(max(8px, env(safe-area-inset-top)) + 54px); z-index: 6; display: none; min-height: 40px; padding: 4px 14px; font-size: 15px; }
+  body.talking #parleySkip { display: block; }
+  @media (max-height: 480px) { #parley { padding: 6px 10px 8px; width: min(560px, calc(100vw - 24px)); } #parley .face { width: 48px; height: 48px; } #parley .face img { width: 44px; height: 44px; } #parley p { font-size: 14px; min-height: 2.6em; } }
+  /* An ambush: the title card turns red and shakes, and the screen's edges pulse red for a moment. */
+  #banner.warn { top: 30%; background: linear-gradient(90deg, transparent, rgba(60,6,10,0.9) 18%, rgba(60,6,10,0.9) 82%, transparent); }
+  #banner.warn small { color: #ffb0a0; }
+  #banner.warn h2 { color: #ff6a55; text-shadow: 0 3px 0 #5a0c0c, 3px 3px 0 #140c1c; }
+  #banner.warn.on { animation: bannerIn 3.2s ease-out forwards, bannerShake 0.45s 0.2s 2; }
+  #banner.warn p { margin: 6px 0 0; font-size: 15px; color: #ffe0d6; text-align: center; }
+  @keyframes bannerShake { 0%, 100% { translate: 0; } 20% { translate: -8px 0; } 40% { translate: 7px 0; } 60% { translate: -5px 0; } 80% { translate: 3px 0; } }
+  #alarm { position: fixed; inset: 0; z-index: 4; pointer-events: none; opacity: 0; box-shadow: inset 0 0 90px 30px rgba(220,30,30,0.75); }
+  #alarm.on { animation: alarmPulse 0.7s ease-in-out 3; }
+  @keyframes alarmPulse { 50% { opacity: 1; } }
+  body.titleopen #parley, body.titleopen #parleySkip, body.titleopen #alarm { display: none; }
   /* Victory spoils: one row per gain, popping in one after another, then the XP bar filling to the new total. */
   #spoils { display: none; min-width: 240px; padding: 10px 16px; flex-direction: column; gap: 6px; }
   #spoils .sp { display: flex; align-items: center; gap: 8px; font-size: 15px; opacity: 0; animation: spIn 0.3s ease-out forwards; }
@@ -587,6 +622,9 @@
   <div id="tip" class="win"></div>
   <div id="soundPanel" class="win" role="dialog" aria-modal="false"></div>
   <div id="banner" aria-live="polite"></div>
+  <div id="alarm"></div>
+  <div id="parley" class="win" role="dialog" aria-live="polite"><div class="face"></div><div class="who"></div><p></p><div class="tag"></div><span class="more">▼</span></div>
+  <button id="parleySkip"></button>
   <div id="overlay"><h1 id="result"></h1><p id="resultNote"></p><div id="spoils" class="win"></div><div id="mercy" class="win"></div><button id="again" class="primary"></button></div>
   <div id="travel">
     <div id="travelTop" class="bar">
